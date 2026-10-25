@@ -5,6 +5,7 @@
 #   make -C andai health        # every service healthy?
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
+#   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/sunydepalpur
 #
 # `make -C andai` runs with cwd=andai/, so every path below is absolute, derived from ROOT.
 # Munshi's compose file keeps its own relative paths because --project-directory is deploy/compose.
@@ -33,12 +34,12 @@ STRIP_IMAGE_ENV := -u IMAGE_TAG -u BROWSER_IMAGE -u AGENT_IMAGE -u AGENT_WORKER_
 WAIT_TIMEOUT ?= 600
 S ?=
 
-.PHONY: help config config-json config-services up agent-worker images images-check down ps logs health _env-ready
+.PHONY: help config config-json config-services up agent-worker images images-check images-push down ps logs health _env-ready
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
-	@echo "make -C andai images-check                               stack uses only catalogue images"
+	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
 	@echo "make -C andai health   HTTP health on 127.0.0.1 + container states"
 	@echo "make -C andai ps | logs [S=service] | down | config"
 	@echo "ENV_FILE=$(ENV_FILE)"
@@ -90,6 +91,15 @@ images-check:
 	   env $(STRIP_IMAGE_ENV) IMAGE_TAG=$(VERSION) docker compose -f $(ROOT)/deploy/transcription/$$f config --format json > "$$t/transcription-$$f.json"; \
 	 done; \
 	 $(IMAGES) check --version $(VERSION) $(if $(filter 1,$(ALLOW_TEST_IMAGES)),--allow-test-images) "$$t"/*.json
+
+## images-push — push every catalogue image at $(VERSION) (agent-worker-hardened and the andai images
+## included; not the :dev or test tags) to ghcr.io/sunydepalpur. Refuses without a ghcr.io login in
+## the docker config, or if any image is missing locally or is not $(PLATFORM). Log in first (the
+## token goes straight from gh to docker, never onto the screen):
+##   gh auth refresh -h github.com -s write:packages
+##   gh auth token | docker login ghcr.io -u sunydepalpur --password-stdin
+images-push:
+	$(IMAGES) push --version $(VERSION) --platform $(PLATFORM)
 
 down:
 	$(DC) down
