@@ -26,10 +26,9 @@ from andai_core.db.models import (
     PlatformPrincipal,
     Team,
     TeamMembership,
-    User,
 )
 from andai_core.db.session import transaction
-from conftest import Postgres
+from conftest import Postgres, bootstrap_org, new_user
 
 RLS_ERROR = "row-level security"
 
@@ -48,23 +47,6 @@ def _token_hash() -> str:
     return hashlib.sha256(secrets.token_bytes(32)).hexdigest()
 
 
-def _new_user(engine: Engine) -> uuid.UUID:
-    user_id = uuid.uuid4()
-    with transaction(engine) as tx:  # users are global: no org context needed
-        tx.add(User(id=user_id, email=f"{user_id.hex}@example.test", display_name="Test User"))
-    return user_id
-
-
-def _bootstrap_org(engine: Engine, owner_id: uuid.UUID) -> uuid.UUID:
-    """The bootstrap path: generate the org id, set app.org_id, insert org + owner membership."""
-    org_id = uuid.uuid4()
-    with transaction(engine, org_id=org_id) as tx:
-        tx.add(Org(id=org_id, name=f"Org {org_id.hex[:8]}", slug=f"org-{org_id.hex}"))
-        tx.flush()
-        tx.add(OrgMembership(org_id=org_id, user_id=owner_id, role="owner"))
-    return org_id
-
-
 @dataclass(frozen=True)
 class SeededOrg:
     org_id: uuid.UUID
@@ -75,8 +57,8 @@ class SeededOrg:
 
 
 def _seed(engine: Engine) -> SeededOrg:
-    owner_id = _new_user(engine)
-    org_id = _bootstrap_org(engine, owner_id)
+    owner_id = new_user(engine)
+    org_id = bootstrap_org(engine, owner_id)
     team_id, invite_id, token_hash = uuid.uuid4(), uuid.uuid4(), _token_hash()
     with transaction(engine, org_id=org_id, user_id=owner_id) as tx:
         tx.add(Team(id=team_id, org_id=org_id, name="Engineering"))
@@ -293,7 +275,7 @@ def test_login_finds_memberships_with_only_user_id(
     # The owner of org A also joins org B (written under B's context); org A gets another member.
     with transaction(app_engine, org_id=org_b.org_id) as tx:
         tx.add(OrgMembership(org_id=org_b.org_id, user_id=org_a.owner_id, role="member"))
-    other_member = _new_user(app_engine)
+    other_member = new_user(app_engine)
     with transaction(app_engine, org_id=org_a.org_id) as tx:
         tx.add(OrgMembership(org_id=org_a.org_id, user_id=other_member, role="member"))
 
@@ -347,8 +329,8 @@ def test_invite_lookup_by_token_hash_only(
 def test_bootstrap_inserts_org_and_owner_after_setting_org_id(
     app_engine: Engine, superuser_engine: Engine
 ) -> None:
-    owner_id = _new_user(app_engine)
-    org_id = _bootstrap_org(app_engine, owner_id)
+    owner_id = new_user(app_engine)
+    org_id = bootstrap_org(app_engine, owner_id)
     with superuser_engine.connect() as conn:
         orgs = conn.execute(text("SELECT count(*) FROM orgs WHERE id = :o"), {"o": org_id})
         assert orgs.scalar_one() == 1

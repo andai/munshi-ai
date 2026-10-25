@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import time
 import urllib.request
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -243,3 +244,27 @@ def mailpit() -> Iterator[Mailpit]:
         yield Mailpit("127.0.0.1", _host_port(container, 1025), api_url)
     finally:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
+
+
+def new_user(engine: Engine) -> uuid.UUID:
+    """Insert a user as the app role (users are global: no org context needed)."""
+    from andai_core.db.models import User
+    from andai_core.db.session import transaction
+
+    user_id = uuid.uuid4()
+    with transaction(engine) as tx:
+        tx.add(User(id=user_id, email=f"{user_id.hex}@example.test", display_name="Test User"))
+    return user_id
+
+
+def bootstrap_org(engine: Engine, owner_id: uuid.UUID) -> uuid.UUID:
+    """The bootstrap path: generate the org id, set app.org_id, insert org + owner membership."""
+    from andai_core.db.models import Org, OrgMembership
+    from andai_core.db.session import transaction
+
+    org_id = uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(Org(id=org_id, name=f"Org {org_id.hex[:8]}", slug=f"org-{org_id.hex}"))
+        tx.flush()
+        tx.add(OrgMembership(org_id=org_id, user_id=owner_id, role="owner"))
+    return org_id
