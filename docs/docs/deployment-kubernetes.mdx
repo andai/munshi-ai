@@ -33,7 +33,7 @@ Create the bucket first (the chart never creates one) and a Secret holding a key
 install with the bucket in `storage.s3`:
 
 ```bash
-git clone https://github.com/sunydepalpur/munshi-ai.git && cd munshi
+git clone https://github.com/andai/munshi-ai.git && cd munshi
 kubectl create namespace munshi
 kubectl -n munshi create secret generic munshi-s3 \
   --from-literal=AWS_ACCESS_KEY_ID='<access key id>' \

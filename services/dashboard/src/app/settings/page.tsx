@@ -327,7 +327,7 @@ AI_API_KEY=your_ai_api_key_here`}
               </p>
               <div className="flex gap-4">
                 <a
-                  href="https://github.com/sunydepalpur/munshi-ai"
+                  href="https://github.com/andai/munshi-ai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline inline-flex items-center gap-1"

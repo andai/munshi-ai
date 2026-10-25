@@ -66,7 +66,7 @@ endpoint you host (Whisper speech-to-text on `/v1/audio/transcriptions`, chat on
 `/v1/chat/completions`, and a tool-calling model on `/v1/messages`).
 
 ```bash
-git clone https://github.com/sunydepalpur/munshi-ai.git
+git clone https://github.com/andai/munshi-ai.git
 cd munshi-ai
 cp andai/deploy/compose/.env.example andai/deploy/compose/.env
 # edit andai/deploy/compose/.env: replace every __OLLM_*__ placeholder with your endpoint,

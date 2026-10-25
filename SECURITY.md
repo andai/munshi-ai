@@ -7,7 +7,7 @@ pull requests.**
 
 Report them privately through GitHub's private vulnerability reporting: open the repository's
 **Security** tab and choose **Report a vulnerability**
-(<https://github.com/sunydepalpur/munshi-ai/security/advisories/new>). This creates a private
+(<https://github.com/andai/munshi-ai/security/advisories/new>). This creates a private
 security advisory that only you and the maintainers can see. Please include:
 
 - a description of the vulnerability and its impact,

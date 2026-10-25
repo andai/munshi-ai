@@ -1184,7 +1184,7 @@ def create_app(
                 detail=(
                     "Ticketing is not configured on this Munshi deployment. Set MUNSHI_TICKET_SINK_URL "
                     "on the MCP service to enable report_issue, or report the issue at "
-                    "https://github.com/sunydepalpur/munshi-ai/issues."
+                    "https://github.com/andai/munshi-ai/issues."
                 ),
             )
 

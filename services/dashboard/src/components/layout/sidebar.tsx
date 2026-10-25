@@ -344,7 +344,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               API Docs
             </a>
             <a
-              href="https://github.com/sunydepalpur/munshi-ai/issues/new?labels=bug,hosted&title=[Hosted]%20&body=%23%23%20Environment%0AHosted%20service%20(example.invalid)%0A%0A%23%23%20Description%0A%0A%23%23%20Steps%20to%20reproduce%0A1.%20%0A%0A%23%23%20Expected%20behavior%0A%0A%23%23%20Actual%20behavior%0A"
+              href="https://github.com/andai/munshi-ai/issues/new?labels=bug,hosted&title=[Hosted]%20&body=%23%23%20Environment%0AHosted%20service%20(example.invalid)%0A%0A%23%23%20Description%0A%0A%23%23%20Steps%20to%20reproduce%0A1.%20%0A%0A%23%23%20Expected%20behavior%0A%0A%23%23%20Actual%20behavior%0A"
               target="_blank"
               rel="noopener noreferrer"
               onClick={onClose}
