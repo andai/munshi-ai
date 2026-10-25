@@ -7,8 +7,8 @@ Role     : baked into /opt/hf-cache and loaded OFFLINE at runtime by the mixed
            (Zoom/Teams) speaker-diarization lane — see
            core/meetings/services/bot/warm-hf-cache.mjs and
            core/meetings/modules/mixed-pipeline/src/pyannote-segmenter.ts
-Baked by : core/meetings/services/bot/Dockerfile (ghcr.io/sunydepalpur/munshi-bot)
-           deploy/lite/Dockerfile.lite            (ghcr.io/sunydepalpur/munshi-lite)
+Baked by : core/meetings/services/bot/Dockerfile (ghcr.io/andai/munshi-bot)
+           deploy/lite/Dockerfile.lite            (ghcr.io/andai/munshi-lite)
 Source   : https://huggingface.co/onnx-community/pyannote-segmentation-3.0
 Upstream : https://huggingface.co/pyannote/segmentation-3.0
 Project  : pyannote.audio — https://github.com/pyannote/pyannote-audio

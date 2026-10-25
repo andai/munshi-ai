@@ -39,7 +39,7 @@ def test_declaration_loads_and_is_internally_consistent():
 def test_capability_tri_states():
     assert cp.capability_states({})["scheduler"] == cp.NOT_CONFIGURED
     assert cp.capability_states({"REDIS_URL": "redis://r"})["scheduler"] == cp.CONFIGURED
-    assert cp.capability_states({"BROWSER_IMAGE": "ghcr.io/sunydepalpur/munshi-bot:v012"})["bot_spawn"] == cp.CONFIGURED
+    assert cp.capability_states({"BROWSER_IMAGE": "ghcr.io/andai/munshi-bot:v012"})["bot_spawn"] == cp.CONFIGURED
     assert cp.capability_states({})["agent_spawn"] == cp.NOT_CONFIGURED
     # mode=any: any ONE credential path configures model_inference; none ⇒ not_configured
     assert cp.capability_states({})["model_inference"] == cp.NOT_CONFIGURED

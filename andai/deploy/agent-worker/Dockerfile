@@ -17,7 +17,7 @@
 # VERSION (the repo's VERSION file) is passed by `make -C andai images`; there is no default, so the
 # base can never silently drift from the version this image is tagged with.
 ARG VERSION
-FROM ghcr.io/sunydepalpur/munshi-agent-worker:${VERSION}
+FROM ghcr.io/andai/munshi-agent-worker:${VERSION}
 
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \

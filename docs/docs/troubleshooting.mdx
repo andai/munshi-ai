@@ -18,7 +18,7 @@ curl -H "X-API-Key: $API_KEY" "$API_BASE/bots/status"
 
 - **Bot image not built (self-host)** — the meeting bot is **built from source** (`make bot`), not
   pulled. If it's missing, the bot can't spawn and the meeting sticks at `requested`; if you're on the
-  stale published `ghcr.io/sunydepalpur/munshi-bot:dev` (the old 0.10 line) the bot reaches `joining` then fails the
+  stale published `ghcr.io/andai/munshi-bot:dev` (the old 0.10 line) the bot reaches `joining` then fails the
   `lifecycle.v1` handshake. Fix: `make bot`, and point `BROWSER_IMAGE` at the built tag.
 - **Bad meeting id** — `native_meeting_id` is the id *inside* the join URL (e.g. `abc-defg-hij`), not the
   whole URL. Wrong platform value also fails: use `google_meet`, `zoom`, or `teams`.
@@ -204,7 +204,7 @@ The [runtime](/core/runtime) spawns bot and agent containers via the Docker sock
   docker group id.
 - The meeting bot (`BROWSER_IMAGE`) is **built from source** (`make bot`) and the runtime spawns it
   **without pulling** — it must exist locally first. Confirm it's there (`docker image inspect "$BROWSER_IMAGE"`);
-  the published `ghcr.io/sunydepalpur/munshi-bot:dev` is the old 0.10 line and is incompatible. `AGENT_IMAGE` is built by
+  the published `ghcr.io/andai/munshi-bot:dev` is the old 0.10 line and is incompatible. `AGENT_IMAGE` is built by
   `make all` — confirm it resolves and `IMAGE_TAG` matches what you built.
 
 ## Leftover chrome/node processes after a bot ends (Lite)

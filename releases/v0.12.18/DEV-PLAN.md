@@ -24,7 +24,7 @@ Checked by building and booting the rig on 2026-07-23:
 
 | asset | state | note |
 |---|---|---|
-| `munshi/meet-join-env:dev` | ✅ present + tagged | the ~3.6 GB env; **never build it** — pull `ghcr.io/sunydepalpur/munshi-meet-join-env:dev`, retag |
+| `munshi/meet-join-env:dev` | ✅ present + tagged | the ~3.6 GB env; **never build it** — pull `ghcr.io/andai/munshi-meet-join-env:dev`, retag |
 | `meet-join-debug:latest` | ✅ **built this session** | `make image` took seconds off the warm env |
 | noVNC human view | ✅ **HTTP 200 verified** | `http://localhost:6080/vnc.html` |
 | CDP agent control | ✅ advertised by the rig | `playwright connectOverCDP("http://localhost:9222")` |

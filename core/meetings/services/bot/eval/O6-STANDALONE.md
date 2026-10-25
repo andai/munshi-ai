@@ -14,7 +14,7 @@ offline-replay** on red. The bot side (join · admit · capture · redis egress 
 O6 path; only the audio→STT leg needs real audible speech (driven speaker-bots, prod tokens).
 
 ## What it proves
-Same as O6-MEET-LEG, but repeatably and with one verdict: the carved `ghcr.io/sunydepalpur/munshi-bot:v012` joins a
+Same as O6-MEET-LEG, but repeatably and with one verdict: the carved `ghcr.io/andai/munshi-bot:v012` joins a
 live Meet on bbb, captures the synthetic speakers, publishes `transcript.v1` to redis, and the
 transcript scores within the `BASELINE.md` gmeet bar (`misattr=0`, `seg_N=0`, low oversegmentation,
 `leakage=0`).

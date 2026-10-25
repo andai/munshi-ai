@@ -53,7 +53,7 @@ promote and stable-tag gates refuse to move on.
      [`release/candidate-image-map.test.mjs`](../release/candidate-image-map.test.mjs).
 
    ```bash
-   REF=ghcr.io/sunydepalpur/munshi-lite:vX.Y.Z-rc.N
+   REF=ghcr.io/andai/munshi-lite:vX.Y.Z-rc.N
    docker buildx imagetools inspect "$REF" --format '{{json .}}' | jq '.manifest'   # top + platforms
    docker manifest inspect -v "$REF" | jq -r '.[].OCIManifest.config.digest'        # image configs
    node release/candidate-image-map.mjs check releases/vX.Y.Z/candidate-images.json vX.Y.Z

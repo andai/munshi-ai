@@ -6,9 +6,9 @@ Date: 2026-07-23 · stage Helm revision `65` · human lens: Sample Speaker
 Target artifacts:
 
 - core release images: `v0.12.18-260723.stage2`
-- bot: `ghcr.io/sunydepalpur/munshi-bot:v0.12.18-260723.stage2`
-- Terminal: `ghcr.io/sunydepalpur/munshi-terminal:v0.12.18-260723.stage2`
-- dashboard: `ghcr.io/sunydepalpur/munshi-dashboard:0.10.6.3.15-260723-platformonly`
+- bot: `ghcr.io/andai/munshi-bot:v0.12.18-260723.stage2`
+- Terminal: `ghcr.io/andai/munshi-terminal:v0.12.18-260723.stage2`
+- dashboard: `ghcr.io/andai/munshi-dashboard:0.10.6.3.15-260723-platformonly`
 
 The autonomous storm had already held twice with zero v0.12.18 blockers. This
 leg tests the remaining human claim on the final staged artifacts: spoken words

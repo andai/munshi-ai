@@ -13,7 +13,7 @@
 #   2. For Munshi services it changes ONLY `environment` entries and `ports` (D-15 perimeter). No
 #      Munshi file is edited; every other setting comes from the untracked .env.
 #
-# Images: every service runs a catalogue image ghcr.io/sunydepalpur/munshi-<name>:${IMAGE_TAG}
+# Images: every service runs a catalogue image ghcr.io/andai/munshi-<name>:${IMAGE_TAG}
 # (andai/images.json, built by `make -C andai images`); `make -C andai images-check` enforces it.
 #
 # Ports: every published port binds to 127.0.0.1 (D-15). Munshi's own file already does this at
@@ -34,7 +34,7 @@ services:
     build:
       context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai
       dockerfile: services/core/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-andai-core:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-andai-core:${IMAGE_TAG:-dev}
     # Catalogue image (andai/images.json). Compose never pulls it: `make up` builds it when missing
     # (or pulls it with PULL=1), then starts with --no-build.
     pull_policy: never
@@ -56,7 +56,7 @@ services:
     build:
       context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai
       dockerfile: services/worker/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-andai-worker:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-andai-worker:${IMAGE_TAG:-dev}
     pull_policy: never
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
@@ -76,7 +76,7 @@ services:
     build:
       context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai
       dockerfile: services/intake/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-andai-intake:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-andai-intake:${IMAGE_TAG:-dev}
     pull_policy: never
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
@@ -96,7 +96,7 @@ services:
     build:
       context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/portal
       dockerfile: Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-andai-portal:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-andai-portal:${IMAGE_TAG:-dev}
     pull_policy: never
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}

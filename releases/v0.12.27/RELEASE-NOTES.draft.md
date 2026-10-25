@@ -137,7 +137,7 @@ deployment relies on.
 
 ---
 
-**Images (eleven — `ghcr.io/sunydepalpur/munshi-flows` joins the release set with this version):** `ghcr.io/sunydepalpur/munshi-admin-api`, `ghcr.io/sunydepalpur/munshi-runtime`, `ghcr.io/sunydepalpur/munshi-agent-worker`, `ghcr.io/sunydepalpur/munshi-agent-api`, `ghcr.io/sunydepalpur/munshi-meeting-api`, `ghcr.io/sunydepalpur/munshi-gateway`, `ghcr.io/sunydepalpur/munshi-mcp`, `ghcr.io/sunydepalpur/munshi-terminal`, `ghcr.io/sunydepalpur/munshi-bot`, `ghcr.io/sunydepalpur/munshi-lite`, `ghcr.io/sunydepalpur/munshi-flows`, published from the reviewed candidate packet
+**Images (eleven — `ghcr.io/andai/munshi-flows` joins the release set with this version):** `ghcr.io/andai/munshi-admin-api`, `ghcr.io/andai/munshi-runtime`, `ghcr.io/andai/munshi-agent-worker`, `ghcr.io/andai/munshi-agent-api`, `ghcr.io/andai/munshi-meeting-api`, `ghcr.io/andai/munshi-gateway`, `ghcr.io/andai/munshi-mcp`, `ghcr.io/andai/munshi-terminal`, `ghcr.io/andai/munshi-bot`, `ghcr.io/andai/munshi-lite`, `ghcr.io/andai/munshi-flows`, published from the reviewed candidate packet
 `releases/v0.12.27/candidate-images.json` and validated by run 34059966981.
 
 **In production:** this release is what munshi.ai runs, pinned as channel entry <channel entry> and

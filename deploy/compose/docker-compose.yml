@@ -5,7 +5,7 @@ name: munshi-v012
 # Improvement over 0.11: EVERY service carries a healthcheck and depends_on waits on
 # `condition: service_healthy` so the bring-up is ordered + observable.
 #
-# Bot is NOT a compose service: runtime spawns ghcr.io/sunydepalpur/munshi-bot:v012 (BROWSER_IMAGE) on demand via the
+# Bot is NOT a compose service: runtime spawns ghcr.io/andai/munshi-bot:v012 (BROWSER_IMAGE) on demand via the
 # mounted /var/run/docker.sock. That published ~3.6GB image is a REFERENCE here, never built.
 
 services:
@@ -86,7 +86,7 @@ services:
     build:
       context: ../..
       dockerfile: core/meetings/services/meeting-api/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-meeting-api:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-meeting-api:${IMAGE_TAG:-dev}
     entrypoint: ["python", "/munshi-storage-tools/storage_init.py"]
     depends_on:
       storage:
@@ -115,7 +115,7 @@ services:
     build:
       context: ../../core/identity/services/admin-api
       dockerfile: Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-admin-api:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-admin-api:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${ADMIN_API_PORT:-18057}:8001"
     environment:
@@ -155,7 +155,7 @@ services:
     build:
       context: ../../core/runtime
       dockerfile: Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-runtime:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-runtime:${IMAGE_TAG:-dev}
     # The runtime spawns bot containers via the host Docker socket (DockerBackend → socket API,
     # requests_unixsocket — no docker CLI in the image, like main).
     group_add:
@@ -171,11 +171,11 @@ services:
       - path: .env
         required: false
     environment:
-      - BROWSER_IMAGE=${BROWSER_IMAGE:-ghcr.io/sunydepalpur/munshi-bot:${IMAGE_TAG:-dev}}
+      - BROWSER_IMAGE=${BROWSER_IMAGE:-ghcr.io/andai/munshi-bot:${IMAGE_TAG:-dev}}
       # The per-dispatch WORKER image the runtime spawns (control-plane ⊥ worker split). AGENT_WORKER_IMAGE
       # is set EXPLICITLY (no suffix derivation); AGENT_IMAGE now matches the built control-plane tag.
-      - AGENT_IMAGE=${AGENT_IMAGE:-ghcr.io/sunydepalpur/munshi-agent-api:${IMAGE_TAG:-dev}}
-      - AGENT_WORKER_IMAGE=${AGENT_WORKER_IMAGE:-ghcr.io/sunydepalpur/munshi-agent-worker:${IMAGE_TAG:-dev}}
+      - AGENT_IMAGE=${AGENT_IMAGE:-ghcr.io/andai/munshi-agent-api:${IMAGE_TAG:-dev}}
+      - AGENT_WORKER_IMAGE=${AGENT_WORKER_IMAGE:-ghcr.io/andai/munshi-agent-worker:${IMAGE_TAG:-dev}}
       # Optional low-latency tuning for the Google Meet speaker-stream pipeline. Empty values keep
       # the bot defaults; runtime forwards configured values to spawned bot containers.
       - BOT_ALONE_SILENCE_WINDOW_MS=${BOT_ALONE_SILENCE_WINDOW_MS:-}
@@ -229,7 +229,7 @@ services:
     build:
       context: ../..
       dockerfile: core/agent/worker/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-agent-worker:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-agent-worker:${IMAGE_TAG:-dev}
     profiles: ["build-only"]
     command: ["true"]
 
@@ -240,7 +240,7 @@ services:
     build:
       context: ../..
       dockerfile: core/agent/services/agent-api/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-agent-api:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-agent-api:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${AGENT_API_PORT:-18100}:8100"
     # Provider auth (ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL) is sourced from .env via env_file so it is
@@ -326,7 +326,7 @@ services:
       # those frozen contract files are vendored into the image (see the Dockerfile).
       context: ../..
       dockerfile: core/meetings/services/meeting-api/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-meeting-api:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-meeting-api:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${MEETING_API_PORT:-18080}:8080"
     environment:
@@ -427,7 +427,7 @@ services:
       # manifests of the domains it fronts; a context scoped to the service cannot reach them.
       context: ../..
       dockerfile: core/gateway/services/gateway/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-gateway:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-gateway:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${API_GATEWAY_HOST_PORT:-18056}:8000"
     environment:
@@ -513,7 +513,7 @@ services:
       # The repo ROOT: the image COPYs core/flows/src AND the behavior showcase at behavior/.
       context: ../..
       dockerfile: core/flows/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-flows:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-flows:${IMAGE_TAG:-dev}
     command: ["python", "-m", "flows_integrations.flows_api"]
     ports:
       # Loopback-published for debugging, like every other service here; overridable so two stacks
@@ -622,7 +622,7 @@ services:
     build:
       context: ../..
       dockerfile: core/flows/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-flows:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-flows:${IMAGE_TAG:-dev}
     command: ["python", "-m", "flows_integrations.mailbox"]
     environment:
       # ── the listener ────────────────────────────────────────────────────────────────────────
@@ -727,7 +727,7 @@ services:
     build:
       context: ../..
       dockerfile: core/flows/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-flows:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-flows:${IMAGE_TAG:-dev}
     command: ["python", "-m", "flows_worker"]
     environment:
       # ── the listener ────────────────────────────────────────────────────────────────────────
@@ -815,7 +815,7 @@ services:
     build:
       context: ../../core/meetings/services/mcp
       dockerfile: Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-mcp:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-mcp:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${MCP_HOST_PORT:-18010}:8010"
     environment:
@@ -915,7 +915,7 @@ services:
         # under the hot overlay's NODE_ENV=development — dev-mode Next needs the dev toolchain at
         # runtime and otherwise npm-installs it AT BOOT (slow, network-dependent, currently broken).
         RUNTIME_DEPS: ${TERMINAL_RUNTIME_DEPS:-prod}
-    image: ghcr.io/sunydepalpur/munshi-terminal:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-terminal:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${TERMINAL_PORT:-13000}:3000"
     environment:
@@ -985,7 +985,7 @@ services:
   # Deprecation exit: when the Terminal covers the flows above, this block is deleted, not ported.
   dashboard:
     profiles: ["dashboard"]
-    image: ${DASHBOARD_IMAGE:-ghcr.io/sunydepalpur/munshi-dashboard:${IMAGE_TAG:-dev}}
+    image: ${DASHBOARD_IMAGE:-ghcr.io/andai/munshi-dashboard:${IMAGE_TAG:-dev}}
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-13001}:3000"
     environment:

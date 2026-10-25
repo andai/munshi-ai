@@ -185,7 +185,7 @@ if [ "$dash_count" -ge 3 ]; then
 else
   echo "  FAIL: dashboard.enabled=true rendered $dash_count component labels (want >=3)"; fail=1
 fi
-if grep -q 'image: "ghcr.io/sunydepalpur/munshi-dashboard:vSHOULD-NOT-APPLY"' <<< "$RENDER_DASH"; then
+if grep -q 'image: "ghcr.io/andai/munshi-dashboard:vSHOULD-NOT-APPLY"' <<< "$RENDER_DASH"; then
   echo "  FAIL: dashboard image followed global.imageTag — it must stay on its own pinned tag"; fail=1
 else
   echo "  OK: dashboard image ignores global.imageTag (own pinned tag)"
@@ -417,7 +417,7 @@ fi
 # `:dev`, and an explicit flows.image still wins (that is how a publisher digest-pins a release).
 FLOWS_PINNED="$(helm template munshi "$CHART" -n munshi -f "$CHART/values-test.yaml" \
   --set flows.enabled=true --set global.imageTag=vPIN --show-only templates/flows.yaml)"
-if grep -q 'image: "ghcr.io/sunydepalpur/munshi-flows:vPIN"' <<< "$FLOWS_PINNED" \
+if grep -q 'image: "ghcr.io/andai/munshi-flows:vPIN"' <<< "$FLOWS_PINNED" \
   && ! grep -q 'v012-flows:dev' <<< "$FLOWS_PINNED"; then
   echo "  OK: flows image honors global.imageTag (no mutable :dev left) (#A12)"
 else

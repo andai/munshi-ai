@@ -129,7 +129,7 @@ make -C andai up
 
 It mints missing secrets (`andai/scripts/gen-secrets.sh`), builds any image the stack needs that is
 not on the machine (the catalogue in `andai/images.json`: every Munshi service, the bot, the hardened
-agent worker and the andai services, all `ghcr.io/sunydepalpur/munshi-*:<VERSION>`), and starts
+agent worker and the andai services, all `ghcr.io/andai/munshi-*:<VERSION>`), and starts
 everything with `--wait` (fails if any service does not become healthy). `make -C andai up PULL=1`
 pulls the published images from ghcr.io instead of building them. Then:
 

@@ -8,7 +8,7 @@
   "build_run": "",
   "validation_run": "",
   "images": {
-    "ghcr.io/sunydepalpur/munshi-admin-api": {
+    "ghcr.io/andai/munshi-admin-api": {
       "class": "prod_deployed",
       "digest": "sha256:23932797a64e0cd94d2712fcd319a2199123cf8b0d2044129a2d9c39f74375d0",
       "platforms": [
@@ -28,7 +28,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25 plus hosted production rev128 running imageID sha256:948854354f0f11d2443cd6ec76a89be6c7279d77c66649c84e7e9af1510ff030 (linux/amd64 child manifest of this index), founder-witnessed 2026-08-12"
     },
-    "ghcr.io/sunydepalpur/munshi-runtime": {
+    "ghcr.io/andai/munshi-runtime": {
       "class": "prod_deployed",
       "digest": "sha256:d2dced7bbb49cdf652738dc185a1f4af4744188366ca68345961cbc44374a5e3",
       "platforms": [
@@ -48,7 +48,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25 plus hosted production rev128 running imageID sha256:b3d466567447d7fa1337a5ed88e7228d18e4ddea664840879e2095667f0aec7e (linux/amd64 child manifest of this index), read back post-rev-128 on 2026-08-12"
     },
-    "ghcr.io/sunydepalpur/munshi-agent-worker": {
+    "ghcr.io/andai/munshi-agent-worker": {
       "class": "oss_only",
       "digest": "sha256:dab9fb35d8c4c756c0968405ec6788c2a1395a80aa6e812002857232b2c57735",
       "platforms": [
@@ -68,7 +68,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25; dev:builds gate suite green at d7c1dedb (parent of the ship SHA) and gate:node green at 0653de25 on bbb"
     },
-    "ghcr.io/sunydepalpur/munshi-agent-api": {
+    "ghcr.io/andai/munshi-agent-api": {
       "class": "oss_only",
       "digest": "sha256:e2f5b2832783841cc1c7abfcd81a6148ff13a10f34ac098b740a097ba4e1fd24",
       "platforms": [
@@ -88,7 +88,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25; dev:builds gate suite green at d7c1dedb (parent of the ship SHA) and gate:node green at 0653de25 on bbb"
     },
-    "ghcr.io/sunydepalpur/munshi-meeting-api": {
+    "ghcr.io/andai/munshi-meeting-api": {
       "class": "prod_deployed",
       "digest": "sha256:b9b3f4bd9ae6949f55c93db2ad5d60b0a249a9e181758bca2fcd59fb1d376824",
       "platforms": [
@@ -108,7 +108,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25 plus hosted production rev128 running imageID sha256:8b578e65b2ee4f35be7b6e54ca8720201792aaaba6b592cdc4c724b5dcc6e9c3 on 3 pods (linux/amd64 child manifest of this index), founder-witnessed 2026-08-12"
     },
-    "ghcr.io/sunydepalpur/munshi-gateway": {
+    "ghcr.io/andai/munshi-gateway": {
       "class": "prod_deployed",
       "digest": "sha256:8a184f480ad7052fadf268e78bde764d4e087d45af0258fd512fb207dc9871b6",
       "platforms": [
@@ -128,7 +128,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25 plus hosted production rev128 running imageID sha256:bc3ff1fb197df6871ef05d8b65f087e00a768b248e8bc4d6124b24397deef3d1 on 2 pods (linux/amd64 child manifest of this index), read back post-rev-128 on 2026-08-12"
     },
-    "ghcr.io/sunydepalpur/munshi-mcp": {
+    "ghcr.io/andai/munshi-mcp": {
       "class": "oss_only",
       "digest": "sha256:4793a2047804796f14a70a51a779abfbadb937a5dd1103c4922f308bf694ecdc",
       "platforms": [
@@ -148,7 +148,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25; dev:builds gate suite green at d7c1dedb (parent of the ship SHA) and gate:node green at 0653de25 on bbb"
     },
-    "ghcr.io/sunydepalpur/munshi-terminal": {
+    "ghcr.io/andai/munshi-terminal": {
       "class": "oss_only",
       "digest": "sha256:61886c75f7a8c587e792893a2fba47c6ff1bb1d0b63b156ab13b13cea1e161cc",
       "platforms": [
@@ -168,7 +168,7 @@
       "attestations": true,
       "evidence": "candidate build run 31538709323 at 0653de25; dev:builds gate suite green at d7c1dedb (parent of the ship SHA), lite front-door probe of the terminal UI green at 0653de25 on bbb"
     },
-    "ghcr.io/sunydepalpur/munshi-bot": {
+    "ghcr.io/andai/munshi-bot": {
       "class": "prod_deployed",
       "digest": "sha256:5f706d28f866181015d830ffc4afbbcfb34ee3cc2411ae7d022a41fa45486268",
       "platforms": [
@@ -182,7 +182,7 @@
       },
       "evidence": "candidate build run 31538709323 at 0653de25 plus hosted production rev128 runtime BROWSER_IMAGE sha256:5f706d28f866181015d830ffc4afbbcfb34ee3cc2411ae7d022a41fa45486268 (single-platform manifest; top digest equals the platform digest), founder-witnessed on Teams meeting 26026 and Google Meet 26025/26024 on 2026-08-12; staging helm rev 141 zero drift"
     },
-    "ghcr.io/sunydepalpur/munshi-lite": {
+    "ghcr.io/andai/munshi-lite": {
       "class": "oss_only",
       "digest": "sha256:de252fdc232f25803c339371be62ef1ba6b407d8f44913a16d0ae94da94178a4",
       "platforms": [

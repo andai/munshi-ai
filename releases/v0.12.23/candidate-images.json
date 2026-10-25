@@ -8,7 +8,7 @@
   "build_run": "",
   "validation_run": "",
   "images": {
-    "ghcr.io/sunydepalpur/munshi-admin-api": {
+    "ghcr.io/andai/munshi-admin-api": {
       "class": "prod_deployed",
       "digest": "sha256:ef1d8f5cd39ab5e4bfe8ff2d8b76d2fd75d35ce1b533e05687133f6b99f9eef9",
       "platforms": [
@@ -28,7 +28,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-runtime": {
+    "ghcr.io/andai/munshi-runtime": {
       "class": "prod_deployed",
       "digest": "sha256:f90c7c2817c47f8e594c30a4c30cf45d49a8ac4d32614bd4a3c765c656134c19",
       "platforms": [
@@ -48,7 +48,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-agent-worker": {
+    "ghcr.io/andai/munshi-agent-worker": {
       "class": "oss_only",
       "digest": "sha256:7457aa4a2fc7658de51481ae27c53274de3281ca77a86a2759d192c80f4564dc",
       "platforms": [
@@ -68,7 +68,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-agent-api": {
+    "ghcr.io/andai/munshi-agent-api": {
       "class": "oss_only",
       "digest": "sha256:40021cd52048c053520ed84939da66bc350173e4e42197dd49452ffbad45dddf",
       "platforms": [
@@ -88,7 +88,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-meeting-api": {
+    "ghcr.io/andai/munshi-meeting-api": {
       "class": "prod_deployed",
       "digest": "sha256:effe3b3392af4713ce09bc5683f903bffce396392949950ff307050f75dcfa74",
       "platforms": [
@@ -108,7 +108,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-gateway": {
+    "ghcr.io/andai/munshi-gateway": {
       "class": "prod_deployed",
       "digest": "sha256:514ba2702ab03da4f90a6df58893cfec634ee61b913a1500ee6b56714dca89f2",
       "platforms": [
@@ -128,7 +128,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-mcp": {
+    "ghcr.io/andai/munshi-mcp": {
       "class": "oss_only",
       "digest": "sha256:a5d45bd73c4c68d311d9d38b2d074472004b4a9a265a635f2859db8b5a4ec248",
       "platforms": [
@@ -148,7 +148,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-terminal": {
+    "ghcr.io/andai/munshi-terminal": {
       "class": "oss_only",
       "digest": "sha256:e98025e251e69fd5c21ef6a1702cc9f34362e6c682e9ed5865abb5cb1462cefa",
       "platforms": [
@@ -168,7 +168,7 @@
       "attestations": true,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-bot": {
+    "ghcr.io/andai/munshi-bot": {
       "class": "prod_deployed",
       "digest": "sha256:2bd879c61cb24f3e20d698ded475f565ebfb4f07f2bf842d1ebf0299e9814314",
       "platforms": [
@@ -183,7 +183,7 @@
       "attestations": false,
       "evidence": "candidate build run 32185449851 at 2dec3082; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-lite": {
+    "ghcr.io/andai/munshi-lite": {
       "class": "oss_only",
       "digest": "sha256:bb382b2031c4040c3121c421580d3af7d9c6a94581079d30b01d2622586df524",
       "platforms": [

@@ -18,7 +18,7 @@ from runtime_kernel import Runtime, RuntimeState, StartFailed, StopReason, Workl
 from runtime_kernel.api import create_app
 from runtime_kernel.backend import WorkloadHandle
 
-_MISSING_IMAGE_MSG = "docker create munshi-w1 failed (404): No such image: ghcr.io/sunydepalpur/munshi-bot:dev"
+_MISSING_IMAGE_MSG = "docker create munshi-w1 failed (404): No such image: ghcr.io/andai/munshi-bot:dev"
 
 
 class _DeadAtStartBackend:

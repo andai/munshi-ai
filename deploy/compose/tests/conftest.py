@@ -138,7 +138,7 @@ def _stack_env() -> dict:
         # fresh checkout with no deploy/compose/.env can still bring the full stack up.
         "MUNSHI_FLOWS_API_KEY": FLOWS_API_KEY,
         "MUNSHI_FLOWS_TIMELINE_KEY": FLOWS_TIMELINE_KEY,
-        "BROWSER_IMAGE": os.getenv("BROWSER_IMAGE", "ghcr.io/sunydepalpur/munshi-bot:v012"),
+        "BROWSER_IMAGE": os.getenv("BROWSER_IMAGE", "ghcr.io/andai/munshi-bot:v012"),
         "API_GATEWAY_HOST_PORT": GATEWAY_PORT,
         "ADMIN_API_PORT": ADMIN_API_HOST_PORT,
         "MEETING_API_PORT": MEETING_API_HOST_PORT,

@@ -8,8 +8,8 @@ VALUES       ?= $(CHART)/values-test.yaml
 # k3s writes a root-only kubeconfig; smoke targets read it via sudo. Override for other clusters.
 KUBECONFIG   ?= /etc/rancher/k3s/k3s.yaml
 COMPOSE      ?= ../compose/docker-compose.yml
-IMAGES        = ghcr.io/sunydepalpur/munshi-gateway ghcr.io/sunydepalpur/munshi-admin-api ghcr.io/sunydepalpur/munshi-meeting-api \
-                ghcr.io/sunydepalpur/munshi-runtime ghcr.io/sunydepalpur/munshi-agent-api ghcr.io/sunydepalpur/munshi-terminal
+IMAGES        = ghcr.io/andai/munshi-gateway ghcr.io/andai/munshi-admin-api ghcr.io/andai/munshi-meeting-api \
+                ghcr.io/andai/munshi-runtime ghcr.io/andai/munshi-agent-api ghcr.io/andai/munshi-terminal
 
 ## lint — helm lint (default + values-test)
 lint:

@@ -8,7 +8,7 @@
  "build_run": "",
  "validation_run": "",
  "images": {
-  "ghcr.io/sunydepalpur/munshi-admin-api": {
+  "ghcr.io/andai/munshi-admin-api": {
    "class": "prod_deployed",
    "digest": "sha256:4c702354384eafe3a933cd537a106b7c15067cfd368a5f6da1a6e675e7e03e04",
    "platforms": [
@@ -32,7 +32,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-runtime": {
+  "ghcr.io/andai/munshi-runtime": {
    "class": "prod_deployed",
    "digest": "sha256:a1f6448fbb380b9433364e8b572ec25a12aa4f274bf403f1d83a89cbf5812f2d",
    "platforms": [
@@ -56,7 +56,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-agent-worker": {
+  "ghcr.io/andai/munshi-agent-worker": {
    "class": "oss_only",
    "digest": "sha256:a1120b24765ff6b1c86c5f9ddee35b5e71fdbb9543a23b918b278373ad705022",
    "platforms": [
@@ -80,7 +80,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-agent-api": {
+  "ghcr.io/andai/munshi-agent-api": {
    "class": "oss_only",
    "digest": "sha256:6eb37574b33aab233aabbe5907e06e106bae44a403e5df781a436da8201a928d",
    "platforms": [
@@ -104,7 +104,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-meeting-api": {
+  "ghcr.io/andai/munshi-meeting-api": {
    "class": "prod_deployed",
    "digest": "sha256:cca46266feedcff29c3478472fd40133ba51f3c49a489a290040a56f1f0f3dca",
    "platforms": [
@@ -124,7 +124,7 @@
    "attestations": true,
    "evidence": "rebuilt: candidate build run 37847760812 at main c1d0ef6f0 (published as v0.12.28-rc.2), aliased to v0.12.28-rc.5 by digest and read back"
   },
-  "ghcr.io/sunydepalpur/munshi-gateway": {
+  "ghcr.io/andai/munshi-gateway": {
    "class": "prod_deployed",
    "digest": "sha256:2e76319812f28adbb6bc328ac0a7484d3826924a9d38a9dd9599dd190fbb0f19",
    "platforms": [
@@ -148,7 +148,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-mcp": {
+  "ghcr.io/andai/munshi-mcp": {
    "class": "oss_only",
    "digest": "sha256:4b2dbc08023ff424f40453d61a8f4d38a72de7eba1e5aaad1e428c309f63d338",
    "platforms": [
@@ -172,7 +172,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-terminal": {
+  "ghcr.io/andai/munshi-terminal": {
    "class": "oss_only",
    "digest": "sha256:d65f81c284553e98e3ee2db4475ee6deea8691f0bd95ccf064e4a99c564095d3",
    "platforms": [
@@ -192,7 +192,7 @@
    "attestations": true,
    "evidence": "rebuilt: candidate build run 37847760812 at main c1d0ef6f0 (published as v0.12.28-rc.2), aliased to v0.12.28-rc.5 by digest and read back"
   },
-  "ghcr.io/sunydepalpur/munshi-bot": {
+  "ghcr.io/andai/munshi-bot": {
    "class": "prod_deployed",
    "digest": "sha256:e2398bfac7fa8671c209e996bc6451598b58438c851956ec050a0300f5a5354b",
    "platforms": [
@@ -210,7 +210,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-lite": {
+  "ghcr.io/andai/munshi-lite": {
    "class": "oss_only",
    "digest": "sha256:9eebb534fdab4079baf11af678968ac8d9679e20ce48db206bcf5a62b85eb538",
    "platforms": [
@@ -234,7 +234,7 @@
    "validation_source": "15205d994e5ababdcae2853c0af3d8e180d95198",
    "validation_run": ""
   },
-  "ghcr.io/sunydepalpur/munshi-flows": {
+  "ghcr.io/andai/munshi-flows": {
    "class": "oss_only",
    "digest": "sha256:e040c0de48924e78440e9cc4e71ed986471f101f99fbe5a5bd091af7e59996fa",
    "platforms": [

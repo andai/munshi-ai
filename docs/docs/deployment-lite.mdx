@@ -3,7 +3,7 @@ title: "Munshi Lite (single container)"
 description: "The whole control plane in one container — process runtime backend, no Docker socket, two datastore sidecars."
 ---
 
-Munshi Lite packs every control-plane service into a single image (`ghcr.io/sunydepalpur/munshi-lite`) and runs
+Munshi Lite packs every control-plane service into a single image (`ghcr.io/andai/munshi-lite`) and runs
 bots and agent workers as **in-container processes** (`RUNTIME_BACKEND=process`) — no Docker
 socket, no per-bot containers. Two sidecars carry state: Postgres and the recordings storage
 (versitygw, an S3 server that keeps each recording as a plain file in a volume). Lite is one of the
@@ -18,7 +18,7 @@ make lite
 ```
 
 `make lite` (= `make -C deploy/lite all`) writes a minimal `.env` if you don't have one, pulls
-`ghcr.io/sunydepalpur/munshi-lite:$IMAGE_TAG` (default `v012`; a locally built `munshi-lite:dev` wins when present),
+`ghcr.io/andai/munshi-lite:$IMAGE_TAG` (default `v012`; a locally built `munshi-lite:dev` wins when present),
 starts the `munshi-lite-postgres` and `munshi-lite-storage` sidecars on the `munshi-lite-net` Docker
 network, boots the app container, waits on the gateway health endpoint, and probes the three
 front doors, giving each up to two minutes to answer (on first boot the terminal restarts once the

@@ -19,7 +19,7 @@
 # (PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1) instead of re-fetching them.
 #
 # Build context = the v0.12 repo root (pnpm-workspace.yaml is there). Build with:
-#   docker build -t ghcr.io/sunydepalpur/munshi-bot:v012 -f meetings/services/bot/Dockerfile .
+#   docker build -t ghcr.io/andai/munshi-bot:v012 -f meetings/services/bot/Dockerfile .
 # ==============================================================================
 
 # JOIN_ENV_IMAGE — the join-env base both stages build on. The default is the local dev tag that

@@ -539,7 +539,7 @@ probe), not inferred from planning docs.
   account identity is hardcoded anywhere. The probe is metered, so it caches for 15 minutes.
 
 - **Cold first-run no longer dies on `invalid reference format` (#812).** Stock `.env.example` ships
-  `BROWSER_IMAGE=ghcr.io/sunydepalpur/munshi-bot:${IMAGE_TAG}` — docker-compose expands it, but `make all`'s
+  `BROWSER_IMAGE=ghcr.io/andai/munshi-bot:${IMAGE_TAG}` — docker-compose expands it, but `make all`'s
   spawn-image pull read the literal string and handed `docker pull` an invalid reference, breaking
   every fresh install at the last step. The pull now resolves `${IMAGE_TAG}` (and hardens the tag
   read against duplicate lines); a genuinely custom literal `BROWSER_IMAGE` still pulls verbatim.
@@ -626,7 +626,7 @@ probe), not inferred from planning docs.
 - **The deprecated 0.10 dashboard is back in the stack as an off-by-default option** — a
   `dashboard` compose profile (`docker compose --profile dashboard up -d`, port 13001) and a
   `dashboard.enabled` helm value, both wiring the pinned external image
-  `ghcr.io/sunydepalpur/munshi-dashboard:0.10.6.3.14` to the gateway's hosted-compat surface exactly as hosted
+  `ghcr.io/andai/munshi-dashboard:0.10.6.3.14` to the gateway's hosted-compat surface exactly as hosted
   production runs it. It stays deprecated and versions on its own pinned tag (never
   `global.imageTag`); it ships because it is still load-bearing — the authenticated-session
   flows are only walkable through it today — and the UI users actually see should belong to a

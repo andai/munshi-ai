@@ -1,7 +1,7 @@
 .PHONY: build push set-latest set-dev set-staging help
 
 # DockerHub configuration
-DOCKERHUB_USER ?= ghcr.io/sunydepalpur
+DOCKERHUB_USER ?= ghcr.io/andai
 IMAGE_NAME ?= dashboard
 
 # Image tagging: use parent IMAGE_TAG if set, otherwise generate timestamp

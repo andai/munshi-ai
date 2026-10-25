@@ -4,7 +4,7 @@
   "generated_from": "v0.12.27...d90708c10 (main; the release PR adds only release records)",
   "witnessed_by": "Sample Speaker",
   "witnessed_at": "2026-10-07",
-  "deployment": "compose + lite on bbb from v0.12.28-rc.3 (agent station); the bot additionally live on the bbb station Zoom/Meet runs and in munshi.ai production, image ghcr.io/sunydepalpur/munshi-bot (linux/amd64 config sha256:995b4aed3254eb8ac05fd4d3837086c1371cfd9a39d4d34f64afead87c5ce37d)",
+  "deployment": "compose + lite on bbb from v0.12.28-rc.3 (agent station); the bot additionally live on the bbb station Zoom/Meet runs and in munshi.ai production, image ghcr.io/andai/munshi-bot (linux/amd64 config sha256:995b4aed3254eb8ac05fd4d3837086c1371cfd9a39d4d34f64afead87c5ce37d)",
   "witness_deployment": {
     "url": "none kept — the station stacks were torn down after the rows passed; the founder walked the bot live on the bbb Zoom/Meet station and it runs in munshi.ai production",
     "provisioned_by": "agent on bbb, 2026-10-08 21:3x–22:0xZ, from the v0.12.28-rc.3 images (rc.5 differs only in Lite; Lite rows re-run on rc.5: L-FRESH PASS and L-UPGRADE PASS (VERIFIED, same sha256) on Lite 9eebb534, 2026-10-09, fills.log section \"rc.5 Lite re-run\") (work unit maintainers/biz#512)",
@@ -99,7 +99,7 @@
       "visibility": "user-visible",
       "pass": "on a live Zoom call the bot on this exact image keeps the speech: words arrive live over /ws and the transcript reads right with one speaker",
       "witnessed": true,
-      "observation": "2026-10-07 21:31-21:40Z, founder-hosted Zoom on the bbb station, single speaker, bot image config 995b4aed (= ghcr.io/sunydepalpur/munshi-bot@sha256:e2398bfa, the rc.3 bot): candidate kept 88.8% of the uncapped reference words vs 75.7% for the previous bot; founder in chat ~21:38Z: \"looks good to me when one speaker\". Record: ~/dev/biz/drafts/2026-10-07-zoom-starved-1781-staging-fills.md. Starved-page behaviour proven offline on the production tape of meeting 31849 (recall 91.5% vs 21.8%). In production on the same digest since 2026-10-08T20:41Z (estate entry 48). Founder-hosted Zoom test in production 2026-10-08 21:16-21:19Z (meeting 32021) on the same digest at 1 CPU: transcript kept.",
+      "observation": "2026-10-07 21:31-21:40Z, founder-hosted Zoom on the bbb station, single speaker, bot image config 995b4aed (= ghcr.io/andai/munshi-bot@sha256:e2398bfa, the rc.3 bot): candidate kept 88.8% of the uncapped reference words vs 75.7% for the previous bot; founder in chat ~21:38Z: \"looks good to me when one speaker\". Record: ~/dev/biz/drafts/2026-10-07-zoom-starved-1781-staging-fills.md. Starved-page behaviour proven offline on the production tape of meeting 31849 (recall 91.5% vs 21.8%). In production on the same digest since 2026-10-08T20:41Z (estate entry 48). Founder-hosted Zoom test in production 2026-10-08 21:16-21:19Z (meeting 32021) on the same digest at 1 CPU: transcript kept.",
       "platform": "zoom"
     },
     {

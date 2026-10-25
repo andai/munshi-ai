@@ -35,7 +35,7 @@ Run it **in the background** and relay its grep-able phase markers as they print
 - `VERDICT PASS|FAIL …`             → the result (also on the viewer banner).
 
 `run.sh` does, in order: start the local **viewer** → spawn the bot on **bbb** (`docker run
-ghcr.io/sunydepalpur/munshi-bot:v012` on network `munshi_munshi`, STT creds pulled from `munshi-runtime-api-1`, **no**
+ghcr.io/andai/munshi-bot:v012` on network `munshi_munshi`, STT creds pulled from `munshi-runtime-api-1`, **no**
 callback URL so the console-sink lifecycle log is the source) → start **feed.mjs** (bridges `docker
 logs` → `/lifecycle` and the `transcription_segments` redis stream → `/transcript`) → wait for
 `active` → **launch + drive** synthetic speakers from the Munshi cloud (`./bin/eval.sh launch|drive`,
@@ -43,7 +43,7 @@ writes `truth.jsonl`) → pull the transcript from redis → **verdict.mjs** (an
 → **attribute.mjs** on red. Artifacts: `/tmp/bot-eval-<id>.{json,flags.json,verdict.json}`.
 
 ## Prerequisites (check, don't assume)
-- `ssh bbb` works and `ghcr.io/sunydepalpur/munshi-bot:v012` is present on bbb (the carved bot image). The compose
+- `ssh bbb` works and `ghcr.io/andai/munshi-bot:v012` is present on bbb (the carved bot image). The compose
   stack is up there (redis `munshi-redis-1`, runtime `munshi-runtime-api-1`, network `munshi_munshi`).
 - **Secrets** at `$SECRETS` (default `~/munshi-test-rig/secrets.env`) exporting `MUNSHI_BASE=https://example.invalid`,
   `PLATFORM=google_meet`, `NATIVE_ID=<meeting_id>`, and the **prod** speaker tokens `TOK_A..TOK_H`

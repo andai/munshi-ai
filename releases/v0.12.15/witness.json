@@ -4,7 +4,7 @@
   "generated_from": "v0.12.12...v0.12.15",
   "witnessed_by": "Sample Speaker (maintainers)",
   "witnessed_at": "2026-07-19",
-  "deployment": "helm (hosted production, rev 92) \u2014 hosted-compat FORK build of the v0.12.15 release: ghcr.io/sunydepalpur/munshi-meeting-api:0.12.15-260719-hc13 (image sha256:771879e3ed84c5c4df27278b10018d35cc8c69237f76530fba038ba37bac5ce6). NOTE: prod runs the hosted-compat fork, not the public ghcr.io/sunydepalpur/munshi-lite:v0.12.15; this receipt witnesses the fork build in production, corroborated by the public :v0.12.15 lite/bot images having passed release-validate.",
+  "deployment": "helm (hosted production, rev 92) \u2014 hosted-compat FORK build of the v0.12.15 release: ghcr.io/andai/munshi-meeting-api:0.12.15-260719-hc13 (image sha256:771879e3ed84c5c4df27278b10018d35cc8c69237f76530fba038ba37bac5ce6). NOTE: prod runs the hosted-compat fork, not the public ghcr.io/andai/munshi-lite:v0.12.15; this receipt witnesses the fork build in production, corroborated by the public :v0.12.15 lite/bot images having passed release-validate.",
   "witness_deployment": {
     "url": "",
     "provisioned_by": "delivered to production via helm rev 92 (hosted-compat fork build 0.12.15-260719-hc13), serving real users continuously since the cutover 2026-07-19 ~12:12 UTC",

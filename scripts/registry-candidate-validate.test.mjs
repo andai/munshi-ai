@@ -15,7 +15,7 @@ const digest = (character) => `sha256:${character.repeat(64)}`;
 const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
 test("frozen map hash accepts exact bytes and rejects altered or truncated bytes", () => {
-  const raw = Buffer.from('{"images":{"ghcr.io/sunydepalpur/munshi-lite":{}}}\n');
+  const raw = Buffer.from('{"images":{"ghcr.io/andai/munshi-lite":{}}}\n');
   const hash = "1887b0e9d312f64c21e46b0bf45d3cff9504fd9042a1a29463e14230d520add3";
   assert.equal(verifyCandidateMapHash(raw, hash), hash);
   for (const changed of [Buffer.from('{"images":{}}\n'), raw.subarray(0, raw.length - 2)]) {
@@ -80,7 +80,7 @@ test("exact top, platform/config, and linked attestation identities pass", () =>
   const value = fixture();
   assert.deepEqual(
     validateManifestIdentity({
-      repository: "ghcr.io/sunydepalpur/munshi-lite",
+      repository: "ghcr.io/andai/munshi-lite",
       expected: value.expected,
       topDigest: digest("1"),
       manifest: value.top,
@@ -95,7 +95,7 @@ test("altered Lite top identity is classified as identity mismatch", () => {
   assert.throws(
     () =>
       validateManifestIdentity({
-        repository: "ghcr.io/sunydepalpur/munshi-lite",
+        repository: "ghcr.io/andai/munshi-lite",
         expected: value.expected,
         topDigest: digest("9"),
         manifest: value.top,
@@ -121,7 +121,7 @@ function oneImageMap() {
   const value = fixture();
   return {
     stable_tag: "v0.12.18",
-    images: { "ghcr.io/sunydepalpur/munshi-lite": value.expected },
+    images: { "ghcr.io/andai/munshi-lite": value.expected },
   };
 }
 
@@ -278,7 +278,7 @@ test("single-manifest alias writes the exact source bytes and preserves its top 
   };
 
   const result = await aliasManifest({
-    repository: "ghcr.io/sunydepalpur/munshi-bot",
+    repository: "ghcr.io/andai/munshi-bot",
     sourceReference: "v0.12.18",
     targetReference: "v012",
     expectedDigest: sourceDigest,
@@ -297,7 +297,7 @@ test("single-manifest alias writes the exact source bytes and preserves its top 
     unchangedDigest: digest("9"),
   });
   const tokenUrl = new URL(calls[0].url);
-  assert.equal(tokenUrl.searchParams.get("scope"), "repository:ghcr.io/sunydepalpur/munshi-bot:pull,push");
+  assert.equal(tokenUrl.searchParams.get("scope"), "repository:ghcr.io/andai/munshi-bot:pull,push");
 });
 
 test("red control: an imagetools-style index wrapper changes a single-manifest top digest", () => {
@@ -329,7 +329,7 @@ test("red control: an imagetools-style index wrapper changes a single-manifest t
   assert.throws(
     () =>
       validateManifestIdentity({
-        repository: "ghcr.io/sunydepalpur/munshi-bot",
+        repository: "ghcr.io/andai/munshi-bot",
         expected: {
           digest: manifestDigest,
           platform_manifests: {
@@ -356,7 +356,7 @@ test("alias readback digest rewrite is an identity failure", async () => {
   let reads = 0;
   await assert.rejects(
     aliasManifest({
-      repository: "ghcr.io/sunydepalpur/munshi-bot",
+      repository: "ghcr.io/andai/munshi-bot",
       sourceReference: "v0.12.18",
       targetReference: "v012",
       expectedDigest: digest("1"),
@@ -385,12 +385,12 @@ test("alias readback digest rewrite is an identity failure", async () => {
 });
 
 test("an ABSENT negative-control tag is unchanged, not an error (v012 promote, #1654 follow-up)", async () => {
-  // ghcr.io/sunydepalpur/munshi-admin-api has no `latest` tag at all. The v012 promote asserts `latest` is
+  // ghcr.io/andai/munshi-admin-api has no `latest` tag at all. The v012 promote asserts `latest` is
   // unchanged while it moves `:v012`; a 404 there used to abort the whole promotion (exit 7,
   // run 34105335802). Absent before and absent after IS the control holding.
   const bytes = Buffer.from('{"schemaVersion":2}');
   const receipt = await aliasManifest({
-    repository: "ghcr.io/sunydepalpur/munshi-admin-api",
+    repository: "ghcr.io/andai/munshi-admin-api",
     sourceReference: "v0.12.27",
     targetReference: "v012",
     expectedDigest: digest("1"),
@@ -417,7 +417,7 @@ test("an absent negative control that APPEARS during the alias still fails", asy
   let latestReads = 0;
   await assert.rejects(
     aliasManifest({
-      repository: "ghcr.io/sunydepalpur/munshi-admin-api",
+      repository: "ghcr.io/andai/munshi-admin-api",
       sourceReference: "v0.12.27",
       targetReference: "v012",
       expectedDigest: digest("1"),
@@ -452,7 +452,7 @@ test("aliasing cannot move the unchanged latest negative control", async () => {
   let latestReads = 0;
   await assert.rejects(
     aliasManifest({
-      repository: "ghcr.io/sunydepalpur/munshi-bot",
+      repository: "ghcr.io/andai/munshi-bot",
       sourceReference: "v0.12.18",
       targetReference: "v012",
       expectedDigest: digest("1"),

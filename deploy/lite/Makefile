@@ -16,7 +16,7 @@ DOCKERFILE := $(ROOT)/deploy/lite/Dockerfile.lite
 CONTEXT    := $(ROOT)
 
 # --- DockerHub / image ---
-DOCKERHUB_USER ?= ghcr.io/sunydepalpur
+DOCKERHUB_USER ?= ghcr.io/andai
 IMAGE_NAME     ?= munshi-lite
 TAG            ?= dev
 LOCAL_TAG      := $(IMAGE_NAME):$(TAG)

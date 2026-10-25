@@ -7,7 +7,7 @@
   "deployment": "lite (throwaway Linode VM 100928608, LOCAL_STT=1, image index sha256:1a835cfc3e98feb16efda64c2944e1d5035aa411ef3750d6cea0a9726ccd6969 (linux/amd64 image sha256:ea043dafd6fa9bb179d217f7401515b22cc5a1481f1cfdf1c425b1bf46c12e9c))",
   "witness_deployment": {
     "url": "http://172.239.175.28:3001",
-    "provisioned_by": "linode-cli throwaway VM 100928608 (us-sea, g6-standard-4), lite runbook `make -C deploy/lite up LOCAL_STT=1` from the PUBLISHED ghcr.io/sunydepalpur/munshi-lite:v0.12.12 \u2014 autonomously provisioned + prevalidated, human walked it live",
+    "provisioned_by": "linode-cli throwaway VM 100928608 (us-sea, g6-standard-4), lite runbook `make -C deploy/lite up LOCAL_STT=1` from the PUBLISHED ghcr.io/andai/munshi-lite:v0.12.12 \u2014 autonomously provisioned + prevalidated, human walked it live",
     "prevalidated": [
       "front doors: gateway :8056 / agent-api :8100 / terminal :3001 all \u2713 (make -C deploy/lite test)",
       "gateway /health 200; terminal :3001 200 text/html",

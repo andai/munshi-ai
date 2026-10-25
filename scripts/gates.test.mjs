@@ -272,8 +272,8 @@ test("image-licenses RED: the Lite apt redis-server parity trap reds", () => {
 });
 
 test("image-licenses RED: a bundled component under a source-available licence (SSPL) is FORBIDDEN", () => {
-  // The strict redistribution path: anything baked into a ghcr.io/sunydepalpur/* image must be Cat A (or B-with-reason).
-  const inject = '"bundled": [\n    {\n      "name": "redis",\n      "license": "SSPLv1",\n      "artifact": "ghcr.io/sunydepalpur/munshi-lite",\n      "reason": "test fixture"\n    },';
+  // The strict redistribution path: anything baked into a ghcr.io/andai/* image must be Cat A (or B-with-reason).
+  const inject = '"bundled": [\n    {\n      "name": "redis",\n      "license": "SSPLv1",\n      "artifact": "ghcr.io/andai/munshi-lite",\n      "reason": "test fixture"\n    },';
   const r = withEdited(IMG_MANIFEST, '"bundled": [', inject, () => runGate("image-licenses"));
   assert.equal(r.green, false, "a source-available bundled component was not forbidden — the redistribution guard is inert");
   assert.match(r.out, /FORBIDDEN \(Cat X\)/);

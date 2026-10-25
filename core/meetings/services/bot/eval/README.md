@@ -57,6 +57,6 @@ with `pnpm --filter @munshi/bot run replay` (`gate:replay`, `../src/replay.test.
 
 ## Prereqs (brief — full list in RUNBOOK.md)
 
-`ssh bbb` + `ghcr.io/sunydepalpur/munshi-bot:v012` present; compose stack up on bbb (redis `munshi-redis-1`, runtime
+`ssh bbb` + `ghcr.io/andai/munshi-bot:v012` present; compose stack up on bbb (redis `munshi-redis-1`, runtime
 `munshi-runtime-api-1`, net `munshi_munshi`); `$SECRETS` (default `~/munshi-test-rig/secrets.env`) with
 `MUNSHI_BASE`, `PLATFORM`, `NATIVE_ID`, prod `TOK_A..H` (decrypt from `~/dev/munshi-secrets`, never commit).

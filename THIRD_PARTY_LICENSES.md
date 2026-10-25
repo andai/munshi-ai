@@ -21,7 +21,7 @@ enriches them. Builder-stage packages that do not cross into the final image are
 
 | Artifact | Version | License | Source | Baked into | In-image path |
 | --- | --- | --- | --- | --- | --- |
-| `valkey` | `8.1.9` | BSD-3-Clause | [github.com/valkey-io/valkey](https://github.com/valkey-io/valkey) | `ghcr.io/sunydepalpur/munshi-lite` | `/usr/local/bin/valkey-server`, `/usr/local/share/valkey/LICENSE` |
+| `valkey` | `8.1.9` | BSD-3-Clause | [github.com/valkey-io/valkey](https://github.com/valkey-io/valkey) | `ghcr.io/andai/munshi-lite` | `/usr/local/bin/valkey-server`, `/usr/local/share/valkey/LICENSE` |
 
 **`valkey`** — the internal cache / stream store (bus, scheduler, per-dispatch streams). Lite
 builds `valkey-server` + `valkey-cli` from the pinned git tag in the `valkey-builder` stage of
@@ -41,7 +41,7 @@ and keeps Lite off both jammy apt's stale Redis 6.0.16 and source-available Redi
 
 | Artifact | Version (revision) | License | Source | Baked into | In-image path |
 | --- | --- | --- | --- | --- | --- |
-| `onnx-community/pyannote-segmentation-3.0` | `main` | MIT | [huggingface.co](https://huggingface.co/onnx-community/pyannote-segmentation-3.0) | `ghcr.io/sunydepalpur/munshi-bot`, `ghcr.io/sunydepalpur/munshi-lite` | `/opt/hf-cache/LICENSE.pyannote-segmentation-3.0` |
+| `onnx-community/pyannote-segmentation-3.0` | `main` | MIT | [huggingface.co](https://huggingface.co/onnx-community/pyannote-segmentation-3.0) | `ghcr.io/andai/munshi-bot`, `ghcr.io/andai/munshi-lite` | `/opt/hf-cache/LICENSE.pyannote-segmentation-3.0` |
 
 **`onnx-community/pyannote-segmentation-3.0`** — the mixed (Zoom/Teams) speaker-diarization
 lane segments speakers with this model, loaded OFFLINE from an image-baked HuggingFace cache

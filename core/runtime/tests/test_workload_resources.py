@@ -156,7 +156,7 @@ def test_pod_carries_resources_and_every_pre_existing_field():
     pod = build_pod(
         name="munshi-mtg-9",
         workload_id="mtg-9",
-        runnable=Runnable(image="ghcr.io/sunydepalpur/munshi-bot:test", command=["python", "-m", "worker"]),
+        runnable=Runnable(image="ghcr.io/andai/munshi-bot:test", command=["python", "-m", "worker"]),
         env=env,
         namespace="munshi",
         resources=Resources(cpu=1, memoryMb=2048),
@@ -174,7 +174,7 @@ def test_pod_carries_resources_and_every_pre_existing_field():
     assert spec["volumes"], "workspace store volume survived"
     c = spec["containers"][0]
     assert c["name"] == "munshi-mtg-9"
-    assert c["image"] == "ghcr.io/sunydepalpur/munshi-bot:test"       # NOT erased
+    assert c["image"] == "ghcr.io/andai/munshi-bot:test"       # NOT erased
     assert c["command"] == ["python", "-m", "worker"]  # NOT erased
     assert {"name": "MUNSHI_BOT_CONFIG", "value": "{}"} in c["env"]  # NOT erased
     assert c["volumeMounts"], "workspace volumeMounts survived"
@@ -245,7 +245,7 @@ def test_k8s_start_submits_the_pod_via_create_stdin(monkeypatch):
 # ── C3 · the two profiles are sized independently from the runtime's env ─────────────────────
 def test_default_registry_sizes_the_two_profiles_independently(monkeypatch):
     monkeypatch.setenv("BROWSER_IMAGE", "bot:test")
-    monkeypatch.setenv("AGENT_IMAGE", "ghcr.io/sunydepalpur/munshi-agent-api:test")
+    monkeypatch.setenv("AGENT_IMAGE", "ghcr.io/andai/munshi-agent-api:test")
     monkeypatch.setenv("RUNTIME_BOT_CPU", "1")
     monkeypatch.setenv("RUNTIME_BOT_MEMORY_MB", "2048")
     monkeypatch.setenv("RUNTIME_AGENT_WORKER_CPU", "0.5")
@@ -258,7 +258,7 @@ def test_default_registry_sizes_the_two_profiles_independently(monkeypatch):
 def test_default_registry_emits_no_resources_when_unset(monkeypatch):
     """The chart's unset case: no env ⇒ no profile default ⇒ the optional contract is preserved."""
     monkeypatch.setenv("BROWSER_IMAGE", "bot:test")
-    monkeypatch.setenv("AGENT_IMAGE", "ghcr.io/sunydepalpur/munshi-agent-api:test")
+    monkeypatch.setenv("AGENT_IMAGE", "ghcr.io/andai/munshi-agent-api:test")
     for key in ("RUNTIME_BOT_CPU", "RUNTIME_BOT_MEMORY_MB",
                 "RUNTIME_AGENT_WORKER_CPU", "RUNTIME_AGENT_WORKER_MEMORY_MB"):
         monkeypatch.delenv(key, raising=False)

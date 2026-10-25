@@ -7,7 +7,7 @@
   "build_source": "a7d49881eb8ff53b438537c59a8d480ec8f97593",
   "build_run": "",
   "images": {
-    "ghcr.io/sunydepalpur/munshi-admin-api": {
+    "ghcr.io/andai/munshi-admin-api": {
       "class": "prod_deployed",
       "digest": "sha256:6b32a88e17c4313555ea7e5d4b5dfe7e8f112f46731ae435503699e5b28d419f",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -24,7 +24,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-runtime": {
+    "ghcr.io/andai/munshi-runtime": {
       "class": "prod_deployed",
       "digest": "sha256:db02704e22c5939d36e71397ef0c6393fd3f5e902812dcf40f7973d9f5a7278f",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -41,7 +41,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-agent-worker": {
+    "ghcr.io/andai/munshi-agent-worker": {
       "class": "oss_only",
       "digest": "sha256:80dbdacf623f30d60d0bbaff5ecd498225b981ded3cdf40256bc502f38aaf323",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -58,7 +58,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-agent-api": {
+    "ghcr.io/andai/munshi-agent-api": {
       "class": "oss_only",
       "digest": "sha256:bec44f393e21fbf8ae0d64b9086978b7c7fb443a80b3db5d0bf99e3178e05b8b",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -75,7 +75,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-meeting-api": {
+    "ghcr.io/andai/munshi-meeting-api": {
       "class": "prod_deployed",
       "digest": "sha256:fa5380365602bd91529be805601ce4b719ef662d63a25a2de86f46366c648c5b",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -92,7 +92,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-gateway": {
+    "ghcr.io/andai/munshi-gateway": {
       "class": "prod_deployed",
       "digest": "sha256:bb640ce0c3b315a3dfaec25fe36a395ef54e90ac6a5eae86cc1eb52fadb87ef0",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -109,7 +109,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-mcp": {
+    "ghcr.io/andai/munshi-mcp": {
       "class": "oss_only",
       "digest": "sha256:dc3746d8a35b132bb385d1d15ca0f708f5b45fb6a7713ee8e3f75e31ab71f10d",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -126,7 +126,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-terminal": {
+    "ghcr.io/andai/munshi-terminal": {
       "class": "oss_only",
       "digest": "sha256:c4ebff39ec687a6e61703e1cc0bf3a7c51a7f1a330a681060389c114ff8e5d72",
       "platforms": ["linux/amd64", "linux/arm64"],
@@ -143,7 +143,7 @@
       "attestations": true,
       "evidence": "candidate build run 31948654678 at a7d49881; exact registry identities collected after the image job completed"
     },
-    "ghcr.io/sunydepalpur/munshi-bot": {
+    "ghcr.io/andai/munshi-bot": {
       "class": "prod_deployed",
       "digest": "sha256:459d626d18c5551559da6edb68c136731836184ce0f4143a29567c5aa00f68a1",
       "platforms": ["linux/amd64"],
@@ -156,7 +156,7 @@
       "attestations": false,
       "evidence": "candidate build run 31948654678 at a7d49881; exact bot digest deployed on STAGE Helm revision 185"
     },
-    "ghcr.io/sunydepalpur/munshi-lite": {
+    "ghcr.io/andai/munshi-lite": {
       "class": "oss_only",
       "digest": "sha256:c392bc8f38b513481fecd896be3607e85775a5ad128603175b34bb4edd850997",
       "platforms": ["linux/amd64", "linux/arm64"],
