@@ -127,9 +127,11 @@ The single bring-up command, from the repository root on the VM:
 make -C andai up
 ```
 
-It mints missing secrets (`andai/scripts/gen-secrets.sh`), pulls the Munshi v0.12.28 images, the
-agent-worker image and the digest-pinned bot image, builds only the andai images, and starts
-everything with `--wait` (fails if any service does not become healthy). Then:
+It mints missing secrets (`andai/scripts/gen-secrets.sh`), builds any image the stack needs that is
+not on the machine (the catalogue in `andai/images.json`: every Munshi service, the bot, the hardened
+agent worker and the andai services, all `ghcr.io/sunydepalpur/munshi-*:<VERSION>`), and starts
+everything with `--wait` (fails if any service does not become healthy). `make -C andai up PULL=1`
+pulls the published images from ghcr.io instead of building them. Then:
 
 ```bash
 make -C andai health    # HTTP 200 from every service on 127.0.0.1 + no unhealthy/exited containers

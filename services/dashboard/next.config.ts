@@ -66,6 +66,9 @@ const nextConfig: NextConfig = {
   // longer reachable at runtime via standard navigation.
   async redirects() {
     const docsBase = process.env.NEXT_PUBLIC_DOCS_URL || "";
+    // No hosted docs site by default: without NEXT_PUBLIC_DOCS_URL there is nothing to redirect to
+    // (an empty destination is an invalid redirect and fails `next build`).
+    if (!docsBase) return [];
     return [
       {
         source: "/docs",
