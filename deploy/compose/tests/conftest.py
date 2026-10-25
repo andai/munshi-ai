@@ -67,6 +67,8 @@ RUNTIME_URL = f"http://127.0.0.1:{RUNTIME_HOST_PORT}"
 ADMIN_TOKEN = "gate-admin-token"
 INTERNAL_API_SECRET = "gate-internal-secret"
 MINIO_BUCKET = "munshi"
+FLOWS_API_KEY = "gate-flows-api-key"
+FLOWS_TIMELINE_KEY = "gate-flows-timeline-key"
 
 SERVICES = ["redis", "postgres", "storage", "admin-api", "runtime", "meeting-api", "gateway"]
 HEALTHCHECKED = ["redis", "postgres", "storage", "admin-api", "runtime", "meeting-api", "gateway"]
@@ -132,6 +134,10 @@ def _stack_env() -> dict:
         "ADMIN_TOKEN": ADMIN_TOKEN,
         "INTERNAL_API_SECRET": INTERNAL_API_SECRET,
         "MINIO_BUCKET": MINIO_BUCKET,
+        # flows-api refuses to boot without these (no default by design); pinned like ADMIN_TOKEN so a
+        # fresh checkout with no deploy/compose/.env can still bring the full stack up.
+        "MUNSHI_FLOWS_API_KEY": FLOWS_API_KEY,
+        "MUNSHI_FLOWS_TIMELINE_KEY": FLOWS_TIMELINE_KEY,
         "BROWSER_IMAGE": os.getenv("BROWSER_IMAGE", "ghcr.io/sunydepalpur/munshi-bot:v012"),
         "API_GATEWAY_HOST_PORT": GATEWAY_PORT,
         "ADMIN_API_PORT": ADMIN_API_HOST_PORT,
