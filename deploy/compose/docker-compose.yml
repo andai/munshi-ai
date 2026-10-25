@@ -171,11 +171,11 @@ services:
       - path: .env
         required: false
     environment:
-      - BROWSER_IMAGE=${BROWSER_IMAGE:-munshiai/munshi-bot:${IMAGE_TAG:-dev}}
+      - BROWSER_IMAGE=${BROWSER_IMAGE:-ghcr.io/sunydepalpur/munshi-bot:${IMAGE_TAG:-dev}}
       # The per-dispatch WORKER image the runtime spawns (control-plane ⊥ worker split). AGENT_WORKER_IMAGE
       # is set EXPLICITLY (no suffix derivation); AGENT_IMAGE now matches the built control-plane tag.
-      - AGENT_IMAGE=${AGENT_IMAGE:-munshiai/v012-agent-api:${IMAGE_TAG:-dev}}
-      - AGENT_WORKER_IMAGE=${AGENT_WORKER_IMAGE:-munshiai/v012-agent-worker:${IMAGE_TAG:-dev}}
+      - AGENT_IMAGE=${AGENT_IMAGE:-ghcr.io/sunydepalpur/munshi-agent-api:${IMAGE_TAG:-dev}}
+      - AGENT_WORKER_IMAGE=${AGENT_WORKER_IMAGE:-ghcr.io/sunydepalpur/munshi-agent-worker:${IMAGE_TAG:-dev}}
       # Optional low-latency tuning for the Google Meet speaker-stream pipeline. Empty values keep
       # the bot defaults; runtime forwards configured values to spawned bot containers.
       - BOT_ALONE_SILENCE_WINDOW_MS=${BOT_ALONE_SILENCE_WINDOW_MS:-}
@@ -985,7 +985,7 @@ services:
   # Deprecation exit: when the Terminal covers the flows above, this block is deleted, not ported.
   dashboard:
     profiles: ["dashboard"]
-    image: ${DASHBOARD_IMAGE:-munshiai/dashboard:0.10.6.3.14}
+    image: ${DASHBOARD_IMAGE:-ghcr.io/sunydepalpur/munshi-dashboard:${IMAGE_TAG:-dev}}
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-13001}:3000"
     environment:

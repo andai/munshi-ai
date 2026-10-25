@@ -22,10 +22,14 @@
 #   docker build -t ghcr.io/sunydepalpur/munshi-bot:v012 -f meetings/services/bot/Dockerfile .
 # ==============================================================================
 
+# JOIN_ENV_IMAGE — the join-env base both stages build on. The default is the local dev tag that
+# `make -C deploy/compose bot` builds; `make -C andai images` passes the versioned catalogue image.
+ARG JOIN_ENV_IMAGE=munshi/meet-join-env:dev
+
 # ------------------------------------------------------------------------------
 # Stage 1: builder — install + build the workspace slice @munshi/bot depends on.
 # ------------------------------------------------------------------------------
-FROM munshi/meet-join-env:dev AS builder
+FROM ${JOIN_ENV_IMAGE} AS builder
 
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
@@ -33,8 +37,10 @@ ENV PNPM_HOME=/pnpm \
     # them during `pnpm install` (playwright/remote-browser have a postinstall).
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    # onnxruntime-node (via @munshi/mixed-pipeline) — skip the optional CUDA fetch;
+    # onnxruntime-node (via @munshi/mixed-pipeline) — skip the optional CUDA fetch
+    # (on linux/x64 its postinstall otherwise downloads the CUDA EP from NuGet);
     # the segmenter runs CPU and the smoke/gmeet path never loads it anyway.
+    ONNXRUNTIME_NODE_INSTALL=skip \
     CI=1
 
 # pnpm pinned to the workspace's packageManager (pnpm@11.7.0) via corepack.
@@ -97,7 +103,7 @@ RUN cd /build && node core/meetings/services/bot/warm-hf-cache.mjs
 # Stage 2: runtime — the ephemeral worker. Same env base; add the bot's own audio
 # deps; carry the built workspace tree (incl. node_modules symlink farm) intact.
 # ------------------------------------------------------------------------------
-FROM munshi/meet-join-env:dev AS runtime
+FROM ${JOIN_ENV_IMAGE} AS runtime
 
 # The bot's OWN runtime deps NOT in the meet-join env: PulseAudio (the speak/TTS
 # + capture audio chain), fluxbox (a WM for the X11 session), and the aws CLI —

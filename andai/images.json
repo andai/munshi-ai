@@ -1,0 +1,150 @@
+{
+  "third_party": [
+    "valkey/valkey:8-alpine",
+    "postgres:17-alpine",
+    "versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499",
+    "nginx:alpine"
+  ],
+  "images": [
+    {
+      "name": "meet-join-env",
+      "dockerfile": "core/meetings/modules/join/Dockerfile.env",
+      "context": "core/meetings/modules/join",
+      "args": {},
+      "note": "Playwright + X11 base the bot is built on (not a compose service)"
+    },
+    {
+      "name": "bot",
+      "dockerfile": "core/meetings/services/bot/Dockerfile",
+      "context": ".",
+      "args": {
+        "JOIN_ENV_IMAGE": "{registry}/munshi-meet-join-env:{version}",
+        "MUNSHI_IMAGE_VERSION": "{git_sha}"
+      },
+      "note": "meeting bot, spawned by runtime as BROWSER_IMAGE"
+    },
+    {
+      "name": "mock-bot",
+      "dockerfile": "core/meetings/services/bot/Dockerfile.mock",
+      "context": ".",
+      "args": {},
+      "extra_tags": ["mock-bot:dev"],
+      "note": "test instrument for the mock-bot stack test; mock-bot:dev is its local test alias"
+    },
+    {
+      "name": "meeting-api",
+      "dockerfile": "core/meetings/services/meeting-api/Dockerfile",
+      "context": ".",
+      "args": {},
+      "note": "services meeting-api and storage-init"
+    },
+    {
+      "name": "admin-api",
+      "dockerfile": "core/identity/services/admin-api/Dockerfile",
+      "context": "core/identity/services/admin-api",
+      "args": {}
+    },
+    {
+      "name": "runtime",
+      "dockerfile": "core/runtime/Dockerfile",
+      "context": "core/runtime",
+      "args": {}
+    },
+    {
+      "name": "agent-api",
+      "dockerfile": "core/agent/services/agent-api/Dockerfile",
+      "context": ".",
+      "args": {}
+    },
+    {
+      "name": "agent-worker",
+      "dockerfile": "core/agent/worker/Dockerfile",
+      "context": ".",
+      "args": {},
+      "note": "base of agent-worker-hardened; spawned per dispatch, not a running service"
+    },
+    {
+      "name": "gateway",
+      "dockerfile": "core/gateway/services/gateway/Dockerfile",
+      "context": ".",
+      "args": {}
+    },
+    {
+      "name": "flows",
+      "dockerfile": "core/flows/Dockerfile",
+      "context": ".",
+      "args": {},
+      "note": "services flows-api, flows-worker and flows-mailbox"
+    },
+    {
+      "name": "mcp",
+      "dockerfile": "core/meetings/services/mcp/Dockerfile",
+      "context": "core/meetings/services/mcp",
+      "args": {}
+    },
+    {
+      "name": "terminal",
+      "dockerfile": "clients/terminal/Dockerfile",
+      "context": "clients/terminal",
+      "args": {
+        "RUNTIME_DEPS": "prod"
+      }
+    },
+    {
+      "name": "dashboard",
+      "dockerfile": "services/dashboard/Dockerfile",
+      "context": ".",
+      "args": {
+        "MUNSHI_API_URL": "http://gateway:8000"
+      },
+      "note": "operator-only dashboard (compose profile dashboard)"
+    },
+    {
+      "name": "transcription",
+      "dockerfile": "core/meetings/services/transcription/Dockerfile",
+      "context": ".",
+      "args": {},
+      "note": "self-hosted STT, GPU (deploy/transcription); not started by the default stack"
+    },
+    {
+      "name": "transcription-cpu",
+      "dockerfile": "core/meetings/services/transcription/Dockerfile.cpu",
+      "context": ".",
+      "args": {},
+      "note": "self-hosted STT, CPU (deploy/transcription); not started by the default stack"
+    },
+    {
+      "name": "andai-core",
+      "dockerfile": "andai/services/core/Dockerfile",
+      "context": "andai",
+      "args": {}
+    },
+    {
+      "name": "andai-worker",
+      "dockerfile": "andai/services/worker/Dockerfile",
+      "context": "andai",
+      "args": {}
+    },
+    {
+      "name": "andai-intake",
+      "dockerfile": "andai/services/intake/Dockerfile",
+      "context": "andai",
+      "args": {}
+    },
+    {
+      "name": "andai-portal",
+      "dockerfile": "andai/portal/Dockerfile",
+      "context": "andai/portal",
+      "args": {}
+    },
+    {
+      "name": "agent-worker-hardened",
+      "dockerfile": "andai/deploy/agent-worker/Dockerfile",
+      "context": "andai/deploy/agent-worker",
+      "args": {
+        "VERSION": "{version}"
+      },
+      "note": "the agent worker the runtime spawns (AGENT_WORKER_IMAGE); built last, FROM agent-worker of the same version"
+    }
+  ]
+}

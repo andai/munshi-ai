@@ -31,7 +31,7 @@ On the STT host (a GPU host for production; the CPU file works for small loads):
 cd deploy/transcription
 cp .env.example .env
 # Set at least:
-#   IMAGE_TAG=v0.12.28          (pin the release; do not run :dev)
+#   IMAGE_TAG=0.1.0             (the repo's VERSION; do not run :dev)
 #   API_TOKEN=$(openssl rand -hex 32)
 #   MODEL_SIZE=large-v3-turbo   (multilingual; covers English and Hindi)
 docker compose up -d                              # GPU

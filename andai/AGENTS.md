@@ -9,6 +9,9 @@ normal review. Attribution for the code this project started from is in the root
 - **Portal:** `andai/portal` (Next.js).
 - **Deployment:** `andai/deploy/` (compose overlay, env template, hardened agent-worker image);
   bring-up is `make -C andai up` (see `andai/Makefile` and `andai/docs/dev-vm.md`).
+- **Images:** `andai/images.json` lists every image the stack runs; all are built from this repo
+  (`make -C andai images`) as `ghcr.io/sunydepalpur/munshi-<name>:<VERSION>` (root `VERSION`).
+  A new service or image reference must be added there; `make -C andai images-check` enforces it.
 - **Operator scripts and tools:** `andai/scripts/`, `andai/tools/`.
 - **Root `CLAUDE.md` and `AGENTS.md`** describe the meeting platform under `core/`, `clients/`,
   `services/` and `deploy/`; follow them when you work there.
