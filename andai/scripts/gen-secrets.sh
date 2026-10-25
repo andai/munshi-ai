@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # gen-secrets.sh ENV_FILE — fill the stack secrets in an andai .env file.
 #
-# For each key below, writes a fresh `openssl rand -hex 32` value when the key is missing, empty,
-# or set to a published placeholder (Munshi's .env.example dev values, or a value Munshi's services
-# refuse by name). A key that already holds a real value is left alone, so re-running is safe and
-# never rotates a secret a running stack depends on. Values are never printed.
+# For each key below, writes a fresh random value when the key is missing, empty, or set to a
+# published placeholder (Munshi's .env.example dev values, or a value Munshi's services refuse by
+# name). A key that already holds a real value is left alone, so re-running is safe and never
+# rotates a secret a running stack depends on. Values are never printed.
 #
-# Keys: ADMIN_TOKEN, INTERNAL_API_SECRET, MUNSHI_DISPATCH_SIGNING_KEY, NEXTAUTH_SECRET, plus
-# MUNSHI_FLOWS_API_KEY and MUNSHI_FLOWS_TIMELINE_KEY (Munshi's flows services refuse to boot without
-# them; Munshi's own deploy/compose/mint-dev-env.sh mints the same two).
+# Keys minted as `openssl rand -hex 32`: ADMIN_TOKEN, INTERNAL_API_SECRET,
+# MUNSHI_DISPATCH_SIGNING_KEY, NEXTAUTH_SECRET, MUNSHI_FLOWS_API_KEY and MUNSHI_FLOWS_TIMELINE_KEY
+# (Munshi's flows services refuse to boot without the last two; Munshi's own
+# deploy/compose/mint-dev-env.sh mints the same two), plus andai-core's database role passwords
+# ANDAI_DB_PASSWORD_OWNER and ANDAI_DB_PASSWORD_APP (hex, so they are safe inside connection URLs).
+# Minted as `openssl rand -base64 32`: ANDAI_KEK, andai-core's key-encryption key (32 bytes).
 set -euo pipefail
 
 usage() { echo "usage: $0 ENV_FILE" >&2; exit 2; }
@@ -27,7 +30,7 @@ case "$(basename "$env_file")" in
 esac
 command -v openssl >/dev/null || { echo "gen-secrets: openssl not found" >&2; exit 1; }
 
-keys=(ADMIN_TOKEN INTERNAL_API_SECRET MUNSHI_DISPATCH_SIGNING_KEY NEXTAUTH_SECRET MUNSHI_FLOWS_API_KEY MUNSHI_FLOWS_TIMELINE_KEY)
+keys=(ADMIN_TOKEN INTERNAL_API_SECRET MUNSHI_DISPATCH_SIGNING_KEY NEXTAUTH_SECRET MUNSHI_FLOWS_API_KEY MUNSHI_FLOWS_TIMELINE_KEY ANDAI_DB_PASSWORD_OWNER ANDAI_DB_PASSWORD_APP ANDAI_KEK)
 placeholders=" dev-admin-token dev-dispatch-signing-key dev-nextauth-secret munshi-internal-secret lite-internal-secret changeme change-me CHANGE-ME default secret "
 
 tmp="$(mktemp "${env_file}.XXXXXX")"
@@ -42,7 +45,10 @@ for key in "${keys[@]}"; do
     echo "kept    $key"
     continue
   fi
-  value="$(openssl rand -hex 32)"
+  case "$key" in
+    ANDAI_KEK) value="$(openssl rand -base64 32)" ;;
+    *)         value="$(openssl rand -hex 32)" ;;
+  esac
   if grep -qE "^${key}=" "$tmp"; then
     awk -v k="$key" -v v="$value" 'BEGIN{FS=OFS="="} $1==k {print k "=" v; next} {print}' "$tmp" > "$tmp.new"
     mv "$tmp.new" "$tmp"
