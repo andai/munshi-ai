@@ -28,4 +28,9 @@ andai-worker = { workspace = true }
 andai-intake = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "services/core/tests"]
+# Live tests need a running stack; select them explicitly with `-m live`.
+addopts = "-m 'not live'"
+markers = [
+    "live: needs the running compose stack (excluded by default; run with -m live)",
+]

@@ -19,6 +19,10 @@ RUN uv sync --frozen --no-dev --no-editable --package andai-core
 FROM python:3.12-slim-bookworm
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin andai
 COPY --from=build /app/.venv /app/.venv
+# Alembic migrations for the andai database (`make -C andai db-migrate` runs them from /app).
+WORKDIR /app
+COPY services/core/alembic.ini alembic.ini
+COPY services/core/migrations migrations
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     ANDAI_VERSION=dev

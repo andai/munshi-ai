@@ -8,8 +8,9 @@
 #     --env-file <repo>/andai/deploy/compose/.env ...
 #
 # What it does:
-#   1. Adds the andai skeleton services (andai-core, andai-worker, andai-intake, andai-portal) on
-#      Munshi's `munshi` network.
+#   1. Adds the andai services (andai-core, andai-worker, andai-intake, andai-portal) on
+#      Munshi's `munshi` network. andai-core keeps its data in its own database `andai` on the
+#      stack's Postgres (never in Munshi's database).
 #   2. For Munshi services it changes ONLY `environment` entries and `ports` (D-15 perimeter). No
 #      Munshi file is edited; every other setting comes from the untracked .env.
 #
@@ -38,8 +39,31 @@ services:
     # Catalogue image (andai/images.json). Compose never pulls it: `make up` builds it when missing
     # (or pulls it with PULL=1), then starts with --no-build.
     pull_policy: never
+    # andai-core's own database `andai` lives on the stack's Postgres, created by `make db-init`.
+    # The service connects as the RLS-bound app role only; the owner URL is handed to the one-shot
+    # migration container by `make db-migrate`, never to the running service. Passwords and the
+    # KEK are hex/base64 values minted by gen-secrets.sh into the env file.
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+      - ANDAI_ENV=${ANDAI_ENV:-dev}
+      - ANDAI_DB_URL_APP=postgresql+psycopg://andai_app:${ANDAI_DB_PASSWORD_APP?ANDAI_DB_PASSWORD_APP must be in the env file (gen-secrets.sh mints it)}@postgres:5432/andai
+      - ANDAI_KEK=${ANDAI_KEK?ANDAI_KEK must be in the env file (gen-secrets.sh mints it)}
+      - PLATFORM_ADMIN_URL=http://admin-api:8001
+      - PLATFORM_ADMIN_TOKEN=${ADMIN_TOKEN}
+      - REDIS_URL=redis://redis:6379/1
+      - SMTP_HOST=${SMTP_HOST:-mailpit}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-munshi.ai <no-reply@munshi.invalid>}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
+      - ANDAI_PORTAL_ORIGIN=${ANDAI_PORTAL_ORIGIN:-http://127.0.0.1:13100}
+      # Comma-separated hostnames or CIDRs whose X-Forwarded-For is believed; hostnames are
+      # resolved via DNS (30 s cache) and compared with the TCP peer address.
+      - ANDAI_TRUSTED_PROXIES=${ANDAI_TRUSTED_PROXIES:-andai-portal}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports: !override
       - "127.0.0.1:${ANDAI_CORE_PORT:-18300}:8000"
     healthcheck:

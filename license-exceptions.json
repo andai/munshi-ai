@@ -16,6 +16,14 @@
       "disposition": "Logged exception; dependency remains an isolated build/runtime package managed by pnpm.",
       "scope": "frontend build pipeline and Next CSS handling",
       "approved": "ADR-0004"
+    },
+    {
+      "package": "psycopg",
+      "license": "LGPL-3.0-only",
+      "reason": "PostgreSQL driver (psycopg 3, with its psycopg-binary wheel) used by andai-core through SQLAlchemy. LGPL is weak copyleft; the library is used unmodified as a separately installed Python package loaded at runtime, never copied into or statically linked with munshi.ai source, so it qualifies as FINOS/ASF Category B.",
+      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv, where it stays replaceable by the user.",
+      "scope": "andai/services/core (andai-core runtime dependency: psycopg, psycopg-binary)",
+      "approved": "ADR-0004"
     }
   ]
 }
