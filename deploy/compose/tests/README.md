@@ -35,8 +35,8 @@ beside them with `COMPOSE_DYNAMIC_PORTS=1` so the gate binds free random host po
 
 ### Always-on vs `COMPOSE_BOT`-gated — why
 
-Steps 3 and 6a drive a **real `ghcr.io/sunydepalpur/munshi-bot:v012` container** (Playwright browser, ~7GB image)
-through its lifecycle (the published `ghcr.io/sunydepalpur/munshi-bot:dev` is the old 0.10 line and fails the
+Steps 3 and 6a drive a **real `ghcr.io/andai/munshi-bot:v012` container** (Playwright browser, ~7GB image)
+through its lifecycle (the published `ghcr.io/andai/munshi-bot:dev` is the old 0.10 line and fails the
 `lifecycle.v1` handshake; a source-built bot from `make -C deploy/compose bot` also works). That
 is slow and inherently flaky for a routine gate (browser boot, a dummy
 meeting URL, callback timing). The fast steps (1·2·4·5·6c·6d·6b) exercise the entire control plane —

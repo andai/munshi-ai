@@ -2,7 +2,7 @@
 """own_bot_bridge.py — OUR-OWN-BOT → live-meeting-copilot Integration (inbound watch → fire).
 
 The self-hosted counterpart of munshi_cloud_bridge.py: instead of Munshi Cloud's hosted bot + REST, we run
-our own ``ghcr.io/sunydepalpur/munshi-bot`` via the local meeting-api (POST /bots), and the bot publishes its live
+our own ``ghcr.io/andai/munshi-bot`` via the local meeting-api (POST /bots), and the bot publishes its live
 transcript to OUR redis stream ``transcription_segments`` (the same wire 0.11's collector consumes). This
 bridge tails that stream with a DEDICATED consumer group (so it never steals from the collector), and for
 the one meeting it owns:

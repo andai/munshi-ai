@@ -90,7 +90,7 @@
   "signed_off": true,
   "witness_deployment": {
     "url": "http://172.234.244.41:3001",
-    "provisioned_by": "agent (throwaway Linode 100898379 us-sea, ghcr.io/sunydepalpur/munshi-lite:v0.12.10, make -C deploy/lite all)",
+    "provisioned_by": "agent (throwaway Linode 100898379 us-sea, ghcr.io/andai/munshi-lite:v0.12.10, make -C deploy/lite all)",
     "prevalidated": [
       "gateway /health 200 from public internet",
       "terminal UI 200 (Next.js serves)",

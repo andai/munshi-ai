@@ -39,7 +39,7 @@ Main backend repo: [Munshi](https://github.com/andai/munshi-ai)
 docker run --rm -p 3000:3000 \
   -e MUNSHI_API_URL=http://your-munshi-host:8056 \
   -e MUNSHI_ADMIN_API_KEY=your_admin_api_key \
-  ghcr.io/sunydepalpur/munshi-dashboard:latest
+  ghcr.io/andai/munshi-dashboard:latest
 ```
 
 > **Production:** Use immutable tags (e.g., `0.10.0-260405-0108`) instead of `:latest` for reproducible deployments.
@@ -117,7 +117,7 @@ See `.env.example` for a complete template.
 ```yaml
 services:
   munshi-dashboard:
-    image: ghcr.io/sunydepalpur/munshi-dashboard:latest  # For production, use immutable tags (e.g., 0.10.0-260405-0108)
+    image: ghcr.io/andai/munshi-dashboard:latest  # For production, use immutable tags (e.g., 0.10.0-260405-0108)
     ports:
       - "3000:3000"
     environment:

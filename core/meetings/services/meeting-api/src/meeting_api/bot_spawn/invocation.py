@@ -221,7 +221,7 @@ def build_workload_spec(
 
     The sealed ``invocation.v1`` contract (ADR-0002) names this env var ``MUNSHI_BOT_CONFIG`` — what the
     carved v0.12 bot (``config.ts``) and the runtime profile read. We ALSO emit the legacy ``BOT_CONFIG``
-    alias so the 0.11-derived published image (``ghcr.io/sunydepalpur/munshi-bot:dev``) still boots; ``MUNSHI_BOT_CONFIG``
+    alias so the 0.11-derived published image (``ghcr.io/andai/munshi-bot:dev``) still boots; ``MUNSHI_BOT_CONFIG``
     is authoritative. (The mock-bot L3 lane surfaced this: the carved bot got no config under ``BOT_CONFIG``.)"""
     payload = json.dumps(invocation, separators=(",", ":"))
     env: dict[str, str] = {"MUNSHI_BOT_CONFIG": payload, "BOT_CONFIG": payload}

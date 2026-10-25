@@ -76,7 +76,7 @@ def worker_image_for(agent_image: str) -> str:
     (core/agent/worker/Dockerfile: claude-code + node + the `worker` package), NOT the agent-api
     control-plane image (which ships no `worker` module and cannot serve a dispatch). Env-configurable
     via `AGENT_WORKER_IMAGE`; defaults to the agent-api image's repo with `-api` swapped for `-worker`
-    (preserving the `:${IMAGE_TAG}` tag), e.g. `ghcr.io/sunydepalpur/munshi-agent-api:dev` → `ghcr.io/sunydepalpur/munshi-agent-worker:dev`.
+    (preserving the `:${IMAGE_TAG}` tag), e.g. `ghcr.io/andai/munshi-agent-api:dev` → `ghcr.io/andai/munshi-agent-worker:dev`.
     Falls back to the agent-api image itself when no derivation is possible (empty/odd name)."""
     override = os.environ.get("AGENT_WORKER_IMAGE", "").strip()
     if override:

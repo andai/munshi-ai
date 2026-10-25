@@ -147,7 +147,7 @@
    "key": "BROWSER_IMAGE",
    "class": "capability",
    "capability": "bot_spawn",
-   "description": "the meeting-bot image the `meeting-bot` profile spawns (ghcr.io/sunydepalpur/munshi-bot:v012)"
+   "description": "the meeting-bot image the `meeting-bot` profile spawns (ghcr.io/andai/munshi-bot:v012)"
   },
   {
    "key": "BOT_ALONE_SILENCE_WINDOW_MS",

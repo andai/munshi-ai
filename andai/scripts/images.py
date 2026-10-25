@@ -4,7 +4,7 @@
 Run by andai/Makefile (`python3 -I andai/scripts/images.py ...`); stdlib only.
 
   build  --version V --platform P [--only a,b]   build every catalogue entry in order, tagged
-                                                  ghcr.io/sunydepalpur/munshi-<name>:V and :dev
+                                                  ghcr.io/andai/munshi-<name>:V and :dev
   check  --version V [--allow-test-images] CONFIG.json...
                                                   every compose image (and the runtime's spawn-time
                                                   image variables) is a catalogue image at V or on
@@ -33,8 +33,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SOURCE_REPO = "https://github.com/andai/munshi-ai"
 CATALOGUE = ROOT / "andai" / "images.json"
-REGISTRY = "ghcr.io/sunydepalpur"
+REGISTRY = "ghcr.io/andai"
 PREFIX = "munshi-"
 # Image refs the compose files let a service override at spawn time (runtime environment).
 SPAWN_VARS = ("BROWSER_IMAGE", "AGENT_IMAGE", "AGENT_WORKER_IMAGE")
@@ -129,6 +130,9 @@ def cmd_build(a) -> int:
             cmd += ["-t", t]
         for k, v in build_args(e, a.version).items():
             cmd += ["--build-arg", f"{k}={v}"]
+        # links each GHCR package to the repository (package page, permissions, README)
+        cmd += ["--label", f"org.opencontainers.image.source={SOURCE_REPO}",
+                "--label", f"org.opencontainers.image.version={a.version}"]
         cmd.append(str(ROOT / e["context"]))
         print(f"\n==> [{i}/{len(entries)}] {ref(name, a.version)}  ({e['dockerfile']})", flush=True)
         start = time.monotonic()
@@ -317,7 +321,7 @@ def cmd_push(a) -> int:
     if not ghcr_login():
         print("images-push: no ghcr.io login in the docker config. Authenticate first:\n"
               "  gh auth refresh -h github.com -s write:packages\n"
-              "  gh auth token | docker login ghcr.io -u sunydepalpur --password-stdin",
+              "  gh auth token | docker login ghcr.io -u \"$(gh api user -q .login)\" --password-stdin",
               file=sys.stderr)
         return 1
     missing, wrong = [], []

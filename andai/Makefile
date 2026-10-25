@@ -5,7 +5,7 @@
 #   make -C andai health        # every service healthy?
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
-#   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/sunydepalpur
+#   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/andai
 #
 # `make -C andai` runs with cwd=andai/, so every path below is absolute, derived from ROOT.
 # Munshi's compose file keeps its own relative paths because --project-directory is deploy/compose.
@@ -13,7 +13,7 @@
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 ENV_FILE ?= $(ROOT)/andai/deploy/compose/.env
-# Images: ghcr.io/sunydepalpur/munshi-<name>:$(VERSION) for every entry of andai/images.json, built
+# Images: ghcr.io/andai/munshi-<name>:$(VERSION) for every entry of andai/images.json, built
 # for PLATFORM (the dev VM is linux/amd64; Apple silicon builds it emulated). PULL=1 makes `up` pull
 # the published images instead of building missing ones. ONLY=a,b limits `images` to those entries.
 VERSION := $(shell cat $(ROOT)/VERSION)
@@ -64,7 +64,7 @@ _env-ready:
 
 ## up — the single bring-up command. Every Munshi, bot, agent-worker and andai image is a catalogue
 ## image built from this repo (andai/images.json). Images the stack needs that are not on this machine
-## are built (`images`), or pulled from ghcr.io/sunydepalpur with PULL=1; nothing else is pulled
+## are built (`images`), or pulled from ghcr.io/andai with PULL=1; nothing else is pulled
 ## except the allowlisted third-party images (postgres, valkey, versitygw). --no-build at start time.
 up: _env-ready
 	$(ROOT)/andai/scripts/gen-secrets.sh "$(ENV_FILE)"
@@ -72,7 +72,7 @@ up: _env-ready
 	$(DC) up -d --no-build --wait --wait-timeout $(WAIT_TIMEOUT)
 
 ## images — build every catalogue entry in order (bases first), tagged
-## ghcr.io/sunydepalpur/munshi-<name>:$(VERSION) and :dev; prints size and build time per image.
+## ghcr.io/andai/munshi-<name>:$(VERSION) and :dev; prints size and build time per image.
 images:
 	$(IMAGES) build --version $(VERSION) --platform $(PLATFORM) $(if $(ONLY),--only $(ONLY))
 
@@ -93,11 +93,11 @@ images-check:
 	 $(IMAGES) check --version $(VERSION) $(if $(filter 1,$(ALLOW_TEST_IMAGES)),--allow-test-images) "$$t"/*.json
 
 ## images-push — push every catalogue image at $(VERSION) (agent-worker-hardened and the andai images
-## included; not the :dev or test tags) to ghcr.io/sunydepalpur. Refuses without a ghcr.io login in
+## included; not the :dev or test tags) to ghcr.io/andai. Refuses without a ghcr.io login in
 ## the docker config, or if any image is missing locally or is not $(PLATFORM). Log in first (the
 ## token goes straight from gh to docker, never onto the screen):
 ##   gh auth refresh -h github.com -s write:packages
-##   gh auth token | docker login ghcr.io -u sunydepalpur --password-stdin
+##   gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
 images-push:
 	$(IMAGES) push --version $(VERSION) --platform $(PLATFORM)
 

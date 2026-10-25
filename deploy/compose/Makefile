@@ -8,7 +8,7 @@ BROWSER_IMAGE ?= mock-bot:dev
 EMAIL ?= self-host@example.com
 SCOPES ?= bot,tx
 COMPOSE  = docker compose -p $(PROJECT) -f docker-compose.yml
-# Install pulls the published bot (ghcr.io/sunydepalpur/munshi-bot:v012 — release-validated since v0.12.1).
+# Install pulls the published bot (ghcr.io/andai/munshi-bot:v012 — release-validated since v0.12.1).
 # `make bot` builds from source into the LOCAL namespace (munshi/, like munshi/meet-join-env:dev) so a
 # source build can never shadow the published pointer (#569).
 REPO_ROOT := $(abspath ../..)
@@ -34,7 +34,7 @@ dashboard-harness:
 stack-test:
 	./bin/stack-test
 
-## stack-test-bot — + the real bot-spawn proof (COMPOSE_BOT=1; slow, needs ghcr.io/sunydepalpur/munshi-bot:v012).
+## stack-test-bot — + the real bot-spawn proof (COMPOSE_BOT=1; slow, needs ghcr.io/andai/munshi-bot:v012).
 stack-test-bot:
 	COMPOSE_BOT=1 ./bin/stack-test
 
@@ -74,10 +74,10 @@ up:
 	$(COMPOSE) pull
 	@_tag=$$(grep -E '^IMAGE_TAG=' .env | head -1 | cut -d= -f2- | tr -d '[:space:]'); _tag=$${_tag:-v012}; \
 	 echo "→ pulling spawn-time images (agent-worker is a build-only compose profile pull skips)"; \
-	 docker pull "ghcr.io/sunydepalpur/munshi-agent-worker:$$_tag"; \
+	 docker pull "ghcr.io/andai/munshi-agent-worker:$$_tag"; \
 	 _bi=$$(grep -E '^BROWSER_IMAGE=' .env | head -1 | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$$//; s/[[:space:]]+$$//'); \
 	 _bi=$$(printf '%s' "$$_bi" | sed "s/\$${IMAGE_TAG}/$$_tag/; s/\$$IMAGE_TAG/$$_tag/"); \
-	 case "$$_bi" in ghcr.io/sunydepalpur/*) docker pull "$$_bi";; esac
+	 case "$$_bi" in ghcr.io/andai/*) docker pull "$$_bi";; esac
 	$(COMPOSE) up -d --no-build || { $(MAKE) --no-print-directory _storage_note; exit 1; }
 	@$(MAKE) --no-print-directory _storage_note
 	@$(MAKE) --no-print-directory _bot_check
@@ -111,13 +111,13 @@ dev:
 _storage_note:
 	@$(COMPOSE) logs --no-log-prefix --tail 20 storage-init 2>/dev/null | grep -E '^\[storage-init\] (WARNING|STOP):' | tail -n 1 || true
 
-## digest-audit — the #569 negative control: every ghcr.io/sunydepalpur/*:$IMAGE_TAG image on this host must
+## digest-audit — the #569 negative control: every ghcr.io/andai/*:$IMAGE_TAG image on this host must
 ## carry a RepoDigest (= came from the registry). A locally-built image has NO RepoDigest, so a
 ## shadowed pointer fails here loudly. Run after `make up` to prove the install is artifact-true.
 digest-audit:
 	@_tag=$$(grep -E '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]'); _tag=$${_tag:-v012}; \
 	 fail=0; \
-	 for img in $$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^ghcr.io/sunydepalpur/munshi-.*:$$_tag$$"); do \
+	 for img in $$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^ghcr.io/andai/munshi-.*:$$_tag$$"); do \
 	   d=$$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$$img"); \
 	   if [ -z "$$d" ]; then echo "✗ $$img has NO registry digest — locally built, shadows the published pointer"; fail=1; \
 	   else echo "✓ $$img ⇐ $$d"; fi; \
@@ -144,8 +144,8 @@ _preflight:
 	 esac
 
 ## bot — build the meeting bot FROM SOURCE for development, tagged into the LOCAL munshi/ namespace
-## (BOT_IMAGE, default munshi/bot:dev) so it can never shadow the published ghcr.io/sunydepalpur/munshi-bot:v012
-## the install pulls. (ghcr.io/sunydepalpur/munshi-bot:dev on Docker Hub is the OLDER 0.10 line — neither pulled nor
+## (BOT_IMAGE, default munshi/bot:dev) so it can never shadow the published ghcr.io/andai/munshi-bot:v012
+## the install pulls. (ghcr.io/andai/munshi-bot:dev on Docker Hub is the OLDER 0.10 line — neither pulled nor
 ## overwritten here.) Builds the join-env base first, then the bot. Point BROWSER_IMAGE (.env) at
 ## BOT_IMAGE so the runtime spawns your build.
 bot:
@@ -170,7 +170,7 @@ bot:
 	 fi
 
 ## _bot_check — FAIL LOUD if the meeting bot image isn't built locally. The bot is built here, never
-## pulled (the published ghcr.io/sunydepalpur/munshi-bot:dev is the old 0.10 line). Without this the failure was silent:
+## pulled (the published ghcr.io/andai/munshi-bot:dev is the old 0.10 line). Without this the failure was silent:
 ## bots sat in `requested` and the meeting was reaped to `completed`/0-segments. Now it is screamingly visible.
 ##
 ## BOT_CHECK_STRICT=1 turns the warning into a non-zero EXIT (used by `dev` — an aborted build must never
@@ -184,7 +184,7 @@ _bot_check:
 	   echo "═══════════════════════════════════════════════════════════"; \
 	   echo "  ⚠️  meeting bot image '$$_bi' is not present on this host."; \
 	   case "$$_bi" in \
-	     ghcr.io/sunydepalpur/*) echo "      It is PUBLISHED — pull it:  docker pull $$_bi";; \
+	     ghcr.io/andai/*) echo "      It is PUBLISHED — pull it:  docker pull $$_bi";; \
 	     *)        echo "      It looks locally-built (dev path) — build it:"; \
 	               echo "          make -C deploy/compose bot   (tags $(BOT_IMAGE))";; \
 	   esac; \
@@ -244,7 +244,7 @@ migrate-storage:
 	LEGACY_IMAGE="$(LEGACY_MINIO_IMAGE)" LEGACY_ACCESS_KEY="$${LEGACY_MINIO_ACCESS_KEY:-$$AK}" \
 	LEGACY_SECRET_KEY="$${LEGACY_MINIO_SECRET_KEY:-$$SK}" LEGACY_BUCKET="$${LEGACY_MINIO_BUCKET:-$$BK}" \
 	TARGET_ENDPOINT=http://storage:9000 TARGET_ACCESS_KEY="$$AK" TARGET_SECRET_KEY="$$SK" TARGET_BUCKET="$$BK" \
-	STORAGE_VOLUME=$(PROJECT)_storage-data RUN_IMAGE="ghcr.io/sunydepalpur/munshi-meeting-api:$$TAG" RUN_PYTHON=python \
+	STORAGE_VOLUME=$(PROJECT)_storage-data RUN_IMAGE="ghcr.io/andai/munshi-meeting-api:$$TAG" RUN_PYTHON=python \
 	TOOLS_DIR=$(REPO_ROOT)/deploy/storage NAME_PREFIX=$(PROJECT) RETRY_HINT="make -C deploy/compose migrate-storage" \
 	COPY_ARGS="$(COPY_ARGS)" $(REPO_ROOT)/deploy/storage/migrate-from-minio.sh
 

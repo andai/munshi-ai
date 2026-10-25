@@ -336,7 +336,7 @@ function gateStack() {
 // return green. GREEN-ON-EMPTY if the compose file is missing. When docker IS present it runs the
 // ALWAYS-ON proof subset (health · auth surface · transcript dataflow · recording→storage · max-bots ·
 // continue_meeting · join-retry-wiring) and fails LOUD on any assertion. The real bot-spawn proof
-// (steps 3·6a — a live ghcr.io/sunydepalpur/munshi-bot:dev container reaching `joining`) is opt-in behind COMPOSE_BOT=1
+// (steps 3·6a — a live ghcr.io/andai/munshi-bot:dev container reaching `joining`) is opt-in behind COMPOSE_BOT=1
 // (slow/flaky for a routine gate), runnable via `make -C deploy/compose stack-test-bot`.
 function gateCompose() {
   const composeFile = join(ROOT, "deploy", "compose", "docker-compose.yml");
@@ -460,7 +460,7 @@ function gateLicenses() {
 //       sidecars. Each is DECLARED in image-licenses.json; an undeclared pin fails (the "green gate ships
 //       an un-audited component" hole); a non-permissive licence (e.g. a source-available Redis ≥7.4
 //       RSALv2/SSPL, or AGPL MinIO) requires a logged `reason`, so it is a reviewed decision, never silent.
-//   (2) components BAKED INTO a published ghcr.io/sunydepalpur/* image (`bundled`) — redistribution, so strict: Cat A
+//   (2) components BAKED INTO a published ghcr.io/andai/* image (`bundled`) — redistribution, so strict: Cat A
 //       (or Cat-B with a reason); Cat X always fails. This is the rung that keeps source-available Redis
 //       out of the Apache-2.0 Lite image. Plus a concrete guard: Lite must not `apt install redis-server`
 //       (jammy's 6.0.16 — the parity trap #653 moved off of; use the Valkey source-build).
@@ -478,7 +478,7 @@ function gateImageLicenses() {
   //     • structured Helm `image: { repository, tag }` blocks;
   //     • every `FROM ref` in the Lite Dockerfile (including builder stages whose bytes feed final);
   //     • non-recipe `*_IMAGE` variable assignments in the Lite Makefile.
-  //     Skip our own ghcr.io/sunydepalpur/* / munshi/* images — those are built here, not third-party inputs.
+  //     Skip our own ghcr.io/andai/* / munshi/* images — those are built here, not third-party inputs.
   const chartDir = join(ROOT, "deploy", "helm", "charts", "munshi");
   const tplDir = join(chartDir, "templates");
   const helmValueFiles = existsSync(chartDir)
@@ -495,7 +495,7 @@ function gateImageLicenses() {
     if (ref.includes("{{")) return;                                          // helm template expression
     ref = ref.replace(/\$\{[^:}]*:-([^}]+)\}/g, "$1");                       // ${VAR:-default} → default image
     if (ref.includes("$")) return;                                           // unresolved variable → no auditable pin
-    if (ref.startsWith("ghcr.io/sunydepalpur/") || ref.startsWith("munshi/")) return;         // first-party
+    if (ref.startsWith("ghcr.io/andai/") || ref.startsWith("munshi/")) return;         // first-party
     const name = ref.replace(/@sha256:.*$/, "").replace(/:[^/:]+$/, "");     // strip digest / :tag
     if (!name || (!ref.includes("/") && !ref.includes(":"))) return;         // Docker stage alias / invalid ref
     if (!foundImages.has(name)) foundImages.set(name, { ref, source });
@@ -568,7 +568,7 @@ function gateImageLicenses() {
   // (2) bundled components baked into a published image — strict (redistribution).
   for (const e of (man.bundled || [])) {
     const cat = classifyLicense(e.license);
-    if (cat === "X") bad.push(`FORBIDDEN (Cat X) bundled "${e.name}": ${e.license} — a source-available/non-OSS component cannot ship inside ${e.artifact || "a ghcr.io/sunydepalpur/* image"} (#653)`);
+    if (cat === "X") bad.push(`FORBIDDEN (Cat X) bundled "${e.name}": ${e.license} — a source-available/non-OSS component cannot ship inside ${e.artifact || "a ghcr.io/andai/* image"} (#653)`);
     else if (cat === "?") bad.push(`bundled "${e.name}": unclassified licence "${e.license}" — classify it`);
     else if (cat === "B" && !e.reason) bad.push(`bundled "${e.name}" is Cat-B (${e.license}) with no \`reason\``);
     else if (cat !== "A") flagged.push(`bundled ${e.name} (${e.license})`);

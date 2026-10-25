@@ -92,16 +92,16 @@ but it was **not** deployed or human-witnessed on hosted stage or production.
 
 | image | `:v0.12.18` digest |
 |---|---|
-| `ghcr.io/sunydepalpur/munshi-admin-api` | `sha256:49a8bd29268250cb37976c3170fde41c960f00d55f31ef4a42e17062b968b114` |
-| `ghcr.io/sunydepalpur/munshi-runtime` | `sha256:653fcd1a8edbc925a174a55fe34863d414c56c8ef367a94b449f89a5a3a5c4e1` |
-| `ghcr.io/sunydepalpur/munshi-agent-worker` | `sha256:d4c637ca1ca9c05ff6de852778299da665374ed9d59115088aa030d90212bf15` |
-| `ghcr.io/sunydepalpur/munshi-agent-api` | `sha256:af4f2bf2008ed2c910904e82155e06d3b0e747d04d7c7ccb9f14208b17c49bae` |
-| `ghcr.io/sunydepalpur/munshi-meeting-api` | `sha256:d1db225472d54f0b087e1b7a342c465b01b7e7f042372a730d3b32e0c6836f4a` |
-| `ghcr.io/sunydepalpur/munshi-gateway` | `sha256:4b9bd9d6d33f4f2ec8df0b9530b02942482c0399ec71f39722fb06f48aae55df` |
-| `ghcr.io/sunydepalpur/munshi-mcp` | `sha256:72158d83293ce48c1cfd5c9bd8e2762e72a2da63d962fdbdbf7fe9b09daa8755` |
-| `ghcr.io/sunydepalpur/munshi-terminal` | `sha256:a668ad43e225364422b225939fad057bff33db8b5bb3d6c341e1b625c5bde008` |
-| `ghcr.io/sunydepalpur/munshi-bot` | `sha256:a7f8feae7870b722e3542fb7cb054ff7c092e62f4c5a6b6a3b63e52f8cd1fe47` |
-| `ghcr.io/sunydepalpur/munshi-lite` | `sha256:5d0b6f865afe726109bb326361b917a3d9f762d64abbeea0826744134162d051` |
+| `ghcr.io/andai/munshi-admin-api` | `sha256:49a8bd29268250cb37976c3170fde41c960f00d55f31ef4a42e17062b968b114` |
+| `ghcr.io/andai/munshi-runtime` | `sha256:653fcd1a8edbc925a174a55fe34863d414c56c8ef367a94b449f89a5a3a5c4e1` |
+| `ghcr.io/andai/munshi-agent-worker` | `sha256:d4c637ca1ca9c05ff6de852778299da665374ed9d59115088aa030d90212bf15` |
+| `ghcr.io/andai/munshi-agent-api` | `sha256:af4f2bf2008ed2c910904e82155e06d3b0e747d04d7c7ccb9f14208b17c49bae` |
+| `ghcr.io/andai/munshi-meeting-api` | `sha256:d1db225472d54f0b087e1b7a342c465b01b7e7f042372a730d3b32e0c6836f4a` |
+| `ghcr.io/andai/munshi-gateway` | `sha256:4b9bd9d6d33f4f2ec8df0b9530b02942482c0399ec71f39722fb06f48aae55df` |
+| `ghcr.io/andai/munshi-mcp` | `sha256:72158d83293ce48c1cfd5c9bd8e2762e72a2da63d962fdbdbf7fe9b09daa8755` |
+| `ghcr.io/andai/munshi-terminal` | `sha256:a668ad43e225364422b225939fad057bff33db8b5bb3d6c341e1b625c5bde008` |
+| `ghcr.io/andai/munshi-bot` | `sha256:a7f8feae7870b722e3542fb7cb054ff7c092e62f4c5a6b6a3b63e52f8cd1fe47` |
+| `ghcr.io/andai/munshi-lite` | `sha256:5d0b6f865afe726109bb326361b917a3d9f762d64abbeea0826744134162d051` |
 
 Hosted production directly held the listed admin API, runtime, meeting API,
 and gateway bytes. It held the stage2 Bot digest recorded above, not the

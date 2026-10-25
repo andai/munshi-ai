@@ -28,7 +28,7 @@ services:
     build:
       context: ../..
       dockerfile: core/meetings/services/transcription/Dockerfile
-    image: ghcr.io/sunydepalpur/munshi-transcription:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-transcription:${IMAGE_TAG:-dev}
     environment:
       - WORKER_ID=1
       - MODEL_SIZE=${MODEL_SIZE:-large-v3-turbo}
@@ -53,7 +53,7 @@ services:
   #   build:
   #     context: ../..
   #     dockerfile: core/meetings/services/transcription/Dockerfile
-  #   image: ghcr.io/sunydepalpur/munshi-transcription:${IMAGE_TAG:-dev}
+  #   image: ghcr.io/andai/munshi-transcription:${IMAGE_TAG:-dev}
   #   environment:
   #     - WORKER_ID=2
   #     - MODEL_SIZE=${MODEL_SIZE:-large-v3-turbo}

@@ -4,7 +4,7 @@
  "generated_from": "v0.12.18...v0.12.22",
  "witnessed_by": "Sample Speaker",
  "witnessed_at": "2026-08-12",
- "deployment": "helm \u2014 munshi-production revision 128 (2026-08-12), the same bytes as tag v0.12.22 and candidate v0.12.22-rc.4: ghcr.io/sunydepalpur/munshi-bot manifest sha256:5f706d28f866181015d830ffc4afbbcfb34ee3cc2411ae7d022a41fa45486268 (single-platform, top manifest is the linux/amd64 manifest), ghcr.io/sunydepalpur/munshi-runtime index sha256:d2dced7bbb49cdf652738dc185a1f4af4744188366ca68345961cbc44374a5e3 (linux/amd64 image sha256:b3d466567447d7fa1337a5ed88e7228d18e4ddea664840879e2095667f0aec7e)",
+ "deployment": "helm \u2014 munshi-production revision 128 (2026-08-12), the same bytes as tag v0.12.22 and candidate v0.12.22-rc.4: ghcr.io/andai/munshi-bot manifest sha256:5f706d28f866181015d830ffc4afbbcfb34ee3cc2411ae7d022a41fa45486268 (single-platform, top manifest is the linux/amd64 manifest), ghcr.io/andai/munshi-runtime index sha256:d2dced7bbb49cdf652738dc185a1f4af4744188366ca68345961cbc44374a5e3 (linux/amd64 image sha256:b3d466567447d7fa1337a5ed88e7228d18e4ddea664840879e2095667f0aec7e)",
  "witness_deployment": {
   "url": "",
   "provisioned_by": "munshi-production Helm revision 127 to 128 on 2026-08-12, deployed by the prod-tenure session; stage revisions 138 to 141 preceded it",

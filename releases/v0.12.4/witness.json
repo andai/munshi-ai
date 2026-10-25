@@ -4,7 +4,7 @@
   "generated_from": "v0.12.3...v0.12.4",
   "witnessed_by": "Sample Speaker (owner) + CTO-driven demos where noted",
   "witnessed_at": "2026-07-14",
-  "deployment": "lite (witness box 172.238.52.94, ghcr.io/sunydepalpur/munshi-lite:v0.12.4, local CPU whisper)",
+  "deployment": "lite (witness box 172.238.52.94, ghcr.io/andai/munshi-lite:v0.12.4, local CPU whisper)",
   "values": [
     {
       "pr": "594",
@@ -63,7 +63,7 @@
       "title": "config-contract: bring admin-api + gateway under gate:config-contract (#526)",
       "visibility": "backend",
       "witnessed": "by-proxy",
-      "evidence": "CTO-driven live demo on ghcr.io/sunydepalpur/munshi-admin-api:v0.12.4: boot WITHOUT INTERNAL_API_SECRET -> ConfigError naming the key, exit 1 (fail-closed); negative control WITH the secret passed preflight and proceeded to DB. Per-service test_config_contract.py + gate:config-contract."
+      "evidence": "CTO-driven live demo on ghcr.io/andai/munshi-admin-api:v0.12.4: boot WITHOUT INTERNAL_API_SECRET -> ConfigError naming the key, exit 1 (fail-closed); negative control WITH the secret passed preflight and proceeded to DB. Per-service test_config_contract.py + gate:config-contract."
     },
     {
       "pr": "606",

@@ -271,8 +271,8 @@ and rate knobs live with the process that reads them, on
 | Variable | Default | Purpose |
 |---|---|---|
 | `IMAGE_TAG` | `dev` | Tag for the built service images. |
-| `BROWSER_IMAGE` | `ghcr.io/sunydepalpur/munshi-bot:v012` | Browser/bot container the runtime spawns per meeting. **Built from source** (`make bot`), spawned without pulling — the published `ghcr.io/sunydepalpur/munshi-bot:dev` is the old 0.10 line and is incompatible. |
-| `AGENT_IMAGE` / `AGENT_WORKER_IMAGE` | `ghcr.io/sunydepalpur/munshi-agent-*` | Agent container the runtime spawns per dispatch. |
+| `BROWSER_IMAGE` | `ghcr.io/andai/munshi-bot:v012` | Browser/bot container the runtime spawns per meeting. **Built from source** (`make bot`), spawned without pulling — the published `ghcr.io/andai/munshi-bot:dev` is the old 0.10 line and is incompatible. |
+| `AGENT_IMAGE` / `AGENT_WORKER_IMAGE` | `ghcr.io/andai/munshi-agent-*` | Agent container the runtime spawns per dispatch. |
 | `DOCKER_GID` | `0` | Host docker group id, so the runtime can use the Docker socket. |
 | `LOG_LEVEL` | `info` | Log verbosity. |
 

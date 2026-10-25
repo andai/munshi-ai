@@ -46,10 +46,10 @@ def test_meeting_bot_k8s_pod_omits_command_uses_image_entrypoint(monkeypatch):
     """The meeting-bot profile has no command ⇒ the submitted Pod's container carries NO `command`,
     so it execs the shipped bot image's own ENTRYPOINT (the real, in-image launcher)."""
     pods = _capture_submitted_pods(monkeypatch)
-    monkeypatch.setenv("BROWSER_IMAGE", "ghcr.io/sunydepalpur/munshi-bot:test")
+    monkeypatch.setenv("BROWSER_IMAGE", "ghcr.io/andai/munshi-bot:test")
     runnable = default_registry().resolve("meeting-bot")
     assert runnable.command is None  # the source of the fix (#675)
-    assert runnable.image == "ghcr.io/sunydepalpur/munshi-bot:test"
+    assert runnable.image == "ghcr.io/andai/munshi-bot:test"
 
     K8sBackend(namespace="ns").start("mtg-1", runnable, env={"MUNSHI_BOT_CONFIG": "{}"})
 

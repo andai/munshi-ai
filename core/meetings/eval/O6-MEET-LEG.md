@@ -1,13 +1,13 @@
 # O6 Meet-leg — one-sequence validation of the carved v0.12 bot
 
-Validates the **actual** `ghcr.io/sunydepalpur/munshi-bot:v012` end-to-end on a live Google Meet, on the controllable
+Validates the **actual** `ghcr.io/andai/munshi-bot:v012` end-to-end on a live Google Meet, on the controllable
 **bbb** host, scored against [`BASELINE.md`](BASELINE.md). Everything here is proven EXCEPT the
 audio→STT step, which only runs once real audible speech is in the meeting (the speaker-bots must be
 driven — that needs valid prod speaker tokens). The bot side (join · admit · capture pipeline ·
 redis transcript egress · scoring) is all proven live (RELEASE-PLAN O6 · Learning #23).
 
 ## Prereqs
-- `ssh bbb` works; `ghcr.io/sunydepalpur/munshi-bot:v012` present on bbb (built from `/home/dima/v012-bot-build`).
+- `ssh bbb` works; `ghcr.io/andai/munshi-bot:v012` present on bbb (built from `/home/dima/v012-bot-build`).
 - The speaker-bots are **already admitted** in the target meeting `$NATIVE` (e.g. `rvf-kywf-pxb`).
 - Your **prod speaker secrets** sourced locally so the eval rig can drive them:
   ```bash
@@ -25,7 +25,7 @@ ssh bbb '
   TU=$(docker exec munshi-runtime-api-1 printenv TRANSCRIPTION_SERVICE_URL)
   CFG=$(TT="$TT" TU="$TU" N="'"$NATIVE_ID"'" python3 -c "import json,os;print(json.dumps({\"platform\":\"google_meet\",\"meetingUrl\":\"https://meet.google.com/\"+os.environ[\"N\"],\"botName\":\"munshi-0.12-bot\",\"nativeMeetingId\":os.environ[\"N\"],\"connectionId\":\"o6-meet-leg\",\"redisUrl\":\"redis://redis:6379\",\"transcriptionServiceUrl\":os.environ[\"TU\"],\"transcriptionServiceToken\":os.environ[\"TT\"],\"recordingEnabled\":True,\"automaticLeave\":{\"waitingRoomTimeout\":300000,\"everyoneLeftTimeout\":900000}}))")
   docker rm -f v012-meet >/dev/null 2>&1
-  docker run -d --network munshi_munshi --name v012-meet -e MUNSHI_BOT_CONFIG="$CFG" ghcr.io/sunydepalpur/munshi-bot:v012
+  docker run -d --network munshi_munshi --name v012-meet -e MUNSHI_BOT_CONFIG="$CFG" ghcr.io/andai/munshi-bot:v012
 '
 ```
 

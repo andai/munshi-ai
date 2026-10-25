@@ -45,8 +45,8 @@ npm deps are Category A**; this is the only non-permissive one.
 **Baked artifacts are covered outside the dependency gate.** `gate:licenses` scans the resolved
 *dependency* tree; it cannot see bytes baked into an image that are not npm/pip deps — notably model
 weights pulled from a hub at build time. The mixed (Zoom/Teams) lane bakes
-`onnx-community/pyannote-segmentation-3.0` (**MIT**, Category A) into `ghcr.io/sunydepalpur/munshi-bot` and
-`ghcr.io/sunydepalpur/munshi-lite` at `/opt/hf-cache`. It is recorded three ways: the notice travels with the weights
+`onnx-community/pyannote-segmentation-3.0` (**MIT**, Category A) into `ghcr.io/andai/munshi-bot` and
+`ghcr.io/andai/munshi-lite` at `/opt/hf-cache`. It is recorded three ways: the notice travels with the weights
 (`/opt/hf-cache/LICENSE.pyannote-segmentation-3.0`), the repo manifest [`THIRD_PARTY_LICENSES.md`] lists
 it, and the per-release SBOM (`scripts/sbom.mjs`) emits it as a fully-specified package. Any new baked
 artifact follows the same three-step record — the packaging-side complement to this gate.

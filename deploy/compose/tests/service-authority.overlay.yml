@@ -1,6 +1,6 @@
 services:
   authority-fixture:
-    image: ghcr.io/sunydepalpur/munshi-meeting-api:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-meeting-api:${IMAGE_TAG:-dev}
     entrypoint: ["python", "/fixture/service_authority_fixture.py"]
     environment:
       - AUTHORITY_SECRET=compose-service-authority-fixture-secret

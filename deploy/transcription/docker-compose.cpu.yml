@@ -19,7 +19,7 @@ services:
     build:
       context: ../..
       dockerfile: core/meetings/services/transcription/Dockerfile.cpu
-    image: ghcr.io/sunydepalpur/munshi-transcription-cpu:${IMAGE_TAG:-dev}
+    image: ghcr.io/andai/munshi-transcription-cpu:${IMAGE_TAG:-dev}
     environment:
       - WORKER_ID=1
       # Default `small`, not `medium`: on a CPU worker `medium` cannot keep up with real-time meeting

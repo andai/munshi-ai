@@ -4,7 +4,7 @@
   "generated_from": "v0.12.22...v0.12.23",
   "witnessed_by": "Sample Speaker",
   "witnessed_at": "2026-08-17",
-  "deployment": "helm \u2014 munshi-staging revision 196 (2026-08-18), the rc.18 candidate: ghcr.io/sunydepalpur/munshi-bot manifest sha256:7008aaaeba4a4db335894bf9ad6368b303033452c576361a06f72e4df805d167, ghcr.io/sunydepalpur/munshi-meeting-api manifest sha256:d9b58e5dfc38ae768882bae6f597fdc8457abd244ed21665764bbc7be4b8c3dc (unmoved rc.17\u2192rc.18), ghcr.io/sunydepalpur/munshi-admin-api manifest sha256:654c3320fd974bc80b67364eac4dab6f2c814fccc82f786a66d35cbdeb04eb60",
+  "deployment": "helm \u2014 munshi-staging revision 196 (2026-08-18), the rc.18 candidate: ghcr.io/andai/munshi-bot manifest sha256:7008aaaeba4a4db335894bf9ad6368b303033452c576361a06f72e4df805d167, ghcr.io/andai/munshi-meeting-api manifest sha256:d9b58e5dfc38ae768882bae6f597fdc8457abd244ed21665764bbc7be4b8c3dc (unmoved rc.17\u2192rc.18), ghcr.io/andai/munshi-admin-api manifest sha256:654c3320fd974bc80b67364eac4dab6f2c814fccc82f786a66d35cbdeb04eb60",
   "witness_deployment": {
     "url": "",
     "provisioned_by": "munshi-staging Helm revisions 189\u2192196 across the rc.11\u2192rc.18 candidates, deployed by the train session under the stage lock; rollback anchors verified at each step; revs 193\u2192196 on a fresh scrubbed prod replica with armed calendars held at 0 throughout",

@@ -102,9 +102,9 @@ this chart. runtime.browserImage is the explicit value; global.imageTag (set) pi
 {{- if .Values.runtime.browserImage -}}
 {{- .Values.runtime.browserImage -}}
 {{- else if .Values.global.imageTag -}}
-{{- printf "ghcr.io/sunydepalpur/munshi-bot:%s" .Values.global.imageTag -}}
+{{- printf "ghcr.io/andai/munshi-bot:%s" .Values.global.imageTag -}}
 {{- else -}}
-ghcr.io/sunydepalpur/munshi-bot:v012
+ghcr.io/andai/munshi-bot:v012
 {{- end -}}
 {{- end -}}
 
@@ -120,25 +120,25 @@ ghcr.io/sunydepalpur/munshi-bot:v012
 {{/* The agent-worker image ref (AGENT_WORKER_IMAGE; the dedicated worker build — core/agent/worker/Dockerfile — NOT the agent-api image). */}}
 {{- define "munshi.agentWorkerImage" -}}
 {{- if .Values.global.imageTag -}}
-{{- printf "ghcr.io/sunydepalpur/munshi-agent-worker:%s" .Values.global.imageTag -}}
+{{- printf "ghcr.io/andai/munshi-agent-worker:%s" .Values.global.imageTag -}}
 {{- else -}}
-{{- .Values.runtime.agentWorkerImage | default "ghcr.io/sunydepalpur/munshi-agent-worker:v012" -}}
+{{- .Values.runtime.agentWorkerImage | default "ghcr.io/andai/munshi-agent-worker:v012" -}}
 {{- end -}}
 {{- end -}}
 
 {{/* The flows-tier image ref (flows-api + flows-worker + flows-mailbox + the ensure-db
 initContainer — one image, four entrypoints). Same shape as munshi.botImage: an explicit
 flows.image wins, otherwise global.imageTag pins the standard repo, otherwise the chart's own
-default tag. It used to be a bare `ghcr.io/sunydepalpur/munshi-flows:dev` value — a MUTABLE tag, and one the
+default tag. It used to be a bare `ghcr.io/andai/munshi-flows:dev` value — a MUTABLE tag, and one the
 release's build-once promotion could never pin, so the flows tier alone floated while every other
 service moved to the release digest (A12). */}}
 {{- define "munshi.flowsImage" -}}
 {{- if .Values.flows.image -}}
 {{- .Values.flows.image -}}
 {{- else if .Values.global.imageTag -}}
-{{- printf "%s:%s" (.Values.flows.imageRepository | default "ghcr.io/sunydepalpur/munshi-flows") .Values.global.imageTag -}}
+{{- printf "%s:%s" (.Values.flows.imageRepository | default "ghcr.io/andai/munshi-flows") .Values.global.imageTag -}}
 {{- else -}}
-{{- printf "%s:%s" (.Values.flows.imageRepository | default "ghcr.io/sunydepalpur/munshi-flows") (.Values.flows.imageTag | default "v012") -}}
+{{- printf "%s:%s" (.Values.flows.imageRepository | default "ghcr.io/andai/munshi-flows") (.Values.flows.imageTag | default "v012") -}}
 {{- end -}}
 {{- end -}}
 

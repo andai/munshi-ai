@@ -537,7 +537,7 @@ async def test_http_runtime_client_create_refuses_dead_workload():
 
     # C1 path: the kernel's 502 (naming the absent image) → SpawnFailed carrying that reason.
     dead502 = HttpRuntimeClient(
-        _StubHttp(_Resp(502, {"detail": "No such image: ghcr.io/sunydepalpur/munshi-bot:dev"})), "http://runtime:8090"
+        _StubHttp(_Resp(502, {"detail": "No such image: ghcr.io/andai/munshi-bot:dev"})), "http://runtime:8090"
     )
     with pytest.raises(SpawnFailed) as ei502:
         await dead502.create_workload(spec)

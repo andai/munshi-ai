@@ -5,7 +5,7 @@
 # (`storage.s3`, required) — the chart runs no object store. The runtime
 # spawns the bot and the agent-worker ON DEMAND (they are NOT services here): with
 # runtime.backend=k8s it launches them as Pods under its ServiceAccount/RBAC; with backend=docker
-# (compose/desktop) via the host docker socket. Images are the compose `ghcr.io/sunydepalpur/munshi-*` repos.
+# (compose/desktop) via the host docker socket. Images are the compose `ghcr.io/andai/munshi-*` repos.
 #
 # Production overrides: set `global.imageTag` to a pinned YYMMDD-HHMM tag, fill `secrets`, set
 # `storage.s3`, and point `database`/`redisConfig` at managed infra (postgres.enabled=false /
@@ -144,7 +144,7 @@ gateway:
   enabled: true
   replicaCount: 2
   image:
-    repository: ghcr.io/sunydepalpur/munshi-gateway
+    repository: ghcr.io/andai/munshi-gateway
     tag: v012
   service:
     type: ClusterIP
@@ -181,7 +181,7 @@ adminApi:
   enabled: true
   replicaCount: 2
   image:
-    repository: ghcr.io/sunydepalpur/munshi-admin-api
+    repository: ghcr.io/andai/munshi-admin-api
     tag: v012
   service:
     type: ClusterIP
@@ -216,7 +216,7 @@ meetingApi:
   preStopDelaySeconds: 5
   terminationGracePeriodSeconds: 30
   image:
-    repository: ghcr.io/sunydepalpur/munshi-meeting-api
+    repository: ghcr.io/andai/munshi-meeting-api
     tag: v012
   service:
     type: ClusterIP
@@ -261,16 +261,16 @@ runtime:
   backend: "k8s"
   replicaCount: 1               # keep at 1 unless backend=k8s (Redis is the state-of-record)
   image:
-    repository: ghcr.io/sunydepalpur/munshi-runtime
+    repository: ghcr.io/andai/munshi-runtime
     tag: v012
   service:
     type: ClusterIP
     port: 8090
   # Images the runtime spawns. browserImage = the bot (published ~3.6GB, a reference, never built by
   # this chart). agentImage/agentWorkerImage default to the v012 agent repos at global.imageTag.
-  browserImage: ""            # empty → follows global.imageTag (fallback ghcr.io/sunydepalpur/munshi-bot:v012)
-  agentImage: "ghcr.io/sunydepalpur/munshi-agent-api:v012"
-  agentWorkerImage: "ghcr.io/sunydepalpur/munshi-agent-worker:v012"
+  browserImage: ""            # empty → follows global.imageTag (fallback ghcr.io/andai/munshi-bot:v012)
+  agentImage: "ghcr.io/andai/munshi-agent-api:v012"
+  agentWorkerImage: "ghcr.io/andai/munshi-agent-worker:v012"
   logLevel: "info"
   speakerStream:
     minAudioSec: ""
@@ -326,7 +326,7 @@ agentApi:
   enabled: true
   replicaCount: 1               # shares a workspace store with spawned workers; keep single for RWO PVC
   image:
-    repository: ghcr.io/sunydepalpur/munshi-agent-api
+    repository: ghcr.io/andai/munshi-agent-api
     tag: v012
   service:
     type: ClusterIP
@@ -349,7 +349,7 @@ terminal:
   enabled: true
   replicaCount: 2
   image:
-    repository: ghcr.io/sunydepalpur/munshi-terminal
+    repository: ghcr.io/andai/munshi-terminal
     tag: v012
   service:
     type: ClusterIP
@@ -375,7 +375,7 @@ dashboard:
   enabled: false
   replicaCount: 1
   image:
-    repository: ghcr.io/sunydepalpur/munshi-dashboard
+    repository: ghcr.io/andai/munshi-dashboard
     tag: 0.10.6.3.14
   service:
     type: ClusterIP
@@ -508,11 +508,11 @@ flows:
   # THE FLOWS TIER FOLLOWS global.imageTag like every other service (A12). `image` is the explicit
   # full-ref override and wins when set (that is how a publisher digest-pins a release); leave it
   # empty and the ref is imageRepository:global.imageTag, falling back to imageRepository:imageTag.
-  # It was a hardcoded `ghcr.io/sunydepalpur/munshi-flows:dev` — a mutable tag that no release pin could reach, so
+  # It was a hardcoded `ghcr.io/andai/munshi-flows:dev` — a mutable tag that no release pin could reach, so
   # a chart pinned to a release ran every other service at that release and flows at whatever
   # `:dev` was that morning.
   image: ""
-  imageRepository: ghcr.io/sunydepalpur/munshi-flows
+  imageRepository: ghcr.io/andai/munshi-flows
   imageTag: v012
   workerReplicas: 2
   # The database the flows tables live in. Default "flows": a SEPARATE database from

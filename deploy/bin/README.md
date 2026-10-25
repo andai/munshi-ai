@@ -3,7 +3,7 @@
 One concern: small, hand-run shell scripts that drive the **remote-dev-host loop** (deploy/iterate
 against the live stack), not part of any service build.
 
-- `redeploy-bot.sh` — fast app-layer rebuild of the bot image (`ghcr.io/sunydepalpur/munshi-bot:v012`) FROM the
+- `redeploy-bot.sh` — fast app-layer rebuild of the bot image (`ghcr.io/andai/munshi-bot:v012`) FROM the
   published env base, so a bot code change reaches the dev host without the ~3.6 GB env rebuild.
 
 Depends on: a working Docker + the repo checkout. Consumes nothing in `core/`; not imported by code.

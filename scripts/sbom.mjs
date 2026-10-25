@@ -18,7 +18,7 @@
  *                   Docker source does not resolve Ubuntu versions or licences, so
  *                   those fields are explicitly NOASSERTION pending image scanning.
  *   4. baked model — onnx-community/pyannote-segmentation-3.0 (MIT), baked into
- *                   ghcr.io/sunydepalpur/munshi-bot + ghcr.io/sunydepalpur/munshi-lite at /opt/hf-cache. Fully
+ *                   ghcr.io/andai/munshi-bot + ghcr.io/andai/munshi-lite at /opt/hf-cache. Fully
  *                   specified (licence + copyright + download location). Mirrors
  *                   THIRD_PARTY_LICENSES.md; the piece gate:licenses cannot see.
  *
@@ -198,10 +198,10 @@ const BAKED_MODEL = {
   downloadLocation: "https://huggingface.co/onnx-community/pyannote-segmentation-3.0",
   purl: "pkg:huggingface/onnx-community/pyannote-segmentation-3.0@main",
   supplier: "Organization: onnx-community (ONNX conversion of pyannote/segmentation-3.0, pyannote.audio / CNRS)",
-  comment: "Baked into ghcr.io/sunydepalpur/munshi-bot + ghcr.io/sunydepalpur/munshi-lite at /opt/hf-cache; loaded offline by the mixed (Zoom/Teams) diarization lane. Notice: /opt/hf-cache/LICENSE.pyannote-segmentation-3.0 + repo THIRD_PARTY_LICENSES.md.",
+  comment: "Baked into ghcr.io/andai/munshi-bot + ghcr.io/andai/munshi-lite at /opt/hf-cache; loaded offline by the mixed (Zoom/Teams) diarization lane. Notice: /opt/hf-cache/LICENSE.pyannote-segmentation-3.0 + repo THIRD_PARTY_LICENSES.md.",
 };
 
-// Valkey — the cache/stream engine BAKED into ghcr.io/sunydepalpur/munshi-lite (source-build, Dockerfile.lite
+// Valkey — the cache/stream engine BAKED into ghcr.io/andai/munshi-lite (source-build, Dockerfile.lite
 // valkey-builder). Like the model, it is bytes CONTAINED in the published image, not a source
 // dependency, so gate:licenses never sees it — gate:image-licenses (bundled[]) audits it and this
 // records it in the SBOM. BSD-3 (Category A), clean to redistribute (#653).
@@ -212,7 +212,7 @@ const BAKED_VALKEY = {
   downloadLocation: "https://github.com/valkey-io/valkey/archive/refs/tags/8.1.9.tar.gz",
   purl: "pkg:github/valkey-io/valkey@8.1.9",
   supplier: "Organization: Valkey (Linux Foundation)",
-  comment: "Source-built (BUILD_TLS=no) into ghcr.io/sunydepalpur/munshi-lite; valkey-server + valkey-cli at /usr/local/bin, notice at /usr/local/share/valkey/LICENSE. compose/helm pin valkey/valkey:8-alpine (user-pulled, in image-licenses.json). #653.",
+  comment: "Source-built (BUILD_TLS=no) into ghcr.io/andai/munshi-lite; valkey-server + valkey-cli at /usr/local/bin, notice at /usr/local/share/valkey/LICENSE. compose/helm pin valkey/valkey:8-alpine (user-pulled, in image-licenses.json). #653.",
 };
 
 // ── assemble the SPDX 2.3 document ──────────────────────────────────────────────

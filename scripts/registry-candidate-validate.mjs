@@ -40,7 +40,7 @@ async function request(fetchImpl, url, options, context, { allowMissing = false 
   }
 
   // A negative control may name a tag the repository simply does not have (`latest` exists on
-  // ghcr.io/sunydepalpur/munshi-lite and on nothing else in the v012 set). Absent is a legitimate reading there,
+  // ghcr.io/andai/munshi-lite and on nothing else in the v012 set). Absent is a legitimate reading there,
   // so the caller can ask for it; every other call keeps 404 as a failure.
   if (allowMissing && response.status === 404) return null;
 

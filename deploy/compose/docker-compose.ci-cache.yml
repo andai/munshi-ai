@@ -1,6 +1,6 @@
 # CI build-cache overlay (wall-clock law) — pr-value builds the stack FROM THE PR TREE, which is
 # the point, but without cache every run recompiles all 8 images (~7 of its ~13 min). The release
-# pipeline already maintains registry build caches (ghcr.io/sunydepalpur/*:buildcache, mode=max, public — pullable
+# pipeline already maintains registry build caches (ghcr.io/andai/*:buildcache, mode=max, public — pullable
 # anonymously, so the secretless fork-run design is untouched). This overlay points compose builds
 # at them: a typical PR touches 1-2 services, the other 6-7 become cache hits.
 #
@@ -8,18 +8,18 @@
 # A cache miss costs nothing — the build just proceeds cold, exactly as before.
 services:
   admin-api:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-admin-api:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-admin-api:buildcache"] }
   runtime:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-runtime:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-runtime:buildcache"] }
   agent-worker:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-agent-worker:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-agent-worker:buildcache"] }
   agent-api:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-agent-api:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-agent-api:buildcache"] }
   meeting-api:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-meeting-api:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-meeting-api:buildcache"] }
   gateway:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-gateway:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-gateway:buildcache"] }
   mcp:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-mcp:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-mcp:buildcache"] }
   terminal:
-    build: { cache_from: ["ghcr.io/sunydepalpur/munshi-terminal:buildcache"] }
+    build: { cache_from: ["ghcr.io/andai/munshi-terminal:buildcache"] }

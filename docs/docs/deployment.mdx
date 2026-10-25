@@ -13,11 +13,11 @@ supported shapes are [Munshi Lite](/deployment-lite) (one container, no Docker s
 Prerequisites: a Linux host (Ubuntu 24.04) for production, **Docker engine ≥ v26** (agent workers
 mount each granted workspace as an isolated volume subpath — older engines fail worker creation;
 `make all` checks and refuses), `git`, `curl`. A Mac with Docker Desktop works for a local
-evaluation — everything runs in containers either way. Published `ghcr.io/sunydepalpur/munshi-*` images include
+evaluation — everything runs in containers either way. Published `ghcr.io/andai/munshi-*` images include
 `linux/arm64` variants alongside `linux/amd64`, so Docker on Apple Silicon pulls arm64 where
 available — but the arm64 images are published **best-effort**: release CI currently validates
 only the amd64 images (no arm64 execution leg yet), so treat Apple Silicon as experimental.
-`ghcr.io/sunydepalpur/munshi-bot` remains amd64-only (the install pulls the published image; `make bot` builds a local `munshi/bot:dev` for development). For GPU transcription on
+`ghcr.io/andai/munshi-bot` remains amd64-only (the install pulls the published image; `make bot` builds a local `munshi/bot:dev` for development). For GPU transcription on
 Mac, point `TRANSCRIPTION_SERVICE_URL` at any OpenAI-compatible local endpoint
 (see [Configuration](/configuration)).
 
@@ -33,7 +33,7 @@ make bot      # build the meeting bot FROM SOURCE — required before a bot can 
 (`INTERNAL_API_SECRET`, `MUNSHI_FLOWS_API_KEY`, `MUNSHI_FLOWS_TIMELINE_KEY` — a value you already set is kept),
 brings the stack up, and **prints an API key plus the
 service URLs** when it's done. The **meeting bot is built from source** (`make bot`), **not pulled** —
-the published `ghcr.io/sunydepalpur/munshi-bot:dev` on Docker Hub is the older 0.10 line and is **not compatible** with
+the published `ghcr.io/andai/munshi-bot:dev` on Docker Hub is the older 0.10 line and is **not compatible** with
 this stack's `lifecycle.v1` (bots reach `joining` then fail). `make all` warns loudly if the bot image
 is missing. For a transcript, set a **transcription (STT) token** in `.env`
 (`TRANSCRIPTION_SERVICE_TOKEN`) — get one at `example.invalid/account`, or self-host the transcription service on

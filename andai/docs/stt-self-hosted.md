@@ -14,8 +14,8 @@ Nothing in the andai overlay changes for this switch. It is three values in
 
 | File | Use |
 |---|---|
-| `deploy/transcription/docker-compose.yml` | GPU: nginx load balancer `transcription-api` + `transcription-worker-1` (faster-whisper, `DEVICE=cuda`, needs nvidia-container-toolkit). Image `ghcr.io/sunydepalpur/munshi-transcription:${IMAGE_TAG}`. |
-| `deploy/transcription/docker-compose.cpu.yml` | CPU-only variant. Image `ghcr.io/sunydepalpur/munshi-transcription-cpu:${IMAGE_TAG}`. |
+| `deploy/transcription/docker-compose.yml` | GPU: nginx load balancer `transcription-api` + `transcription-worker-1` (faster-whisper, `DEVICE=cuda`, needs nvidia-container-toolkit). Image `ghcr.io/andai/munshi-transcription:${IMAGE_TAG}`. |
+| `deploy/transcription/docker-compose.cpu.yml` | CPU-only variant. Image `ghcr.io/andai/munshi-transcription-cpu:${IMAGE_TAG}`. |
 | `deploy/transcription/.env.example` | `TRANSCRIPTION_LB_PORT` (default 8083), `MODEL_SIZE` (default `large-v3-turbo`), `COMPUTE_TYPE`, `CPU_THREADS`, `IMAGE_TAG`, `API_TOKEN`. |
 | `deploy/transcription/README.md` | Upstream run and scaling notes (more workers = uncomment worker 2/3 in the compose file **and** `nginx.conf`, one GPU each). |
 
