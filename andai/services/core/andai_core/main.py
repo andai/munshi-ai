@@ -21,6 +21,7 @@ from andai_core.auth import routes as auth_routes
 from andai_core.auth.clientip import ClientIpResolver
 from andai_core.auth.csrf import OriginCheck
 from andai_core.auth.deps import Services
+from andai_core.auth.mfa import MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS
 from andai_core.auth.ratelimit import LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, ValkeyLimiter
 from andai_core.crypto import load_keyring
 from andai_core.db.session import create_app_engine
@@ -32,15 +33,17 @@ SERVICE_NAME = "andai-core"
 
 def build_services(settings: Settings) -> Services:
     """The production services. Raises `KeyUnavailable` outside dev without a KEK."""
-    load_keyring(settings)
+    keyring = load_keyring(settings)
     client = redis.Redis.from_url(settings.redis_url, socket_timeout=5, socket_connect_timeout=5)
     return Services(
         settings=settings,
         engine=create_app_engine(settings=settings),
         login_limiter=ValkeyLimiter(client, LOGIN_LIMIT, LOGIN_WINDOW_SECONDS),
         reset_limiter=ValkeyLimiter(client, LOGIN_LIMIT, LOGIN_WINDOW_SECONDS),
+        mfa_limiter=ValkeyLimiter(client, MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS),
         mailer=SmtpMailer(settings),
         ip_resolver=ClientIpResolver(settings.trusted_proxies),
+        keyring=keyring,
     )
 
 

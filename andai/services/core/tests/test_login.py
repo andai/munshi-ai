@@ -75,6 +75,7 @@ def test_login_sets_a_session_cookie_and_me_answers(
         },
         "role": "owner",
         "stage": "full",
+        "mfa_enabled": False,
     }
     for secret in ("password", "hash", "token"):
         assert secret not in me.text

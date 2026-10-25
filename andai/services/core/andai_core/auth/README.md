@@ -2,8 +2,12 @@
 
 Human authentication for andai-core, mounted under `/api/v1`:
 
-- `routes.py` — login, logout, `GET /me`, password reset, invite acceptance and first-run
-  bootstrap.
+- `routes.py` — login, logout, `GET /me`, password reset, invite acceptance, first-run
+  bootstrap, the second login step (`/auth/mfa/verify`) and the user's own two-factor routes
+  (`/me/mfa`: start, confirm, disable, regenerate recovery codes).
+- `mfa.py` — TOTP two-factor login: sealed secrets, ±1 step skew, replay rejection by time step,
+  10 argon2id-hashed single-use recovery codes, 5 wrong codes end an `mfa_pending` session and
+  10 per user per 15 minutes are throttled.
 - `sessions.py` — opaque session tokens in the `andai_session` cookie (only the SHA-256 is stored),
   idle and absolute expiry, `revoke_all`.
 - `passwords.py` — argon2id hashing, rehash on login, a dummy verification for unknown emails.
