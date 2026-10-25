@@ -533,3 +533,32 @@ def staged_session(engine: Engine, member: Member, stage: str, clock: Clock) -> 
             lifetimes=lifetimes,
             now=clock(),
         )
+
+
+def sign_in(harness: Harness, member: Member, totp=None):
+    """A client with a `full` session for `member` (through the code step if `totp` is given)."""
+    client = harness.client()
+    stage = client.post(
+        LOGIN_PATH, json={"email": member.email, "password": member.password}
+    ).json()["stage"]
+    if totp is not None:
+        assert stage == "mfa_pending"
+        verified = client.post(MFA_VERIFY_PATH, json={"code": totp_code(totp, harness.clock)})
+        assert verified.json() == {"stage": "full"}
+        harness.clock.advance(seconds=30)
+    else:
+        assert stage == "full"
+    return client
+
+
+def enrolled_member(harness: Harness, engine: Engine, **kwargs):
+    member = new_member(engine, **kwargs)
+    totp, _ = enroll(sign_in(harness, member), harness.clock)
+    return member, totp
+
+
+def session_count(superuser_engine: Engine, user_id: uuid.UUID) -> int:
+    with superuser_engine.connect() as conn:
+        return conn.execute(
+            text("SELECT count(*) FROM sessions WHERE user_id = :u"), {"u": user_id}
+        ).scalar_one()

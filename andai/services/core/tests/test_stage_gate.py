@@ -2,9 +2,9 @@
 
 The parametrised test enumerates `app.routes` of the real application (flattened through
 `fastapi.routing.iter_route_contexts`: an included router appears in `app.routes` as one entry),
-so a route added later is covered without editing this file: for each route and method, an `mfa_pending` and an
-`enroll_required` session must be stopped by the gate unless the route is on that stage's
-allow-list, and must get through when it is.
+so a route added later is covered without editing this file: for each route and method, an
+`mfa_pending` and an `enroll_required` session must be stopped by the gate unless the route is on
+that stage's allow-list, and must get through when it is.
 """
 
 from __future__ import annotations
@@ -146,7 +146,8 @@ def test_an_expired_pending_session_is_not_treated_as_pending(
 ) -> None:
     member = new_member(app_engine)
     client = harness.client()
-    client.cookies.set(COOKIE_NAME, staged_session(app_engine, member, "mfa_pending", harness.clock))
+    token = staged_session(app_engine, member, "mfa_pending", harness.clock)
+    client.cookies.set(COOKIE_NAME, token)
     harness.clock.advance(minutes=5, seconds=1)
 
     response = client.get("/api/v1/me")

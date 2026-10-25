@@ -16,6 +16,9 @@ wrong code ends the session; the user signs in again. Wrong codes are also count
 across sessions (`MFA_FAILURE_LIMIT` per `MFA_FAILURE_WINDOW_SECONDS`), so signing in again does
 not buy unlimited guesses.
 
+`decide_stage` is the login rule: `mfa_pending` for a user with confirmed TOTP, else
+`enroll_required` when the org requires two-factor login, else `full`.
+
 `user_totp` and `recovery_codes` are global tables filtered by user id; audit events go to the
 org of the session that caused them.
 """
@@ -41,7 +44,7 @@ from andai_core.auth import passwords, sessions
 from andai_core.auth.ratelimit import Limiter
 from andai_core.auth.tokens import hash_token
 from andai_core.crypto import Keyring
-from andai_core.db.models import RecoveryCode, Session, User, UserTotp
+from andai_core.db.models import Org, RecoveryCode, Session, User, UserTotp
 from andai_core.db.session import set_context
 
 ISSUER = "munshi.ai"
@@ -109,7 +112,18 @@ def is_enrolled(tx: Tx, user_id: uuid.UUID) -> bool:
     )
 
 
-def start(tx: Tx, keyring: Keyring, *, user_id: uuid.UUID, email: str, now: datetime) -> Enrollment:
+def decide_stage(tx: Tx, user: User, org: Org) -> str:
+    """The stage a password login of `user` into `org` starts in."""
+    if is_enrolled(tx, user.id):
+        return sessions.MFA_PENDING
+    if org.require_2fa:
+        return sessions.ENROLL_REQUIRED
+    return sessions.FULL
+
+
+def start(
+    tx: Tx, keyring: Keyring, *, user_id: uuid.UUID, email: str, now: datetime
+) -> Enrollment:
     """Begin (or restart) enrollment with a fresh secret; refused once one is confirmed."""
     row = tx.get(UserTotp, user_id, with_for_update=True)
     if row is not None and row.confirmed_at is not None:

@@ -6,9 +6,11 @@ password-reset request answers 202 whether or not the address has an account; it
 after the response.
 
 Two-factor login: a user with confirmed TOTP gets an `mfa_pending` session from the password step
-and a `full` one (new token) from `POST /auth/mfa/verify`. The enrollment routes under `/me/mfa`
-return the otpauth URI and QR code (start) and the recovery codes (confirm, regenerate) exactly
-once, with `Cache-Control: no-store`; nothing returns a TOTP secret or a recovery code afterwards.
+and a `full` one (new token) from `POST /auth/mfa/verify`; a user without it in an org that
+requires it gets an `enroll_required` session, which becomes `full` when enrollment is confirmed.
+The enrollment routes under `/me/mfa` return the otpauth URI and QR code (start) and the recovery
+codes (confirm, regenerate) exactly once, with `Cache-Control: no-store`; nothing returns a TOTP
+secret or a recovery code afterwards.
 Password reset never touches the enrollment, so it never bypasses the second step.
 """
 
@@ -133,8 +135,11 @@ def login(
             presented = request.cookies.get(sessions.COOKIE_NAME)
             if presented:
                 sessions.revoke(tx, presented)
-            if mfa.is_enrolled(tx, user.id):
-                stage = sessions.MFA_PENDING
+            set_context(tx, org_id=membership.org_id)
+            org = tx.get(Org, membership.org_id)
+            if org is None:
+                raise NOT_AUTHENTICATED
+            stage = mfa.decide_stage(tx, user, org)
             token = sessions.create(
                 tx,
                 user_id=user.id,

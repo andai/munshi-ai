@@ -27,6 +27,7 @@ from andai_core.auth.ratelimit import LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, ValkeyL
 from andai_core.auth.stage_gate import StageGate
 from andai_core.crypto import load_keyring
 from andai_core.db.session import create_app_engine
+from andai_core.org import security as org_security
 from andai_core.mail import SmtpMailer
 from andai_core.settings import Settings, get_settings
 
@@ -85,6 +86,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(redis.RedisError, _store_unavailable)
     app.include_router(auth_routes.router)
+    app.include_router(org_security.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
