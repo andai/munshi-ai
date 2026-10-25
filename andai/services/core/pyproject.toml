@@ -1,11 +1,15 @@
 [project]
 name = "andai-core"
 version = "0.0.0"
-description = "munshi.ai andai-core service (Phase 1 skeleton: health endpoint only)"
+description = "munshi.ai andai-core service (identity and tenancy)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.162.0",
     "uvicorn==0.54.0",
+    "sqlalchemy==2.1.6",
+    "alembic==1.20.1",
+    "psycopg[binary]==3.3.6",
+    "pydantic-settings==2.16.1",
 ]
 
 [build-system]
