@@ -13,6 +13,9 @@ Human authentication for andai-core, mounted under `/api/v1`:
 - `passwords.py` — argon2id hashing, rehash on login, a dummy verification for unknown emails.
 - `ratelimit.py` — sliding-window limiter (Valkey in the stack, in memory for tests): 5 failed logins
   per (email, client address) per 15 minutes.
+- `stage_gate.py` — middleware: an `mfa_pending` session reaches only `/auth/mfa/verify` and
+  logout, an `enroll_required` one only `/me/mfa*` and logout; anything else is 401 with
+  `next_step`.
 - `csrf.py` — refuses state-changing requests whose `Origin` is not `ANDAI_PORTAL_ORIGIN`.
 - `clientip.py` — the client address; `X-Forwarded-For` only from `ANDAI_TRUSTED_PROXIES`.
 - `deps.py` — the app's services and the current-session dependencies.

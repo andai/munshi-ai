@@ -4,6 +4,7 @@
 resolver) are created at startup from the environment unless a caller passes them in (tests).
 Startup refuses to complete outside `ANDAI_ENV=dev` without a key-encryption key
 (`crypto.load_keyring` raises `KeyUnavailable`), so a production service never runs without one.
+A session in a two-factor stage reaches only its own routes (`auth.stage_gate`).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from andai_core.auth.csrf import OriginCheck
 from andai_core.auth.deps import Services
 from andai_core.auth.mfa import MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS
 from andai_core.auth.ratelimit import LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, ValkeyLimiter
+from andai_core.auth.stage_gate import StageGate
 from andai_core.crypto import load_keyring
 from andai_core.db.session import create_app_engine
 from andai_core.mail import SmtpMailer
@@ -76,6 +78,9 @@ def create_app(services: Services | None = None) -> FastAPI:
         title=SERVICE_NAME, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
     app.state.services = services
+    # Middleware wraps every route, including ones added later. The last added runs first: the
+    # Origin check refuses cross-site writes before the stage gate looks up the session.
+    app.add_middleware(StageGate)
     app.add_middleware(OriginCheck, allowed_origin=settings.portal_origin)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(redis.RedisError, _store_unavailable)
