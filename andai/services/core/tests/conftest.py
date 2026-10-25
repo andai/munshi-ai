@@ -268,3 +268,149 @@ def bootstrap_org(engine: Engine, owner_id: uuid.UUID) -> uuid.UUID:
         tx.flush()
         tx.add(OrgMembership(org_id=org_id, user_id=owner_id, role="owner"))
     return org_id
+
+
+# ─── andai-core app harness ───────────────────────────────────────────────────────────────────────
+
+PORTAL_ORIGIN = "http://portal.test"
+CLIENT_IP = "198.51.100.10"
+PASSWORD = "correct horse battery staple"
+
+
+def make_settings(**overrides: str):
+    """Settings for a test app: dev posture, a fixed portal origin; `overrides` use env names."""
+    from andai_core.settings import Settings
+
+    return Settings(**{"ANDAI_ENV": "dev", "ANDAI_PORTAL_ORIGIN": PORTAL_ORIGIN, **overrides})
+
+
+class Clock:
+    """A settable UTC clock for the services (session expiry, link expiry)."""
+
+    def __init__(self) -> None:
+        from datetime import UTC, datetime
+
+        self.now = datetime.now(UTC)
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, **delta: float) -> None:
+        from datetime import timedelta
+
+        self.now += timedelta(**delta)
+
+
+@dataclass
+class Harness:
+    services: object
+    mailer: object
+    clock: Clock
+
+    def client(self, ip: str = CLIENT_IP, origin: str | None = PORTAL_ORIGIN):
+        from fastapi.testclient import TestClient
+
+        from andai_core.main import create_app
+
+        headers = {} if origin is None else {"Origin": origin}
+        return TestClient(create_app(self.services), client=(ip, 50000), headers=headers)
+
+
+def make_harness(engine: Engine, **settings: str) -> Harness:
+    from andai_core.auth.clientip import ClientIpResolver
+    from andai_core.auth.deps import Services
+    from andai_core.auth.ratelimit import MemoryLimiter
+    from andai_core.mail import MemoryMailer
+
+    clock = Clock()
+    mailer = MemoryMailer()
+    config = make_settings(**settings)
+    services = Services(
+        settings=config,
+        engine=engine,
+        login_limiter=MemoryLimiter(),
+        reset_limiter=MemoryLimiter(),
+        mailer=mailer,
+        ip_resolver=ClientIpResolver(config.trusted_proxies),
+        clock=clock,
+    )
+    return Harness(services=services, mailer=mailer, clock=clock)
+
+
+@pytest.fixture
+def harness(app_engine: Engine) -> Harness:
+    return make_harness(app_engine)
+
+
+@dataclass(frozen=True)
+class Member:
+    org_id: uuid.UUID
+    user_id: uuid.UUID
+    email: str
+    password: str
+
+
+def new_member(
+    engine: Engine,
+    *,
+    password: str | None = PASSWORD,
+    status: str = "active",
+    role: str = "owner",
+    org_id: uuid.UUID | None = None,
+) -> Member:
+    """A user with an argon2id password in an org (a new org unless `org_id` is given)."""
+    from andai_core.auth.passwords import hash_password
+    from andai_core.db.models import Org, OrgMembership, User
+    from andai_core.db.session import transaction
+
+    user_id = uuid.uuid4()
+    email = f"{user_id.hex}@example.test"
+    with transaction(engine) as tx:
+        tx.add(
+            User(
+                id=user_id,
+                email=email,
+                display_name="Test Member",
+                status=status,
+                password_hash=None if password is None else hash_password(password),
+            )
+        )
+    new_org = org_id is None
+    org_id = org_id or uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        if new_org:
+            tx.add(Org(id=org_id, name=f"Org {org_id.hex[:8]}", slug=f"org-{org_id.hex}"))
+            tx.flush()
+        tx.add(OrgMembership(org_id=org_id, user_id=user_id, role=role))
+    return Member(org_id=org_id, user_id=user_id, email=email, password=password or "")
+
+
+@pytest.fixture
+def fresh_app_engine(postgres: Postgres, migrated: Postgres) -> Iterator[Engine]:
+    """An app-role engine on a brand-new database at head (for tests that need an empty one)."""
+    from alembic import command
+
+    name = f"andai_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(postgres.url("postgres", postgres.superuser_password, "postgres"))
+    with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(f"CREATE DATABASE {name} OWNER andai_owner"))
+        conn.execute(text(f"REVOKE ALL ON DATABASE {name} FROM PUBLIC"))
+        conn.execute(text(f"GRANT CONNECT ON DATABASE {name} TO andai_owner, andai_app"))
+    db_admin = create_engine(postgres.url("postgres", postgres.superuser_password, name))
+    with db_admin.begin() as conn:
+        conn.execute(text("REVOKE ALL ON SCHEMA public FROM PUBLIC"))
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO andai_app"))
+    db_admin.dispose()
+    command.upgrade(
+        alembic_config(postgres.url("andai_owner", postgres.owner_password, name)), "head"
+    )
+    from andai_core.db.session import create_app_engine
+
+    engine = create_app_engine(postgres.url("andai_app", postgres.app_password, name))
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        admin.dispose()
