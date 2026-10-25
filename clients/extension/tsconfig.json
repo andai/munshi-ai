@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": ["chrome"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@munshi/gmeet-capture": ["../../core/meetings/modules/gmeet-capture/src/index.ts"],
+      "@munshi/capture-codec": ["../../core/meetings/modules/capture-codec/src/index.ts"],
+      "@munshi/mixed-capture-core": ["../../core/meetings/modules/mixed-capture-core/src/index.ts"],
+      "@munshi/zoom-capture": ["../../core/meetings/modules/zoom-capture/src/index.ts"],
+      "@munshi/teams-capture": ["../../core/meetings/modules/teams-capture/src/index.ts"],
+      "@munshi/record-chunker": ["../../core/meetings/modules/record-chunker/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

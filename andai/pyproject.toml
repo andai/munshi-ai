@@ -1,0 +1,31 @@
+# andai uv workspace: Python services of the munshi.ai overlay.
+# Munshi's own Python lives at the repo root and is not part of this workspace.
+[project]
+name = "andai-workspace"
+version = "0.0.0"
+description = "munshi.ai overlay workspace root (not a package)"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "andai-core",
+    "andai-worker",
+    "andai-intake",
+    "pytest==9.1.1",
+    "httpx==0.28.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["services/core", "services/worker", "services/intake"]
+
+[tool.uv.sources]
+andai-core = { workspace = true }
+andai-worker = { workspace = true }
+andai-intake = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

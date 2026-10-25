@@ -1,0 +1,207 @@
+# andai overlay for Munshi's deploy/compose/docker-compose.yml.
+#
+# Never run this file on its own. It is merged on top of Munshi's file by andai/Makefile:
+#
+#   ANDAI_ROOT=<repo> docker compose -p andai-meet --project-directory <repo>/deploy/compose \
+#     -f <repo>/deploy/compose/docker-compose.yml \
+#     -f <repo>/andai/deploy/compose/docker-compose.andai.yml \
+#     --env-file <repo>/andai/deploy/compose/.env ...
+#
+# What it does:
+#   1. Adds the andai skeleton services (andai-core, andai-worker, andai-intake, andai-portal) on
+#      Munshi's `munshi` network.
+#   2. For Munshi services it changes ONLY `environment` entries and `ports` (D-15 perimeter). No
+#      Munshi file is edited; every other setting comes from the untracked .env.
+#
+# Ports: every published port binds to 127.0.0.1 (D-15). Munshi's own file already does this at
+# v0.12.28; `ports: !override` (Compose >= 2.24) restates the bindings here so a future upstream
+# change to 0.0.0.0 cannot widen the perimeter through a sync. Compose merges `ports` lists
+# additively, so without `!override` an upstream binding would survive next to ours.
+#
+# Runner and model credentials (D-15, D-22, PLAT-02): agent-api and runtime get the OLLM values from
+# .env — the completion port via MUNSHI_LLM_*, the claude-code harness via ANTHROPIC_BASE_URL /
+# ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL (OLLM's Anthropic-compatible API). The Anthropic API key,
+# the Claude subscription token and the credentials mount are forced EMPTY here as literals, so
+# neither a deploy/compose/.env file (read by Munshi's `env_file`) nor the shell can hand them one.
+# The runtime spawns agent workers from AGENT_WORKER_IMAGE (the hardened andai worker).
+
+services:
+  # ─── andai skeletons (health-only in Phase 1) ──────────────────────────────────────────────────
+  andai-core:
+    build:
+      context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai
+      dockerfile: services/core/Dockerfile
+    image: andai-meet/andai-core:${ANDAI_IMAGE_TAG:-dev}
+    # Never pulled: `make up` builds andai images explicitly, then starts with --no-build.
+    pull_policy: never
+    environment:
+      - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+    ports: !override
+      - "127.0.0.1:${ANDAI_CORE_PORT:-18300}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    networks: [munshi]
+    restart: unless-stopped
+
+  andai-worker:
+    build:
+      context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai
+      dockerfile: services/worker/Dockerfile
+    image: andai-meet/andai-worker:${ANDAI_IMAGE_TAG:-dev}
+    pull_policy: never
+    environment:
+      - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+    ports: !override
+      - "127.0.0.1:${ANDAI_WORKER_PORT:-18301}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    networks: [munshi]
+    restart: unless-stopped
+
+  andai-intake:
+    build:
+      context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai
+      dockerfile: services/intake/Dockerfile
+    image: andai-meet/andai-intake:${ANDAI_IMAGE_TAG:-dev}
+    pull_policy: never
+    environment:
+      - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+    ports: !override
+      - "127.0.0.1:${ANDAI_INTAKE_PORT:-18302}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    networks: [munshi]
+    restart: unless-stopped
+
+  andai-portal:
+    build:
+      context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/portal
+      dockerfile: Dockerfile
+    image: andai-meet/andai-portal:${ANDAI_IMAGE_TAG:-dev}
+    pull_policy: never
+    environment:
+      - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+    ports: !override
+      - "127.0.0.1:${ANDAI_PORTAL_PORT:-13100}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    init: true
+    networks: [munshi]
+    restart: unless-stopped
+
+  # ─── Munshi services: environment and ports only ─────────────────────────────────────────────────
+  postgres:
+    ports: !override
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5458}:5432"
+
+  storage:
+    ports: !override
+      - "127.0.0.1:${STORAGE_HOST_PORT:-18900}:9000"
+
+  admin-api:
+    environment:
+      # Not read by admin-api at v0.12.28 (only mcp and transcription read MUNSHI_ENV); set so the
+      # whole stack carries one posture and a future upstream read picks up `production`.
+      - MUNSHI_ENV=${MUNSHI_ENV:-production}
+    ports: !override
+      - "127.0.0.1:${ADMIN_API_PORT:-18057}:8001"
+
+  runtime:
+    environment:
+      # The runtime copies these into every spawned agent worker (docker_backend.py), so they are
+      # set here rather than left to Munshi's `env_file: .env` (which points at deploy/compose/.env,
+      # a file this deployment does not use).
+      - MUNSHI_RUNNER=${MUNSHI_RUNNER:-}
+      - MUNSHI_LLM_PROVIDER=${MUNSHI_LLM_PROVIDER:-}
+      - MUNSHI_LLM_BASE_URL=${MUNSHI_LLM_BASE_URL:-}
+      - MUNSHI_LLM_API_KEY=${MUNSHI_LLM_API_KEY:-}
+      - MUNSHI_LLM_MODEL=${MUNSHI_LLM_MODEL:-}
+      - MUNSHI_LLM_MAX_TOKENS=${MUNSHI_LLM_MAX_TOKENS:-}
+      - MUNSHI_MODEL_ALLOWLIST=${MUNSHI_MODEL_ALLOWLIST:-}
+      # claude-code harness → OLLM's Anthropic-compatible API (D-22); forwarded into every worker.
+      - ANTHROPIC_BASE_URL=${ANDAI_AGENT_BASE_URL:?ANDAI_AGENT_BASE_URL must be the OLLM base URL}
+      - ANTHROPIC_AUTH_TOKEN=${ANDAI_AGENT_AUTH_TOKEN:?ANDAI_AGENT_AUTH_TOKEN must be the OLLM key}
+      - ANTHROPIC_MODEL=${ANDAI_AGENT_MODEL:?ANDAI_AGENT_MODEL must be an OLLM model id}
+      - ANTHROPIC_DEFAULT_OPUS_MODEL=${ANDAI_AGENT_MODEL}
+      - ANTHROPIC_DEFAULT_SONNET_MODEL=${ANDAI_AGENT_MODEL}
+      - ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANDAI_AGENT_MODEL}
+      # The hardened andai worker image (D-22). worker_image_for() honours this override first.
+      - AGENT_WORKER_IMAGE=${AGENT_WORKER_IMAGE:?AGENT_WORKER_IMAGE must name the andai agent-worker image}
+      # Anthropic account / Claude subscription credentials: forced empty (D-15, D-22).
+      - HOST_CLAUDE_CREDENTIALS=
+      - CLAUDE_CODE_OAUTH_TOKEN=
+      - ANTHROPIC_API_KEY=
+    ports: !override
+      - "127.0.0.1:${RUNTIME_API_PORT:-18090}:8090"
+
+  agent-api:
+    environment:
+      # agent-api reads MUNSHI_LLM_PROVIDER / MUNSHI_LLM_MODEL / MUNSHI_MODEL_ALLOWLIST as settings and
+      # forwards MUNSHI_LLM_BASE_URL / MUNSHI_LLM_API_KEY into every dispatch (MODEL_AUTH_ENV_ALLOWLIST).
+      - MUNSHI_RUNNER=${MUNSHI_RUNNER:-}
+      - MUNSHI_LLM_PROVIDER=${MUNSHI_LLM_PROVIDER:-}
+      - MUNSHI_LLM_BASE_URL=${MUNSHI_LLM_BASE_URL:-}
+      - MUNSHI_LLM_API_KEY=${MUNSHI_LLM_API_KEY:-}
+      - MUNSHI_LLM_MODEL=${MUNSHI_LLM_MODEL:-}
+      - MUNSHI_LLM_MAX_TOKENS=${MUNSHI_LLM_MAX_TOKENS:-}
+      - MUNSHI_MODEL_ALLOWLIST=${MUNSHI_MODEL_ALLOWLIST:-}
+      # claude-code harness → OLLM (D-22). agent-api stamps these into each dispatch (only when
+      # non-empty), matching what the runtime forwards, so both paths carry the same OLLM values.
+      - ANTHROPIC_BASE_URL=${ANDAI_AGENT_BASE_URL:?ANDAI_AGENT_BASE_URL must be the OLLM base URL}
+      - ANTHROPIC_AUTH_TOKEN=${ANDAI_AGENT_AUTH_TOKEN:?ANDAI_AGENT_AUTH_TOKEN must be the OLLM key}
+      - ANTHROPIC_MODEL=${ANDAI_AGENT_MODEL:?ANDAI_AGENT_MODEL must be an OLLM model id}
+      - ANTHROPIC_DEFAULT_OPUS_MODEL=${ANDAI_AGENT_MODEL}
+      - ANTHROPIC_DEFAULT_SONNET_MODEL=${ANDAI_AGENT_MODEL}
+      - ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANDAI_AGENT_MODEL}
+      # Anthropic account / Claude subscription credentials: forced empty (D-15, D-22).
+      - CLAUDE_CODE_OAUTH_TOKEN=
+      - ANTHROPIC_API_KEY=
+    ports: !override
+      - "127.0.0.1:${AGENT_API_PORT:-18100}:8100"
+
+  meeting-api:
+    environment:
+      # Not read by meeting-api at v0.12.28; see admin-api.
+      - MUNSHI_ENV=${MUNSHI_ENV:-production}
+    ports: !override
+      - "127.0.0.1:${MEETING_API_PORT:-18080}:8080"
+
+  gateway:
+    ports: !override
+      - "127.0.0.1:${API_GATEWAY_HOST_PORT:-18056}:8000"
+
+  flows-api:
+    ports: !override
+      - "127.0.0.1:${FLOWS_API_HOST_PORT:-18200}:8200"
+
+  mcp:
+    ports: !override
+      - "127.0.0.1:${MCP_HOST_PORT:-18010}:8010"
+
+  terminal:
+    ports: !override
+      - "127.0.0.1:${TERMINAL_PORT:-13000}:3000"
+
+  # Operator-only (D-15): runs under COMPOSE_PROFILES=dashboard, reachable on 127.0.0.1 only.
+  dashboard:
+    ports: !override
+      - "127.0.0.1:${DASHBOARD_PORT:-13001}:3000"

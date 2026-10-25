@@ -1,0 +1,17 @@
+{{- if .Values.meetingApi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "munshi.componentName" (list . "meeting-api") }}
+  labels:
+    {{- include "munshi.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.meetingApi.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.meetingApi.service.port }}
+      targetPort: http
+  selector:
+    {{- include "munshi.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: meeting-api
+{{- end }}

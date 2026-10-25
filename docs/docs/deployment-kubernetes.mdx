@@ -1,0 +1,509 @@
+---
+title: "Kubernetes (Helm)"
+description: "Deploy Munshi on Kubernetes or OpenShift with the Helm chart — a Pod per bot and per agent, scalable to thousands of users."
+---
+
+The Helm chart at `deploy/helm/charts/munshi`
+deploys the same control plane as the Compose stack, with the runtime pointed at the cluster:
+`RUNTIME_BACKEND=k8s` makes **every bot and every agent dispatch its own bare Pod**
+(`restart: Never`), so capacity is your cluster's scheduler — not a bigger box.
+
+## What the chart deploys
+
+| Component | Form |
+|---|---|
+| gateway · admin-api · meeting-api · agent-api · runtime | Deployments (RollingUpdate, `maxUnavailable: 0`) |
+| terminal (web workbench) | Deployment + ingress |
+| postgres | StatefulSet (or point values at your managed DB) |
+| redis (Valkey) | Deployment |
+| object storage | **not deployed** — recordings go to your own S3 bucket ([`storage.s3`](#object-storage), required) |
+| DB migrations | Job |
+| pgbouncer | optional connection pooling |
+| dashboard (deprecated 0.10 UI) | optional Deployment + Service, **off by default** |
+| RBAC for the k8s spawn backend | Role/RoleBinding scoped to Pod create/watch/delete |
+
+The chart sets no pod security context by default and the service images run as root; set
+`global.podSecurityContext` / `global.securityContext` to run as a non-root UID.
+Containers have all capabilities dropped, with PodDisruptionBudgets on the control plane and
+rolling updates that never take the last replica down.
+
+## Install
+
+Create the bucket first (the chart never creates one) and a Secret holding a key pair for it, then
+install with the bucket in `storage.s3`:
+
+```bash
+git clone https://github.com/sunydepalpur/munshi-ai.git && cd munshi
+kubectl create namespace munshi
+kubectl -n munshi create secret generic munshi-s3 \
+  --from-literal=AWS_ACCESS_KEY_ID='<access key id>' \
+  --from-literal=AWS_SECRET_ACCESS_KEY='<secret access key>'
+helm install munshi deploy/helm/charts/munshi -n munshi \
+  --set secrets.internalApiSecret="$(openssl rand -hex 32)" \
+  --set secrets.adminApiToken="$(openssl rand -hex 32)" \
+  --set secrets.dispatchSigningKey="$(openssl rand -hex 32)" \
+  --set secrets.nextauthSecret="$(openssl rand -hex 32)" \
+  --set storage.s3.endpoint=https://s3.eu-central-1.amazonaws.com \
+  --set storage.s3.bucket=<your bucket> \
+  --set storage.s3.existingSecret=munshi-s3
+```
+
+Keep these four secret values: every later `helm upgrade` must pass the same ones (or use `--reuse-values`).
+
+`values-staging.yaml` and `values-test.yaml` show environment overlays. Chart tests
+(`helm lint` + template tests) live under `deploy/helm/tests/`.
+
+**Don't have a key yet?** Hosted: sign in at [example.invalid/signin](https://example.invalid/signin) with a Google
+account and copy your key from [your account page](https://example.invalid/account) — free credit, no card
+required. Self-hosted: `make all` prints a key when the stack comes up.
+
+### Is this install actually working? — `make probe SURFACE=helm`
+
+The standing full-journey smoke probe drives spawn → schedule → boot → join → transcribe →
+live-view → stop through the gateway front door, then sweeps every deployment's logs once. Each
+stage prints Expected / Actual / Verdict; a red stage names where the journey broke and fails the
+command, so you get a truthful install verdict in minutes with no meeting and no humans.
+
+```bash
+make probe SURFACE=helm                                        # port-forwards gateway + admin-api
+GATEWAY_URL=http://<node>:<nodePort> make probe SURFACE=helm   # or drive a NodePort directly
+```
+
+It mints its API key from the release secret's `ADMIN_API_TOKEN` (or pass `MUNSHI_API_KEY`). The
+same journey runs on the other surfaces: `make probe` (compose, the fast default) and
+`make probe SURFACE=lite`.
+
+## Object storage
+
+meeting-api stores recordings in **your** bucket, on AWS S3 or any S3-compatible service. The chart
+runs no object store of its own and has no fallback to storage inside a pod: until `storage.s3` names
+an endpoint, a bucket and a Secret, `helm install`, `helm upgrade` and `helm template` refuse to
+render and name the missing values.
+
+Use an `https://` endpoint for any store outside the cluster.
+The bucket must not allow anonymous (public) read or list access.
+
+```yaml
+storage:
+  s3:
+    endpoint: https://s3.eu-central-1.amazonaws.com   # a full URL, https:// or http://
+    bucket: my-munshi-recordings                        # must already exist
+    region: eu-central-1                              # default us-east-1
+    existingSecret: munshi-s3                           # in the release namespace
+```
+
+| Value | Default | Meaning |
+|---|---|---|
+| `storage.s3.endpoint` | required | The S3 endpoint, as a full URL. |
+| `storage.s3.bucket` | required | An existing bucket. meeting-api writes recordings under `recordings/`, and bots' captured-signal tapes, when bots upload them, under `signal/`. |
+| `storage.s3.existingSecret` | required | A Secret holding the access key pair. Credentials are never chart values. |
+| `storage.s3.accessKeyIdKey` · `secretAccessKeyKey` | `AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY` | The key names inside that Secret. |
+| `storage.s3.region` | `us-east-1` | The signing region. |
+| `storage.s3.forcePathStyle` | `true` | `true` sends path-style requests (`https://host/bucket/key`); `false` sends virtual-hosted ones (`https://bucket.host/key`), which need DNS for `bucket.host`. |
+| `storage.s3.caBundle.configMapName` or `.secretName`, and `.key` | unset, `ca.crt` | A private CA for an `https://` endpoint: a ConfigMap or a Secret in the namespace, not both. It replaces the default trust store for S3 calls. On OpenShift, a ConfigMap labelled `config.openshift.io/inject-trusted-cabundle=true` receives the cluster's trusted bundle under the key `ca-bundle.crt`. |
+
+The key pair needs to list the bucket and to read, write and delete objects in it. meeting-api's
+`/health` reports `object_storage` as configured once the Secret's two keys are set; it does not
+check that they work. Credentials the store rejects surface when a recording is written or played
+back: the API answers `500` (not `404`), and meeting-api's log names the S3 error, such as
+`SignatureDoesNotMatch`.
+
+Set these values here, not through `meetingApi.extraEnv`: the chart refuses to render when
+`extraEnv` sets one of the chart's storage variables or an AWS override of the mounted client config (see
+[Configuration](/configuration#object-storage-on-kubernetes)).
+
+### Upgrading from the built-in MinIO
+
+Earlier versions of this chart ran MinIO beside the stack by default (`minio.enabled: true`). The
+chart no longer includes it: MinIO's images can no longer be pulled, so those installs cannot start
+again as they were. A values file that still sets `minio.enabled: true` is refused with a link to
+these steps.
+
+1. **Create the bucket and the Secret** in your S3, as in [Install](#install).
+2. **Copy the objects while the old release still runs**, with any S3 tool. With the AWS CLI through
+   a port-forward:
+
+   ```bash
+   kubectl -n munshi port-forward svc/munshi-munshi-minio 9000:9000 &
+   AWS_ACCESS_KEY_ID=munshi-access-key AWS_SECRET_ACCESS_KEY=munshi-secret-key \
+     aws --endpoint-url http://127.0.0.1:9000 s3 sync s3://munshi ./munshi-objects
+   AWS_ACCESS_KEY_ID='<access key id>' AWS_SECRET_ACCESS_KEY='<secret access key>' \
+     aws --endpoint-url https://s3.eu-central-1.amazonaws.com s3 sync ./munshi-objects s3://<your bucket>
+   ```
+
+   The old credentials and bucket are your `minio.accessKey`, `minio.secretKey` and `minio.bucket`
+   (`munshi-access-key`, `munshi-secret-key` and `munshi` unless you changed them); Service and PVC names
+   carry your release name (`<release>-munshi-minio`). Keep every key as it is — recordings are found
+   by key, and the new bucket's name does not matter. `s3 sync` copies only what changed, so run both
+   commands again just before the upgrade to pick up recordings made in between.
+   Run the final `s3 sync` commands and `helm upgrade` while nothing is recording (no bot in a meeting).
+   Chunks written after the final sync stay only on the retained MinIO volume.
+3. **Upgrade** with `storage.s3` set and `minio` removed from your values:
+
+   ```bash
+   helm upgrade munshi deploy/helm/charts/munshi -n munshi -f my-values.yaml
+   ```
+
+   `--reuse-values` keeps the previous chart's defaults, including `minio.enabled: true`; with it,
+   also pass `--set minio.enabled=false`. If you pointed meeting-api at your own S3 through
+   `meetingApi.extraEnv`, move those settings into `storage.s3`. Anything else aimed at the old
+   MinIO Service, such as `meetingApi.botS3Endpoint` for [authenticated bots](/authenticated-bots),
+   needs a new endpoint.
+4. **Play back an old recording**, then clean up. The upgrade deletes the MinIO StatefulSet and its
+   Service, but not the data: the PVC `data-munshi-munshi-minio-0` was created by the StatefulSet, not by
+   Helm, so Helm does not delete it. It stays bound, with the old objects on it, mounted by nothing.
+   The completed bucket Job `munshi-munshi-minio-init` stays too: it was a Helm hook, and Helm does not
+   delete a hook the chart no longer declares. Delete both when you no longer need them
+   (`kubectl -n munshi delete job munshi-munshi-minio-init`, `kubectl -n munshi delete pvc
+   data-munshi-munshi-minio-0`); with most storage classes, deleting the PVC also deletes the volume.
+   Remove the local recording copies with `rm -rf ./munshi-objects`.
+
+`helm rollback` to the MinIO-era revision recreates the StatefulSet, which attaches the retained PVC
+again and serves the objects on it — provided the MinIO images that revision names can still be
+pulled. Recordings made after the upgrade are in your bucket, not on that volume.
+
+## The runtime on Kubernetes
+
+The runtime kernel owns one `runtime.v1` lifecycle (`starting → running → stopping → stopped →
+destroyed`) and delegates only the substrate question — *how do I start, observe, and stop a
+workload?* — to the backend. On `k8s`, a workload is a bare Pod; the same dispatch, contracts,
+and worker run identically to the Docker backend. See [Execution](/architecture/execution).
+
+### Scheduling spawned Pods on a tainted / dedicated pool
+
+A spawned bot or agent Pod is created with `kubectl run` — it is **not** a child of the runtime
+Deployment, so it does **not** inherit `global.nodeSelector` / `global.tolerations`. On a cluster
+whose nodes are all tainted (the standard pool-segregation pattern — dedicated, spot/temp, or GPU
+node pools), a spawned Pod with no tolerations sits `Pending` forever (`untolerated taint(s)`) and
+the meeting silently fails while the runtime itself — a Deployment that *does* apply those
+constraints — looks healthy.
+
+The chart closes this by handing the runtime its **own** scheduling constraints as env, which the
+spawn backend stamps onto every Pod it creates:
+
+| Env on the runtime | Chart source | Applied to |
+|---|---|---|
+| `RUNTIME_K8S_TOLERATIONS` | `runtime.tolerations` ⟶ defaults to `global.tolerations` | every spawned Pod's `spec.tolerations` |
+| `RUNTIME_K8S_NODE_SELECTOR` | `runtime.nodeSelector` ⟶ defaults to `global.nodeSelector` | every spawned Pod's `spec.nodeSelector` |
+
+By default a spawned Pod schedules **wherever the runtime itself can** — set `global.tolerations`
+/ `global.nodeSelector` for your pool and both the runtime and everything it spawns land there, with
+no extra action:
+
+```yaml
+global:
+  tolerations:
+    - key: munshi.ai/pool
+      operator: Equal
+      value: main
+      effect: NoSchedule
+  nodeSelector:
+    example.invalid/pool: main
+```
+
+Set `runtime.tolerations` / `runtime.nodeSelector` only to send spawned workloads to a **different**
+pool than the kernel (e.g. GPU bots). Both values are serialized to JSON; malformed JSON fails the
+spawn loudly rather than dropping the constraint (a dropped constraint is the stranded-Pod bug).
+
+<Warning>
+**Spawned-workload commands must exist in the target image under k8s (entrypoint-replace)
+semantics.** A runtime profile may carry a `command`; the k8s backend passes it as
+`kubectl run --command -- …`, which **replaces** the image `ENTRYPOINT` (it becomes the Pod's
+`argv[0]`). So a command path that is not present in the image `StartError`s **every** spawn on
+k8s — even though the Docker backend, which *appends* the command to the entrypoint as arguments,
+silently ignores the same bad path. The meeting-bot profile therefore carries **no** command: the
+bot image's own `ENTRYPOINT` (`/app/entrypoint.sh`) boots it on every backend. At release time an
+image↔profile conformance gate (`image-identity`) asserts each profile command is either empty or
+an in-image executable against the published images, so a profile that diverges from its image
+fails the release rather than a customer's install.
+</Warning>
+
+### Namespace LimitRange defaults
+
+A spawned bot or agent Pod carries **no resource requests or limits of its own** — the chart does not
+stamp any onto it. On a plain namespace that is fine (the Pod is unbounded and the scheduler places it
+on capacity). In a **quota-controlled namespace**, however, a `LimitRange` supplies the defaults, and
+whatever it says is what the bot gets.
+
+The bot runs a real browser. Either run Munshi's spawn namespace with **no `LimitRange` at all**, or
+give that namespace the defaults Munshi's own production runs:
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: runtime-defaults
+spec:
+  limits:
+  - type: Container
+    default:        {cpu: 1500m, memory: 2560Mi}
+    defaultRequest: {cpu: 1000m, memory: 1100Mi}
+```
+
+**Sizing basis:** a live bot runs ~1.0–1.3 Gi steady state, which is what the
+request is sized to; a Teams call spikes past 2 Gi, which is what the 2560Mi limit is sized to (an
+OOM at ~2 Gi is why that ceiling exists). These values have run production since April 2026.
+
+<Warning>
+**Do not set the memory limit below `2560Mi`** — it is a hard ceiling, not a starting point. Also
+check that the namespace's `max` (and any `ResourceQuota`) is not *below* these defaults, or the Pod
+is rejected at admission instead of merely being under-provisioned.
+</Warning>
+
+Under-provisioned defaults do not fail loudly at schedule time — the Pod is admitted and then
+OOM-killed or CPU-starved partway through the join, which reads as a flaky bot rather than a quota
+problem. Check with `kubectl get limitrange -n <namespace> -o yaml` before an upgrade or a first
+install. Agent-worker Pods are smaller than a bot and are over-provisioned by these defaults; that
+is the intended trade — they are small and few.
+
+<Note>
+**`/dev/shm` — 2 Gi, and on Kubernetes there is no knob for it.** The bot runs Chromium **without**
+`--disable-dev-shm-usage`, so it needs a real shared-memory mount, and Teams is the workload that
+actually consumes it. The Docker backend sizes it at **`2g`** by default (`DOCKER_SHM_SIZE`); on
+Kubernetes the equivalent is **`2Gi`**, but the k8s backend exposes **no setting for it in
+`v0.12.23`** — the only spawn-time knobs it reads are `RUNTIME_K8S_TOLERATIONS` and
+`RUNTIME_K8S_NODE_SELECTOR`. A spawned Pod therefore takes the kubelet's default `/dev/shm`, which on
+most distributions is far below 2 Gi. Two consequences: do not trim the memory ceiling above, and if
+Teams calls crash the browser on your cluster, an undersized `/dev/shm` is the first thing to check.
+</Note>
+
+### Autoscaling and bot bursts — the fresh-node reachability gate
+
+Because every bot is its own bare Pod, a burst of meeting requests can push the cluster autoscaler to
+add nodes, and bots get scheduled onto them the moment they report `Ready`. But a brand-new node's
+network can take up to a few minutes to fully converge *after* `Ready` — the CNI/NetworkPolicy
+programming, kube-proxy, and DNS warmup all lag node readiness. A bot scheduled into that window can
+find its control plane (its meeting-api callback URL and redis) unreachable on its first outbound hop.
+
+The bot handles this with a **pre-join reachability gate**: it makes its first `joining` lifecycle
+emit load-bearing. If the meeting-api callback is reachable (any HTTP response), it joins immediately —
+zero added latency. If not, it probes redis; **if either channel is up it proceeds** (it can still
+report), and **only if both are down does it refuse to join**, terminating fast (< a few seconds) with:
+
+- **Pod exit code `3`** — the attributable terminal signal (`kubectl describe pod <bot>` →
+  `Last State: Terminated, Exit Code: 3`). Distinct from a real join failure (exit `1`).
+- a `failed` lifecycle event carrying `failure_stage: requested` and `infra_fault:
+  control_plane_unreachable` on whichever channel recovers (often none — the exit code is the signal).
+
+This converts an opaque CrashLoop / stuck-`requested` meeting into a fast, attributed failure an
+operator can read in one `kubectl describe`. See
+[Troubleshooting → exit code 3](/troubleshooting).
+
+**What stays cluster-side (not solved by the gate):** the node-readiness window itself. Consider
+pre-pulling the bot image onto new nodes (a cold pull can itself take minutes and mask the network
+window), and treat node `Ready` as insufficient for scheduling network-dependent work — the gate
+fails fast and, on k8s, the exit lets the operator (or an autoscaler policy) reschedule onto a warmed
+node.
+
+## Scaling meeting-api
+
+`meetingApi.replicaCount` defaults to `2`, and that is safe for the segment consumer.
+Each replica now joins the `transcription_segments` consumer group under a **per-pod
+identity** (`collector-<hostname>`, overridable with `COLLECTOR_CONSUMER_NAME`), and a
+surviving replica periodically `XAUTOCLAIM`s a crashed replica's un-acked segment batch and
+drains it through the normal persist path — so no transcript segments are orphaned when a
+pod dies mid-batch. The reclaim only fires once a batch has idled past
+`COLLECTOR_RECLAIM_MIN_IDLE_MS` (default `60000`), so a live peer's in-flight batch is never
+stolen. `/health` exposes `pipeline.pending_depth` (the group's delivered-but-un-acked
+count) alongside `pipeline.consumer_lag`, and degrades to `503` once it exceeds
+`PIPELINE_PENDING_ALARM` (default `100`) — a stuck batch is a reportable state, not a silent
+stall.
+
+A pod's hostname changes on **every recreate** (a rolling deploy, a pod restart, a compose
+`--force-recreate`), so each new container joins `collector_group` under a **new**
+`collector-<hostname>` and the old name is left behind. Those abandoned consumers hold no pending
+entries (they read their last message and acked it), so they are harmless to correctness — but left
+unchecked the group fills with dead names that inflate operator `XINFO CONSUMERS` reads and muddy
+`/health`. The same reclaim sweep now **prunes** them: any consumer with `pending == 0` that has
+idled past `COLLECTOR_CONSUMER_TTL_MS` (default `1800000`, 30 min — well above the reclaim idle gate,
+so a briefly-quiet live replica is never touched) is removed with `XGROUP DELCONSUMER`. A consumer
+holding an in-flight batch (`pending > 0`) is **never** pruned, and the running replica never prunes
+itself; a live consumer re-registers on its next `XREADGROUP`, so the prune is idempotent and
+self-healing. Reading `XINFO CONSUMERS collector_group` should therefore list only the replicas that
+actually exist — dead `collector-<oldhash>` names are expected to disappear within a sweep of the
+TTL. For k8s you can eliminate the churn at the source by pinning a stable per-replica identity via
+`COLLECTOR_CONSUMER_NAME` (e.g. a StatefulSet ordinal) so a restart re-uses the same consumer.
+
+<Note>
+**Every surface now ships Valkey 8.x**, which has `XAUTOCLAIM` — so orphan reclaim is active
+everywhere Munshi ships, including Munshi Lite (compose, helm, and Lite all run Valkey, the Linux
+Foundation BSD-3 fork of Redis 7.2.4; see [the changelog](/changelog) and #653). Reclaim, per-pod
+identity, and ghost-consumer pruning all work on the shipped stack. Check yours with
+`valkey-server --version`.
+
+The degradation path below still exists as a safety net for a *bring-your-own* backing store older
+than the floor: on a Redis/Valkey without `XAUTOCLAIM` the reclaim disables itself and logs once at
+startup; everything else (normal `XREADGROUP` consumption, `pending_depth`) is unaffected. The cost
+is narrow but real — if a replica dies mid-batch on such a store, that batch stays pending instead of
+being drained by a peer, so run a single replica or move to a store with `XAUTOCLAIM` (Redis ≥ 6.2 /
+Valkey ≥ 7.2). Ghost-consumer pruning degrades the same way: if the backing store rejects `XINFO
+CONSUMERS`, the prune logs once and no-ops, leaving the consume path untouched.
+</Note>
+
+## In-cluster self-addressing
+
+Under Helm the meeting-api Service is release-qualified (`<release>-munshi-meeting-api`),
+not the bare `meeting-api` that the Compose stack uses. So the chart sets `MEETING_API_URL`
+explicitly on the meeting-api deployment to `http://<release>-munshi-meeting-api:8080` — the
+address a spawned bot calls back on for its lifecycle callback and recording upload. Left
+unset it would fall back to the compose-only default `http://meeting-api:8080`, which does
+not resolve in-cluster.
+
+The chart sets the same address as `MUNSHI_MEETING_API_URL` on the **agent-api** deployment.
+Before opening a live-transcript SSE stream (`GET /api/meeting/stream`), agent-api verifies the
+caller owns the meeting by calling `GET /meetings/{id}` on meeting-api, and **fails closed** — an
+unreachable meeting-api returns `403 "not authorized for this meeting"` for the meeting's own
+owner. Left unset it would fall back to the compose-only `http://meeting-api:8080`, so the owner
+sees a permanent "Reconnecting to live stream…" instead of streaming words.
+
+The chart likewise sets `ADMIN_API_URL` on the meeting-api deployment to
+`http://<release>-munshi-admin-api:8001` (mirroring Compose's `ADMIN_API_URL=http://admin-api:8001`).
+This is **required** for two background loops: calendar sync (discovering each user's connected
+ICS feed through admin-api's internal edge) and capped auto-join (fetching the per-user max-bots
+cap for every scheduled-meeting spawn). With `ADMIN_API_URL` unset, calendar sync no-ops and the
+auto-join sweep cannot resolve the per-user cap. The meeting-api then **fails closed and refuses to
+spawn** rather than spawn uncapped; set `AUTO_JOIN_ALLOW_UNCAPPED=1` only if you deliberately want
+uncapped auto-join spawns on a self-host.
+
+## Exposing the cluster — ingress and TLS
+
+The chart ships an optional Ingress, **off by default**. Enabling it fronts the Terminal, which
+is the human entry point: it proxies `/ws` to the gateway and `/api` to agent-api/admin-api
+server-side, so one hostname is usually enough.
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx          # your controller's IngressClass
+  host: munshi.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    - secretName: munshi-tls
+      hosts:
+        - munshi.example.com
+```
+
+`tls` is passed through to the Ingress `spec.tls` verbatim, so it is ordinary Kubernetes TLS —
+the chart neither issues nor terminates certificates itself. Either let cert-manager populate
+`secretName` via the annotation above, or create the Secret yourself:
+
+```bash
+kubectl -n munshi create secret tls munshi-tls --cert=fullchain.pem --key=privkey.pem
+```
+
+`annotations` are rendered onto the Ingress unchanged, which is also where controller-specific
+settings go — body size, proxy timeouts, and the long-lived-connection settings a WebSocket
+upgrade needs on `/ws`.
+
+### Exposing the raw API as well
+
+`paths` defaults to a single rule sending `/` to the Terminal on port 3000. Add a second rule if
+external clients should reach the gateway directly:
+
+```yaml
+ingress:                    # the same `ingress:` key as above — one block, not two
+  enabled: true
+  className: nginx
+  host: munshi.example.com
+  paths:
+    - path: /
+      pathType: Prefix
+      service: terminal
+      servicePort: 3000
+    - path: /api
+      pathType: Prefix
+      service: gateway
+      servicePort: 8000
+```
+
+A path entry that omits `service` defaults to the gateway.
+
+### Tell the Terminal its external origin
+
+Enabling the Ingress is not sufficient on its own. `terminal.publicUrl` is empty by default —
+correct for cluster-internal or `port-forward` access — and it is what sets `NEXTAUTH_URL` and
+`TERMINAL_URL`. Left empty behind a public hostname, cookie security and the OAuth callback are
+computed against the wrong origin:
+
+```yaml
+terminal:
+  publicUrl: https://munshi.example.com
+```
+
+### Sign-in providers — Google and Microsoft
+
+The Terminal's Google and Microsoft buttons each self-gate on their own credentials: set **both**
+the client id and the client secret and that button appears; leave either empty and it stays
+hidden. The chart has no dedicated fields for them — pass them through `terminal.extraEnv`, which
+is rendered onto the Deployment verbatim, so `valueFrom` works where a literal would put a secret
+in your values file:
+
+```yaml
+terminal:                                 # the same `terminal:` key as above — one block, not two
+  publicUrl: https://munshi.example.com
+  extraEnv:
+    - name: MICROSOFT_CLIENT_ID
+      value: "<application (client) id>"
+    - name: MICROSOFT_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef: { name: munshi-oauth, key: microsoft-client-secret }
+    # "common" = work/school + personal; or a single org tenant id. Unset ⇒ common.
+    - name: MICROSOFT_TENANT_ID
+      value: "common"
+    # Google is the same shape, minus the tenant:
+    - name: GOOGLE_CLIENT_ID
+      value: "<client id>"
+    - name: GOOGLE_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef: { name: munshi-oauth, key: google-client-secret }
+```
+
+Register the redirect URI in the provider console as `<publicUrl>/api/auth/callback/microsoft`
+(or `.../google`) — so `terminal.publicUrl` above is a prerequisite, not an optional extra.
+
+<Note>
+Without an Ingress the Services stay cluster-internal. `helm install` alone does not expose Munshi —
+reach it with `kubectl port-forward` during evaluation, or enable the Ingress above.
+</Note>
+
+## The deprecated dashboard (optional)
+
+The 0.10 dashboard — the multi-user web UI that predates the Terminal — ships as an
+**off-by-default** component while it is still load-bearing: hosted production runs it against
+the 0.12 core, and the authenticated-session flows are only walkable through it today. Enable it
+explicitly:
+
+```bash
+helm upgrade --install munshi deploy/helm/charts/munshi -n munshi \
+  --set dashboard.enabled=true \
+  --set dashboard.publicUrl=https://dashboard.example.com \
+  --set dashboard.publicApiUrl=https://api.example.com
+```
+
+It runs the pinned external image `ghcr.io/sunydepalpur/munshi-dashboard` on its own tag — `global.imageTag` does
+not apply to it — and talks to the gateway's hosted-compat surface. It is **deprecated**: when
+the Terminal covers its remaining flows, the component is deleted, not ported. On Compose the
+same option is `docker compose --profile dashboard up -d` (port 13001).
+
+## Honest status
+
+The k8s backend **lifecycle and the workspace mount are implemented** (the workspace store
+binds into each worker Pod as a PVC, scoped per-mount). The Compose stack is the path with the
+most production mileage today; the chart is the right starting point for a cluster
+evaluation — track the [status page](/roadmap/status).
+
+## No-egress clusters
+
+Everything the chart deploys pulls from images you build and host in your own registry; pair it
+with the [self-hosted transcription unit](/deployment#transcription-the-separate-gpu-unit) — bundled
+GPU or CPU — and your own LLM endpoint ([Configuration](/configuration)) so the audio path never
+calls out. See [Security & compliance](/security-compliance).
+
+**One gap on this path, and it is this chart's:** `TRANSCRIPTION_MODEL` is **not values-plumbed**
+— set it on the meeting-api and terminal Deployments via `extraEnv` until it lands, which the
+chart's own known boundaries
+state. Compose and Lite plumb it as a first-class setting. So no egress is ✅ on **Compose and
+Lite** and 🟡 **here**. We have not run an install on a genuinely disconnected network, so we do
+not claim one: what a procurement review can hold us to is self-hosted with no egress, not a
+certified air gap.

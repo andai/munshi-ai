@@ -1,0 +1,8 @@
+{
+  "platform": "jitsi",
+  "meetingUrl": "https://meet.jit.si/MunshiStandup",
+  "botName": "Munshi",
+  "passcode": "golden-passcode",
+  "nativeMeetingId": "MunshiStandup",
+  "redisUrl": "redis://redis:6379"
+}

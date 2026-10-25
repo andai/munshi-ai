@@ -1,0 +1,9 @@
+{
+  "name": "gmail.send",
+  "scope": "send:self",
+  "grant": "gate",
+  "cred_ref": "secret://gmail/oauth",
+  "transport": "mcp",
+  "mcp_server": "munshi-gmail",
+  "barriers": ["info-barrier"]
+}

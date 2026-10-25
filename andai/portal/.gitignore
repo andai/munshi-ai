@@ -1,0 +1,4 @@
+# Next.js build output and generated files (andai portal)
+.next/
+next-env.d.ts
+*.tsbuildinfo

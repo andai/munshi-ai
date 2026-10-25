@@ -1,0 +1,1 @@
+"""andai-intake service package."""

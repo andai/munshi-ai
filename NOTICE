@@ -1,0 +1,33 @@
+munshi.ai — Copyright 2026 AND AI Platforms, Apache License 2.0
+
+This product includes software originally developed by Vexa AI and licensed under the Apache License 2.0; it has been modified by AND AI Platforms.
+
+Copyright notices carried by the original software:
+
+Copyright 2026 Vexa AI
+
+FINOS knowledge graph (workspace seed under core/agent/workspace-seeds/finos/)
+
+This product includes a curated knowledge graph of the FINOS (Fintech Open Source
+Foundation) ecosystem, assembled from publicly available FINOS sources. FINOS and the
+FINOS projects referenced there are projects of the Fintech Open Source Foundation (a
+Linux Foundation project); their source repositories are published under their own
+open-source licenses (predominantly Apache-2.0). See SOURCES.md in that directory for
+the per-entity provenance (every entity carries its own `Source:` citation).
+
+"FINOS" and the names of FINOS projects, companies, and individuals referenced in the
+knowledge graph are the property of their respective owners. They are used for factual,
+descriptive purposes only; this project is not affiliated with or endorsed by FINOS or
+the Linux Foundation.
+
+Licensing of that distribution:
+  - Code and scaffolding (CLAUDE.md, agents/, skills/, views/, routines/, config):
+      Apache License 2.0 — see LICENSE.
+  - Knowledge-graph content under kg/ (the factual entity notes):
+      Creative Commons Attribution 4.0 International (CC BY 4.0) —
+      https://creativecommons.org/licenses/by/4.0/
+    Attribute to "Vexa AI — FINOS Knowledge Graph" and preserve the per-entity
+    `Source:` citations.
+
+Third-party licenses for artifacts baked into the images are listed in
+THIRD_PARTY_LICENSES.md.

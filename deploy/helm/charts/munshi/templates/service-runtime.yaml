@@ -1,0 +1,17 @@
+{{- if .Values.runtime.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "munshi.componentName" (list . "runtime") }}
+  labels:
+    {{- include "munshi.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.runtime.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.runtime.service.port }}
+      targetPort: http
+  selector:
+    {{- include "munshi.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime
+{{- end }}

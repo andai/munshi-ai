@@ -1,0 +1,18 @@
+{
+  "// note": "Self-contained (does NOT extend the ESM tsconfig.base): @munshi/join is a CommonJS Node brick — extensionless relative imports + value-imports of ./_host, and proven-solid 0.11 join logic written non-strict. base is NodeNext + verbatimModuleSyntax (ESM), which this CJS code is not. Mirrors @munshi/remote-browser. ESM consumers (e.g. @munshi/bot) import it via Node interop.",
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

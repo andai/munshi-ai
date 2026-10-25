@@ -1,0 +1,1029 @@
+name: munshi-v012
+# v0.12 control plane (P4). The carved analog of deploy/compose/docker-compose.yml (0.11):
+# postgres:17 + valkey:8 + storage (versitygw) + storage-init infra, then the four long-running Python services —
+# admin-api · runtime · meeting-api · gateway — each building its own slim uv-based image.
+# Improvement over 0.11: EVERY service carries a healthcheck and depends_on waits on
+# `condition: service_healthy` so the bring-up is ordered + observable.
+#
+# Bot is NOT a compose service: runtime spawns ghcr.io/sunydepalpur/munshi-bot:v012 (BROWSER_IMAGE) on demand via the
+# mounted /var/run/docker.sock. That published ~3.6GB image is a REFERENCE here, never built.
+
+services:
+  # ─── Infrastructure ───────────────────────────────────────────────────────────────────────────
+  redis:
+    # Valkey (Linux Foundation BSD-3 fork of Redis 7.2.4): parity with the Lite witness surface
+    # and off source-available Redis ≥7.4 (RSALv2/SSPLv1). Wire-compatible (RESP) — the service
+    # name, REDIS_URL, and every consumer stay put; only the engine changes (#653).
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+    networks: [munshi]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    command: ["postgres", "-c", "idle_in_transaction_session_timeout=60000"]
+    environment:
+      - POSTGRES_DB=${DB_NAME:-munshi}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      # The backend operates only UTC time. Pin the DB clock to UTC so func.now()/server_default/
+      # onupdate (the naive timestamp columns' server-side values, main's pattern) are guaranteed UTC.
+      - TZ=UTC
+      - PGTZ=UTC
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5458}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-munshi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [munshi]
+    restart: unless-stopped
+
+  storage:
+    # Object storage for recordings, and for authenticated bots' saved sessions when those point here:
+    # versitygw (Apache-2.0) with its POSIX backend, pinned by digest. Buckets are directories under
+    # data/ in the storage-data volume and every object is a plain file; S3 metadata (content type,
+    # ETag) rides in extended attributes, so back the volume up with an attribute-preserving copy
+    # (rsync -aX, cp -a). iam/ holds the gateway's account file. The admin API shares the S3 port.
+    # meeting-api keeps its MINIO_* variable names; MINIO_ACCESS_KEY / MINIO_SECRET_KEY are this
+    # server's root credentials. The host port is loopback-only and deliberately not MinIO's 9000,
+    # so an upgrading install's old MinIO container can keep running beside it until its recordings
+    # are copied (docs: /upgrade-from-minio).
+    image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mkdir -p /srv/munshi-storage/data /srv/munshi-storage/iam && exec versitygw --port :9000 --health /health --iam-dir /srv/munshi-storage/iam --quiet posix /srv/munshi-storage/data
+    environment:
+      - ROOT_ACCESS_KEY=${MINIO_ACCESS_KEY:-munshi-access-key}
+      - ROOT_SECRET_KEY=${MINIO_SECRET_KEY:-munshi-secret-key}
+    ports:
+      - "127.0.0.1:${STORAGE_HOST_PORT:-18900}:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - storage-data:/srv/munshi-storage
+    networks: [munshi]
+    restart: unless-stopped
+
+  storage-init:
+    # Checks the endpoint meeting-api uses (deploy/storage/storage_init.py, with its Python + boto3):
+    # ensures the bucket exists and PUTs/GETs/DELETEs a probe under .munshi-storage-init/, comparing bytes.
+    # Any failure holds meeting-api back. When authenticated bots point BOT_S3_ENDPOINT here, also
+    # creates their scoped account and bucket policy limited to BOT_USERDATA_S3_PATH, then proves it.
+    build:
+      context: ../..
+      dockerfile: core/meetings/services/meeting-api/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-meeting-api:${IMAGE_TAG:-dev}
+    entrypoint: ["python", "/munshi-storage-tools/storage_init.py"]
+    depends_on:
+      storage:
+        condition: service_healthy
+    environment:
+      - STORAGE_ENDPOINT=http://storage:9000
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-storage:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-munshi-access-key}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-munshi-secret-key}
+      - MINIO_BUCKET=${MINIO_BUCKET:-munshi}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - BOT_S3_ENDPOINT=${BOT_S3_ENDPOINT:-}
+      - BOT_S3_BUCKET=${BOT_S3_BUCKET:-}
+      - BOT_S3_ACCESS_KEY=${BOT_S3_ACCESS_KEY:-}
+      - BOT_S3_SECRET_KEY=${BOT_S3_SECRET_KEY:-}
+      - BOT_USERDATA_S3_PATH=${BOT_USERDATA_S3_PATH:-}
+    volumes:
+      - ../storage:/munshi-storage-tools:ro
+    networks: [munshi]
+
+  # ─── Core services ────────────────────────────────────────────────────────────────────────────
+  admin-api:
+    build:
+      context: ../../core/identity/services/admin-api
+      dockerfile: Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-admin-api:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${ADMIN_API_PORT:-18057}:8001"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-munshi}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      # NO `changeme` FALLBACK (A19). This token mints an API key for ANY user; a stack that came
+      # up on the published literal handed the whole account plane to anyone who read the repo.
+      # Unset now means UNSET — admin-api's config.v1 refuses the placeholder literals by name and
+      # the admin surface answers 500 rather than accepting a secret everybody has.
+      - ADMIN_API_TOKEN=${ADMIN_TOKEN:-}
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # ── the publish edge (config.v1 class `publish-edge`) ──────────────────────────────────
+      # Identity hands `onboarding.completed` to flows here. Same variable, same default-empty
+      # shape as the mcp service's assembly URLs: EMPTY IS A PROFILE, not a misconfiguration —
+      # a deployment with no flows domain still onboards people, and the fact stays stamped on
+      # the person either way. The key authenticates the same edge; flows' POST /events is not open.
+      - MUNSHI_FLOWS_API_URL=${MUNSHI_FLOWS_API_URL:-}
+      - MUNSHI_FLOWS_API_KEY=${MUNSHI_FLOWS_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  runtime:
+    build:
+      context: ../../core/runtime
+      dockerfile: Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-runtime:${IMAGE_TAG:-dev}
+    # The runtime spawns bot containers via the host Docker socket (DockerBackend → socket API,
+    # requests_unixsocket — no docker CLI in the image, like main).
+    group_add:
+      - "${DOCKER_GID:-0}"
+    ports:
+      - "127.0.0.1:${RUNTIME_API_PORT:-18090}:8090"
+    # Provider auth (ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL) is sourced from .env via env_file so the
+    # token/endpoint pair is a SINGLE SOURCE OF TRUTH the ambient shell cannot shadow. The runtime brokers
+    # these into spawned agent containers, so a shell-shadowed base_url here would poison every agent.
+    env_file:
+      # required:false — a fresh checkout (CI, gate worktree) has no .env; the proof stack
+      # must boot without LLM auth. On a real deploy the file exists and wins as before.
+      - path: .env
+        required: false
+    environment:
+      - BROWSER_IMAGE=${BROWSER_IMAGE:-munshiai/munshi-bot:${IMAGE_TAG:-dev}}
+      # The per-dispatch WORKER image the runtime spawns (control-plane ⊥ worker split). AGENT_WORKER_IMAGE
+      # is set EXPLICITLY (no suffix derivation); AGENT_IMAGE now matches the built control-plane tag.
+      - AGENT_IMAGE=${AGENT_IMAGE:-munshiai/v012-agent-api:${IMAGE_TAG:-dev}}
+      - AGENT_WORKER_IMAGE=${AGENT_WORKER_IMAGE:-munshiai/v012-agent-worker:${IMAGE_TAG:-dev}}
+      # Optional low-latency tuning for the Google Meet speaker-stream pipeline. Empty values keep
+      # the bot defaults; runtime forwards configured values to spawned bot containers.
+      - BOT_ALONE_SILENCE_WINDOW_MS=${BOT_ALONE_SILENCE_WINDOW_MS:-}
+      - BOT_SPEAKER_MIN_AUDIO_SEC=${BOT_SPEAKER_MIN_AUDIO_SEC:-}
+      - BOT_SPEAKER_SUBMIT_INTERVAL_SEC=${BOT_SPEAKER_SUBMIT_INTERVAL_SEC:-}
+      - BOT_SPEAKER_CONFIRM_THRESHOLD=${BOT_SPEAKER_CONFIRM_THRESHOLD:-}
+      - BOT_SPEAKER_MAX_BUFFER_SEC=${BOT_SPEAKER_MAX_BUFFER_SEC:-}
+      - BOT_SPEAKER_IDLE_TIMEOUT_SEC=${BOT_SPEAKER_IDLE_TIMEOUT_SEC:-}
+      - MUNSHI_AGENT_SRC_MOUNT=${MUNSHI_AGENT_SRC_MOUNT:-}
+      - REDIS_URL=redis://redis:6379/0
+      # The Runtime brokers model credentials into spawned agents. Subscription credentials may be
+      # mounted from the host; API-style Anthropic/OpenRouter env is forwarded from this trusted service.
+      - HOST_CLAUDE_CREDENTIALS=${HOST_CLAUDE_CREDENTIALS:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL now come from env_file (above), NOT environment: — an
+      # `environment:` ${VAR} entry interpolates the AMBIENT SHELL first and silently shadowed .env (prod 401).
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+      - ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
+      - ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-}
+      - ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-munshi-internal-secret}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Spawn the bot onto THIS compose network so it resolves meeting-api:8080 (lifecycle callback)
+      # + redis. Must equal the project-prefixed network name (DockerBackend → HostConfig.NetworkMode).
+      - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-munshi-v012}_munshi
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mirror of HOST_CLAUDE_CREDENTIALS (a DOCKER-HOST path — see .env.example) into THIS container,
+      # so the config.v1 `model_inference` file probe can verify the host file actually exists before
+      # any worker spawns: docker bind-mounts a MISSING host path as an empty DIRECTORY, which is how
+      # a bad path becomes 'Model inference failed: Not logged in' inside the worker. /dev/null when
+      # unset (the probe is skipped then — an ANTHROPIC_* key may be the credential path instead).
+      - ${HOST_CLAUDE_CREDENTIALS:-/dev/null}:/var/lib/munshi/host-claude-credentials:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  # Build-only: the per-dispatch WORKER image the runtime spawns (claude-in-container; NOT a long-running
+  # service). Built via `docker compose build agent-worker`; the runtime references it by AGENT_WORKER_IMAGE.
+  # `profiles` keeps it out of `up`; `command: true` makes an accidental start a no-op.
+  agent-worker:
+    build:
+      context: ../..
+      dockerfile: core/agent/worker/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-agent-worker:${IMAGE_TAG:-dev}
+    profiles: ["build-only"]
+    command: ["true"]
+
+  agent-api:
+    # The unit control plane — POST /invocations (dispatch → runtime.v1 agent spawn), /api/chat (SSE),
+    # /api/sessions, /health. Wider build context (the carve root) to vendor the sealed schemas it
+    # validates by path. The unit WORKER is a separate runtime.v1 `agent` workload (claude-in-container).
+    build:
+      context: ../..
+      dockerfile: core/agent/services/agent-api/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-agent-api:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${AGENT_API_PORT:-18100}:8100"
+    # Provider auth (ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL) is sourced from .env via env_file so it is
+    # a SINGLE SOURCE OF TRUTH that the ambient shell cannot shadow. env_file values are NOT interpolated
+    # through the host shell (unlike `environment:` ${VAR} entries), which is exactly the prod-401 fix.
+    env_file:
+      # required:false — a fresh checkout (CI, gate worktree) has no .env; the proof stack
+      # must boot without LLM auth. On a real deploy the file exists and wins as before.
+      - path: .env
+        required: false
+    environment:
+      - MUNSHI_AGENT_API_PORT=8100
+      - MUNSHI_RUNTIME_API_URL=http://runtime:8090
+      # P0 SSE ownership: agent-api verifies meeting-row ownership before opening /api/meeting/stream (owner-scoped like /ws).
+      - MUNSHI_MEETING_API_URL=http://meeting-api:8080
+      # How the runtime's scheduler reaches this service's /invocations sink when a routine fires (MVP2).
+      - MUNSHI_AGENT_API_SELF_URL=http://agent-api:8100
+      - MUNSHI_AGENT_PROFILE=agent
+      - MUNSHI_WORKSPACES_DIR=/workspaces
+      # Lane M: the users.data.memberships[] index mirror over the admin-api internal edge
+      # (policy/members.json in the workspace git repo stays authoritative; this is the listing cache).
+      - MUNSHI_ADMIN_API_URL=http://admin-api:8001
+      # NO PLACEHOLDER FALLBACK. F95 removed the published `munshi-internal-secret` default from
+      # every service that REFUSES it at boot; these two lines kept it, so an unconfigured stack
+      # still PRESENTED the published literal as internal-tier authority. Unset is unset (A19).
+      - MUNSHI_INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+      # Identity (P20): agent-api derives the subject from the gateway-injected X-User-Id. Until the terminal
+      # routes through the gateway (Stage 4), it still reaches agent-api directly with no header, so this
+      # single-user fallback keeps the dev stack working (shared subject). Remove it once the gateway fronts
+      # agent-api and X-User-Id is always present — then a missing header fails closed (401).
+      - MUNSHI_AGENT_DEFAULT_SUBJECT=${MUNSHI_AGENT_DEFAULT_SUBJECT:-u_live}
+      - MUNSHI_AGENT_MODEL=${MUNSHI_AGENT_MODEL:-}
+      - MUNSHI_MEETING_MODEL=${MUNSHI_MEETING_MODEL:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL come from env_file (below), NOT environment: — an
+      # `environment:` entry interpolates the AMBIENT SHELL first, so a host `export ANTHROPIC_BASE_URL`
+      # silently shadowed deploy/compose/.env and a prod 401 followed (OpenRouter token → api.anthropic.com).
+      # env_file reads the value literally from .env; the shell can no longer override it (single source of truth).
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+      - ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
+      - ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-}
+      - ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}
+      - MUNSHI_LOG_LEVEL=${LOG_LEVEL:-info}
+      # Stream primitive — the per-dispatch redis Streams the control plane relays (unit:<id>:out → SSE).
+      - MUNSHI_REDIS_URL=redis://redis:6379/0
+      # The backing the Runtime binds into the worker as the workspace store (the project-prefixed volume).
+      - MUNSHI_WORKSPACE_MOUNT_SOURCE=${COMPOSE_PROJECT_NAME:-munshi-v012}_agent-workspaces
+      # Three-tier mount stack (AMENDMENT 4): the platform-owned GLOBAL SYSTEM workspace (_global) mounted
+      # READ-ONLY into every worker (behaviour/skills/tools). Empty = no _global mount (mount-when-present);
+      # REF pins it to a branch/tag/sha for safe rollout, empty = HEAD.
+      - MUNSHI_GLOBAL_SYSTEM_WORKSPACE_PATH=${MUNSHI_GLOBAL_SYSTEM_WORKSPACE_PATH:-}
+      - MUNSHI_GLOBAL_SYSTEM_WORKSPACE_REF=${MUNSHI_GLOBAL_SYSTEM_WORKSPACE_REF:-}
+      # The shared key the control plane signs per-dispatch tokens with (dev tier; k8s → SPIRE).
+      - MUNSHI_DISPATCH_SIGNING_KEY=${MUNSHI_DISPATCH_SIGNING_KEY:-dev-dispatch-signing-key}
+      # 'Add bot from URL' (terminal): agent-api forwards POST /api/meeting/bot → the gateway POST /bots.
+      - MUNSHI_GATEWAY_URL=http://gateway:8000
+      - MUNSHI_BOT_API_KEY=${MUNSHI_BOT_API_KEY:-}
+    volumes:
+      # The Workspace store backing (dev): the worker mounts the subject's subdir; agent-api reads the tree.
+      - agent-workspaces:/workspaces
+      # Settings → Models "Test" button: /api/models/test inspects the SAME subscription credential
+      # file the runtime brokers into workers (existence + expiry check — surfaces the stale-Keychain
+      # 401 with its remedy instead of failing the next chat turn). /dev/null when unset, same
+      # convention as the runtime's probe mount.
+      - ${HOST_CLAUDE_CREDENTIALS:-/dev/null}:/var/lib/munshi/host-claude-credentials:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    depends_on:
+      runtime:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  meeting-api:
+    build:
+      # Wider context (the v0.12 carve root) than the other services: meeting_api validates at the
+      # seam and loads the sealed invocation/lifecycle/webhook/runtime/schedule schemas BY PATH, so
+      # those frozen contract files are vendored into the image (see the Dockerfile).
+      context: ../..
+      dockerfile: core/meetings/services/meeting-api/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-meeting-api:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${MEETING_API_PORT:-18080}:8080"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-munshi}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_URL=redis://redis:6379/0
+      - RUNTIME_API_URL=http://runtime:8090
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET}
+      # The bot's display name in the meeting. The terminal omits bot_name on join, so this is what
+      # participants see; set DEFAULT_BOT_NAME in .env and restart meeting-api (no terminal rebuild).
+      - DEFAULT_BOT_NAME=${DEFAULT_BOT_NAME:-Munshi}
+      # The background sweeps' internal lookups: auto-join fetches per-user spawn context
+      # (/internal/users/{id}/bot-context) and calendar sync discovers connected ICS feeds
+      # (/internal/calendar-configs). Unset -> calendar sync no-ops, auto-join spawns uncapped.
+      - ADMIN_API_URL=http://admin-api:8001
+      # MeetingToken is signed (mint) AND verified (recordings upload) with ADMIN_TOKEN — the SAME
+      # admin secret admin-api holds (admin-api gets ADMIN_API_TOKEN=${ADMIN_TOKEN}). Exactly like
+      # main (meeting-api ADMIN_TOKEN = admin-api ADMIN_API_TOKEN). __main__ passes token_secret=ADMIN_TOKEN.
+      # NO `changeme` FALLBACK (A19) — same credential as admin-api's ADMIN_API_TOKEN above, and
+      # meeting-api declares it required-explicit, so an unset value refuses the boot loudly
+      # instead of signing every MeetingToken with a secret published in this repository.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # STT the spawned bot transcribes with — bot_spawn threads these into the invocation (registry
+      # `stt` resource; a token that can actually transcribe — the boot probe + wizard Test verify
+      # it with real audio). Unset → bot joins+captures but no transcript.
+      # MODEL is the id validating backends require (Groq/vLLM); unset → whisper-1.
+      - TRANSCRIPTION_SERVICE_URL=${TRANSCRIPTION_SERVICE_URL:-}
+      - TRANSCRIPTION_SERVICE_TOKEN=${TRANSCRIPTION_SERVICE_TOKEN:-}
+      - TRANSCRIPTION_MODEL=${TRANSCRIPTION_MODEL:-}
+      # Deployment-level defaults for a spawn's transcribe/recording flags when the request does not
+      # say (config.v1 `defaulted` keys). TRANSCRIBE_ENABLED=false makes a no-STT deployment spawn
+      # capture-only bots instead of 503-ing every default POST /bots.
+      - TRANSCRIBE_ENABLED=${TRANSCRIBE_ENABLED:-true}
+      - RECORDING_ENABLED=${RECORDING_ENABLED:-true}
+      # Authenticated-bot mode (deployment-scoped): when true, every spawned bot restores the
+      # provisioned browser session (make login) from the userdata store and joins signed-in.
+      # BOT_S3_* are SCOPED userdata credentials — never the deployment's admin S3 creds.
+      # Docs: /authenticated-bots.
+      - BOT_AUTHENTICATED=${BOT_AUTHENTICATED:-false}
+      - BOT_USERDATA_S3_PATH=${BOT_USERDATA_S3_PATH:-}
+      - BOT_S3_ENDPOINT=${BOT_S3_ENDPOINT:-}
+      - BOT_S3_BUCKET=${BOT_S3_BUCKET:-}
+      - BOT_S3_ACCESS_KEY=${BOT_S3_ACCESS_KEY:-}
+      - BOT_S3_SECRET_KEY=${BOT_S3_SECRET_KEY:-}
+      # Optional operator-owned service-authority.v1 boundary. Empty is explicit OSS allow-all.
+      - MUNSHI_SERVICE_AUTHORITY_CONFIG=${MUNSHI_SERVICE_AUTHORITY_CONFIG:-}
+      - MUNSHI_SERVICE_AUTHORITY_SECRET=${MUNSHI_SERVICE_AUTHORITY_SECRET:-}
+      - MUNSHI_SYSTEM_WEBHOOK_URL=${MUNSHI_SYSTEM_WEBHOOK_URL:-}
+      - MUNSHI_SYSTEM_WEBHOOK_SECRET=${MUNSHI_SYSTEM_WEBHOOK_SECRET:-}
+      - MUNSHI_SYSTEM_WEBHOOK_ALLOW_PRIVATE_HTTP=${MUNSHI_SYSTEM_WEBHOOK_ALLOW_PRIVATE_HTTP:-false}
+      - MUNSHI_SYSTEM_WEBHOOK_TIMEOUT_S=${MUNSHI_SYSTEM_WEBHOOK_TIMEOUT_S:-10}
+      # F168/F181: meetings→flows publish edge (config.v1 publish-edge, meeting_api/events.py) —
+      # meeting-api telling flows a bot it dispatched went active / completed, best-effort and
+      # swallowed on failure, the same as admin-api's onboarding.completed edge just below it in
+      # spirit (this file has no admin-api block above to point at, so: deploy/compose/
+      # docker-compose.yml's admin-api service, MUNSHI_FLOWS_API_URL line). Empty here is the no-flows
+      # profile — a deployment with no flows domain still runs meetings exactly as one with a
+      # flows domain does, and the fact stays out of `whats_waiting` rather than the boot refusing.
+      - MUNSHI_FLOWS_API_URL=${MUNSHI_FLOWS_API_URL:-}
+      - MUNSHI_FLOWS_API_KEY=${MUNSHI_FLOWS_API_KEY:-}
+      # Self-hosted Jitsi hostnames (comma-separated) recognized in pasted + calendar links.
+      - MUNSHI_JITSI_HOSTS=${MUNSHI_JITSI_HOSTS:-}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-storage:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-munshi-access-key}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-munshi-secret-key}
+      - MINIO_BUCKET=${MINIO_BUCKET:-munshi}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      runtime:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    networks: [munshi]
+    restart: unless-stopped
+
+  gateway:
+    build:
+      # THE REPO ROOT, like meeting-api and agent-api. The edge reads each domain's
+      # routes.v1.json BY PATH at import (routes_manifest.py), so the image must carry the
+      # manifests of the domains it fronts; a context scoped to the service cannot reach them.
+      context: ../..
+      dockerfile: core/gateway/services/gateway/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-gateway:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${API_GATEWAY_HOST_PORT:-18056}:8000"
+    environment:
+      - ADMIN_API_URL=http://admin-api:8001
+      - MEETING_API_URL=http://meeting-api:8080
+      # The MCP streamable-HTTP front door (#795): the gateway proxies /mcp here — GET (the SSE
+      # stream) relayed on the streaming client, every other method on the buffered forward.
+      # NOT a depends_on: mcp itself depends on the gateway (GATEWAY_URL), and compose refuses a
+      # dependency cycle. The forward simply 502s until mcp is up, like any other upstream.
+      - MCP_URL=http://mcp:8010
+      # THE AGENT DOMAIN'S PRESENCE SIGNAL (PRD 40.6 / 40.7). This full profile runs agents, so it
+      # names the door and the edge fronts `/agent/*`. The `no-agents` profile sets it EMPTY —
+      # the gateway then registers no /agent route and assembles no agent rows into its scope
+      # table, so a request there is 404 rather than a 401 about a route this stack does not have.
+      # It was a CODE default before, which made a deployment unable to say it has no agents.
+      #
+      # THE COMPOSE DEFAULT IS THE SERVICE, and moving it from a code default to here is the whole
+      # of decision 40.7 — but the move shipped with `:-` and NO default, so `agent-api` kept
+      # running in the default profile while every `/agent/*` route silently 404'd for every
+      # self-hoster: seven routes that worked at v0.12.26, gone, with nothing anywhere to read.
+      # `.env.example` never set it either. An OPT-OUT (set it empty) is a deployment saying it has
+      # no agents; a MISSING default was nobody saying anything and the product answering "no".
+      - AGENT_API_URL=${AGENT_API_URL:-http://agent-api:8100}
+      - REDIS_URL=redis://redis:6379/0
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # fastapi-guard edge layer (edge_guard.py): per-IP throttle + auto-ban at the edge.
+      # ON by default with generous limits (owner ruling — protection that ships dark protects
+      # nobody). Opt out with GUARD_ENABLED=false in .env; all keys interpolate from .env.
+      # GUARD_WS_ENABLED is the optional /ws hook (off, opt-in): in-memory per-process — does
+      # NOT share ban/rate-limit state with the Redis-backed HTTP layer, and under uvicorn
+      # --workers N>1 each worker keeps an independent WS ban set.
+      - GUARD_ENABLED=${GUARD_ENABLED:-true}
+      - GUARD_WS_ENABLED=${GUARD_WS_ENABLED:-false}
+      - GUARD_ENABLE_REDIS=${GUARD_ENABLE_REDIS:-true}
+      - GUARD_RATE_LIMIT_RPM=${GUARD_RATE_LIMIT_RPM:-600}
+      - GUARD_RATE_LIMIT_WINDOW=${GUARD_RATE_LIMIT_WINDOW:-60}
+      - GUARD_AUTO_BAN_THRESHOLD=${GUARD_AUTO_BAN_THRESHOLD:-10}
+      - GUARD_AUTO_BAN_DURATION=${GUARD_AUTO_BAN_DURATION:-3600}
+      - GUARD_IP_WHITELIST=${GUARD_IP_WHITELIST:-}
+      - GUARD_IP_BLACKLIST=${GUARD_IP_BLACKLIST:-}
+      - GUARD_TRUSTED_PROXIES=${GUARD_TRUSTED_PROXIES:-}
+      - GUARD_TRUST_X_FORWARDED_PROTO=${GUARD_TRUST_X_FORWARDED_PROTO:-false}
+      - GUARD_BLOCKED_COUNTRIES=${GUARD_BLOCKED_COUNTRIES:-}
+      - GUARD_BLOCK_CLOUD_PROVIDERS=${GUARD_BLOCK_CLOUD_PROVIDERS:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    depends_on:
+      admin-api:
+        condition: service_healthy
+      meeting-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  # flows-api — the reaction engine's HTTP surface, and one of the domains the MCP assembly asks
+  # for a tool manifest (PRD decision 40).
+  #
+  # WHAT THIS REPLACES. The flows lanes run on the dogfood rig as HOST processes out of
+  # `flows-up.sh`, on loopback :18200/:18201, and the compose-network `mcp` service was pointed at
+  # the docker BRIDGE ADDRESS of that host lane so it could fetch /.well-known/mcp-tools.json — a
+  # host-specific IP written into a deployment, for a service the deployment did not run. This is
+  # the service. The host lane keeps working unchanged until the estate cuts over: the bind address
+  # defaults to loopback in code and is widened HERE, in the container's own environment, so the
+  # exposure is visible next to the port that publishes it.
+  #
+  # ONE IMAGE, THREE ENTRYPOINTS, ONE CONFIGURATION. `flows-api`, `flows-mailbox` and
+  # `flows-worker` (below) differ by `command` and by nothing else, so they carry the SAME
+  # environment: the config.v1 declaration belongs to the flows domain, not to one of its
+  # processes, and a lane configured differently from its siblings is how a mail policy comes to
+  # hold in one place and not the other. The WORKER is the image's default command; it used not
+  # to be started here (F190 — a deployment that admits facts through `flows-api` but never runs
+  # the process that advances them), and now is, right after `flows-mailbox` below.
+  flows-api:
+    build:
+      # The repo ROOT: the image COPYs core/flows/src AND the behavior showcase at behavior/.
+      context: ../..
+      dockerfile: core/flows/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-flows:${IMAGE_TAG:-dev}
+    command: ["python", "-m", "flows_integrations.flows_api"]
+    ports:
+      # Loopback-published for debugging, like every other service here; overridable so two stacks
+      # can share a host.
+      - "127.0.0.1:${FLOWS_API_HOST_PORT:-18200}:8200"
+    environment:
+      # ── the listener ────────────────────────────────────────────────────────────────────────
+      # In a container, loopback is THIS container's loopback — nothing else on the network can
+      # reach it. That is the whole reason the bridge-address hack existed. Said out loud here
+      # rather than flipped as a code default, which would have published the rig's host lane on
+      # every interface of that box the day it merged.
+      - MUNSHI_FLOWS_API_HOST=0.0.0.0
+      - MUNSHI_FLOWS_API_PORT=${MUNSHI_FLOWS_API_PORT:-8200}
+      - MUNSHI_FLOWS_DB_URL=postgresql+psycopg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-munshi}
+      # ── the credentials, all fail-closed (#1453, F95) ───────────────────────────────────────
+      # NO DEFAULT AND NO `:?`. No default because a weak one makes an unconfigured deployment look
+      # configured — that is F95's whole lesson, and `flows_steps/common.py` refuses the published
+      # placeholder literals by name. No `:?` either, though it is tempting: compose evaluates it
+      # while PARSING THE FILE, so it fails `docker compose config` for the entire stack, including
+      # deployments that do not run flows at all. The refusal belongs to the process that needs the
+      # secret, where it names itself and stops only itself — and it is already there, and tested.
+      - MUNSHI_FLOWS_API_KEY=${MUNSHI_FLOWS_API_KEY:-}
+      # admin-api's OWN token, under the name flows reads it by. One credential, two spellings, is
+      # what F95 was; this is the second spelling of ADMIN_TOKEN and it is passed through, never
+      # re-defaulted to a literal of its own.
+      - MUNSHI_FLOWS_ADMIN_KEY=${MUNSHI_FLOWS_ADMIN_KEY:-${ADMIN_TOKEN:-}}
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+      - MUNSHI_FLOWS_TIMELINE_KEY=${MUNSHI_FLOWS_TIMELINE_KEY:-}
+      # ── the doors (#1453 made these required-explicit) ──────────────────────────────────────
+      # Service names on the compose network. An unnamed door is a loud refusal at the moment it
+      # would have been used, so naming them here is what makes the refusal never fire in a stack
+      # that does run these domains.
+      - MUNSHI_FLOWS_ADMIN_API_URL=http://admin-api:8001
+      - MUNSHI_FLOWS_GATEWAY_URL=http://gateway:8000
+      # OPTIONAL DOMAIN, and the reason it is a variable rather than a service name: decision 40
+      # says a deployment may not run the agent domain at all. Unset, steps that need it answer
+      # `not_present` instead of reaching for a door that is not there (#1453).
+      - MUNSHI_FLOWS_AGENT_API_URL=${MUNSHI_FLOWS_AGENT_API_URL:-}
+      # THE LINK PORT, not a door (PRD decision 4: flows owns a link port, the terminal is one
+      # adapter, the no-agents product has none). Unset, nothing is mailed with a link and any step
+      # that would compose one refuses naming this key — it no longer decides whether flows BOOTS.
+      - MUNSHI_UI_URL=${MUNSHI_UI_URL:-}
+      # ── the mailbox (read by the flows-mailbox lane below; one image, one declaration) ───────
+      - MUNSHI_MAIL_INBOX=${MUNSHI_MAIL_INBOX:-imap}
+      - MUNSHI_MAIL_ADDR=${MUNSHI_MAIL_ADDR:-}
+      - MUNSHI_MAIL_APP_PASSWORD=${MUNSHI_MAIL_APP_PASSWORD:-}
+      - MUNSHI_MAIL_SMTP_HOST=${MUNSHI_MAIL_SMTP_HOST:-}
+      - MUNSHI_MAIL_SMTP_PORT=${MUNSHI_MAIL_SMTP_PORT:-25}
+      - MUNSHI_MAILPIT_URL=${MUNSHI_MAILPIT_URL:-}
+      - MUNSHI_MAILPIT_LOOKBACK_S=${MUNSHI_MAILPIT_LOOKBACK_S:-300}
+      - MUNSHI_NOTIFY_CHANNEL=${MUNSHI_NOTIFY_CHANNEL:-smtp}
+      # ── who the mailbox will act for (R-B12) ────────────────────────────────────────────────
+      # UNSET IS NOT `EVERYONE`: unset means the mailbox's own domain. Empty here is therefore the
+      # safe value and not a hole.
+      - MUNSHI_FLOWS_MAIL_DOMAINS=${MUNSHI_FLOWS_MAIL_DOMAINS:-}
+      - MUNSHI_FLOWS_MAIL_QUARANTINE_REPLY=${MUNSHI_FLOWS_MAIL_QUARANTINE_REPLY:-}
+      - MUNSHI_FLOWS_MAIL_RATE_PER_SENDER=${MUNSHI_FLOWS_MAIL_RATE_PER_SENDER:-12}
+      - MUNSHI_FLOWS_MAIL_RATE_GLOBAL=${MUNSHI_FLOWS_MAIL_RATE_GLOBAL:-120}
+      - MUNSHI_FLOWS_MAIL_RATE_WINDOW_S=${MUNSHI_FLOWS_MAIL_RATE_WINDOW_S:-3600}
+      - MUNSHI_FLOWS_MAIL_BODY_MAX=${MUNSHI_FLOWS_MAIL_BODY_MAX:-4000}
+      # ── behaviour and content ───────────────────────────────────────────────────────────────
+      - MUNSHI_FLOWS_ATTENDEE_DOMAINS=${MUNSHI_FLOWS_ATTENDEE_DOMAINS:-}
+      - MUNSHI_FLOWS_DATA_STATEMENT=${MUNSHI_FLOWS_DATA_STATEMENT:-}
+      # The private behavior tree a deployment mounts (decision 12). EMPTY IS THE OSS PRODUCT: the
+      # showcase baked into the image at /behavior is what flows reads.
+      - MUNSHI_BEHAVIOR_DIR=${MUNSHI_BEHAVIOR_DIR:-}
+      - MUNSHI_JITSI_HOSTS=${MUNSHI_JITSI_HOSTS:-}
+      - MUNSHI_FLOWS_USER_KEY_TTL_S=${MUNSHI_FLOWS_USER_KEY_TTL_S:-900}
+      - MUNSHI_TIMELINE_SCAN_ROWS=${MUNSHI_TIMELINE_SCAN_ROWS:-2000}
+      # Set uniformly across this stack; the flows processes log through uvicorn's own level and do
+      # not read it. Carried in the declaration's `surface_only` list with that reason, so
+      # `gate:config-contract` records the drift instead of ignoring it.
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8200/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    depends_on:
+      # WHAT IT CANNOT BOOT WITHOUT, and nothing else: its own database, and IDENTITY — the one
+      # domain decision 40.7 lets everybody depend on. Not meeting-api, not agent-api, not the
+      # terminal: flows reaches those at STEP time, and 40.7's whole point is that a deployment may
+      # not carry them. A depends_on there would turn an optional domain into a boot requirement.
+      postgres:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  # flows-mailbox — the inbound mail lane: IMAP poll → `POST /events` on the engine. Same image,
+  # same configuration, different command.
+  #
+  # UNDER A PROFILE, and that is the product statement: mail is an OPTIONAL INTAKE. The no-agents
+  # MCP product boots identity + meetings + flows + mcp + gateway and never touches a mailbox, so
+  # a lane that needs a real IMAP credential must not be in the default `docker compose up` — it
+  # would restart-loop on a stock stack and read as a broken deployment. `--profile mailbox`, or
+  # `COMPOSE_PROFILES=mailbox`, turns it on once the mail credentials are actually set.
+  #
+  # SINGLE WRITER: the IMAP cursor is single-writer by design (helm pins replicas: 1 for the same
+  # reason). Do not scale this service.
+  flows-mailbox:
+    profiles: ["mailbox"]
+    build:
+      context: ../..
+      dockerfile: core/flows/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-flows:${IMAGE_TAG:-dev}
+    command: ["python", "-m", "flows_integrations.mailbox"]
+    environment:
+      # ── the listener ────────────────────────────────────────────────────────────────────────
+      # In a container, loopback is THIS container's loopback — nothing else on the network can
+      # reach it. That is the whole reason the bridge-address hack existed. Said out loud here
+      # rather than flipped as a code default, which would have published the rig's host lane on
+      # every interface of that box the day it merged.
+      - MUNSHI_FLOWS_API_HOST=0.0.0.0
+      - MUNSHI_FLOWS_API_PORT=${MUNSHI_FLOWS_API_PORT:-8200}
+      - MUNSHI_FLOWS_DB_URL=postgresql+psycopg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-munshi}
+      # ── the credentials, all fail-closed (#1453, F95) ───────────────────────────────────────
+      # NO DEFAULT AND NO `:?`. No default because a weak one makes an unconfigured deployment look
+      # configured — that is F95's whole lesson, and `flows_steps/common.py` refuses the published
+      # placeholder literals by name. No `:?` either, though it is tempting: compose evaluates it
+      # while PARSING THE FILE, so it fails `docker compose config` for the entire stack, including
+      # deployments that do not run flows at all. The refusal belongs to the process that needs the
+      # secret, where it names itself and stops only itself — and it is already there, and tested.
+      - MUNSHI_FLOWS_API_KEY=${MUNSHI_FLOWS_API_KEY:-}
+      # admin-api's OWN token, under the name flows reads it by. One credential, two spellings, is
+      # what F95 was; this is the second spelling of ADMIN_TOKEN and it is passed through, never
+      # re-defaulted to a literal of its own.
+      - MUNSHI_FLOWS_ADMIN_KEY=${MUNSHI_FLOWS_ADMIN_KEY:-${ADMIN_TOKEN:-}}
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+      - MUNSHI_FLOWS_TIMELINE_KEY=${MUNSHI_FLOWS_TIMELINE_KEY:-}
+      # ── the doors (#1453 made these required-explicit) ──────────────────────────────────────
+      # Service names on the compose network. An unnamed door is a loud refusal at the moment it
+      # would have been used, so naming them here is what makes the refusal never fire in a stack
+      # that does run these domains.
+      - MUNSHI_FLOWS_ADMIN_API_URL=http://admin-api:8001
+      - MUNSHI_FLOWS_GATEWAY_URL=http://gateway:8000
+      # OPTIONAL DOMAIN, and the reason it is a variable rather than a service name: decision 40
+      # says a deployment may not run the agent domain at all. Unset, steps that need it answer
+      # `not_present` instead of reaching for a door that is not there (#1453).
+      - MUNSHI_FLOWS_AGENT_API_URL=${MUNSHI_FLOWS_AGENT_API_URL:-}
+      # THE LINK PORT, not a door (PRD decision 4: flows owns a link port, the terminal is one
+      # adapter, the no-agents product has none). Unset, nothing is mailed with a link and any step
+      # that would compose one refuses naming this key — it no longer decides whether flows BOOTS.
+      - MUNSHI_UI_URL=${MUNSHI_UI_URL:-}
+      # ── the mailbox (read by the flows-mailbox lane below; one image, one declaration) ───────
+      - MUNSHI_MAIL_INBOX=${MUNSHI_MAIL_INBOX:-imap}
+      - MUNSHI_MAIL_ADDR=${MUNSHI_MAIL_ADDR:-}
+      - MUNSHI_MAIL_APP_PASSWORD=${MUNSHI_MAIL_APP_PASSWORD:-}
+      - MUNSHI_MAIL_SMTP_HOST=${MUNSHI_MAIL_SMTP_HOST:-}
+      - MUNSHI_MAIL_SMTP_PORT=${MUNSHI_MAIL_SMTP_PORT:-25}
+      - MUNSHI_MAILPIT_URL=${MUNSHI_MAILPIT_URL:-}
+      - MUNSHI_MAILPIT_LOOKBACK_S=${MUNSHI_MAILPIT_LOOKBACK_S:-300}
+      - MUNSHI_NOTIFY_CHANNEL=${MUNSHI_NOTIFY_CHANNEL:-smtp}
+      # ── who the mailbox will act for (R-B12) ────────────────────────────────────────────────
+      # UNSET IS NOT `EVERYONE`: unset means the mailbox's own domain. Empty here is therefore the
+      # safe value and not a hole.
+      - MUNSHI_FLOWS_MAIL_DOMAINS=${MUNSHI_FLOWS_MAIL_DOMAINS:-}
+      - MUNSHI_FLOWS_MAIL_QUARANTINE_REPLY=${MUNSHI_FLOWS_MAIL_QUARANTINE_REPLY:-}
+      - MUNSHI_FLOWS_MAIL_RATE_PER_SENDER=${MUNSHI_FLOWS_MAIL_RATE_PER_SENDER:-12}
+      - MUNSHI_FLOWS_MAIL_RATE_GLOBAL=${MUNSHI_FLOWS_MAIL_RATE_GLOBAL:-120}
+      - MUNSHI_FLOWS_MAIL_RATE_WINDOW_S=${MUNSHI_FLOWS_MAIL_RATE_WINDOW_S:-3600}
+      - MUNSHI_FLOWS_MAIL_BODY_MAX=${MUNSHI_FLOWS_MAIL_BODY_MAX:-4000}
+      # ── behaviour and content ───────────────────────────────────────────────────────────────
+      - MUNSHI_FLOWS_ATTENDEE_DOMAINS=${MUNSHI_FLOWS_ATTENDEE_DOMAINS:-}
+      - MUNSHI_FLOWS_DATA_STATEMENT=${MUNSHI_FLOWS_DATA_STATEMENT:-}
+      # The private behavior tree a deployment mounts (decision 12). EMPTY IS THE OSS PRODUCT: the
+      # showcase baked into the image at /behavior is what flows reads.
+      - MUNSHI_BEHAVIOR_DIR=${MUNSHI_BEHAVIOR_DIR:-}
+      - MUNSHI_JITSI_HOSTS=${MUNSHI_JITSI_HOSTS:-}
+      - MUNSHI_FLOWS_USER_KEY_TTL_S=${MUNSHI_FLOWS_USER_KEY_TTL_S:-900}
+      - MUNSHI_TIMELINE_SCAN_ROWS=${MUNSHI_TIMELINE_SCAN_ROWS:-2000}
+      # Set uniformly across this stack; the flows processes log through uvicorn's own level and do
+      # not read it. Carried in the declaration's `surface_only` list with that reason, so
+      # `gate:config-contract` records the drift instead of ignoring it.
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    init: true
+    depends_on:
+      # The same two, and for the same reason — plus flows-api, because this lane's whole output is
+      # `POST /events` against it. That is not a domain dependency; it is this process talking to
+      # its own domain's API.
+      postgres:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+      flows-api:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  # flows-worker — THE reaction engine (F190): claim → one step → receipts → advance, on the same
+  # `reaction` table `flows-api` admits facts into. Same image, same configuration, different
+  # command — see "ONE IMAGE, THREE ENTRYPOINTS" above `flows-api`. NOT behind a profile, unlike
+  # `flows-mailbox`: the mailbox is an optional intake gated on a real IMAP credential, but a
+  # deployment that runs `flows-api` and never runs the process that advances what it admits is
+  # not an optional shape, it is silently broken — every reaction would sit `pending` forever.
+  #
+  # NO PORT, NO HTTP HEALTHCHECK: `flows_worker/__main__.py` has no server, it is
+  # `while True: tick(...); sleep(POLL_S)`. Its liveness is the `flows-worker up · N flows ·
+  # M steps` line it prints on boot, then the reaction rows it advances — there is no `/health` to
+  # poll, so this service carries none, exactly like `flows-mailbox` above it.
+  #
+  # depends_on ONLY postgres + admin-api, not flows-api: the worker never calls flows-api over
+  # HTTP, it opens the SAME Postgres DSN directly (`postgres_db(db_url())`) and reads/writes the
+  # `reaction` table flows-api also writes to — a dependency on flows-api's `/health` would couple
+  # two processes that do not actually talk to each other, exactly the reasoning the comment on
+  # flows-api's own depends_on block already gives for stopping at postgres + admin-api.
+  flows-worker:
+    build:
+      context: ../..
+      dockerfile: core/flows/Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-flows:${IMAGE_TAG:-dev}
+    command: ["python", "-m", "flows_worker"]
+    environment:
+      # ── the listener ────────────────────────────────────────────────────────────────────────
+      # In a container, loopback is THIS container's loopback — nothing else on the network can
+      # reach it. That is the whole reason the bridge-address hack existed. Said out loud here
+      # rather than flipped as a code default, which would have published the rig's host lane on
+      # every interface of that box the day it merged.
+      - MUNSHI_FLOWS_API_HOST=0.0.0.0
+      - MUNSHI_FLOWS_API_PORT=${MUNSHI_FLOWS_API_PORT:-8200}
+      - MUNSHI_FLOWS_DB_URL=postgresql+psycopg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-munshi}
+      # ── the credentials, all fail-closed (#1453, F95) ───────────────────────────────────────
+      # NO DEFAULT AND NO `:?`. No default because a weak one makes an unconfigured deployment look
+      # configured — that is F95's whole lesson, and `flows_steps/common.py` refuses the published
+      # placeholder literals by name. No `:?` either, though it is tempting: compose evaluates it
+      # while PARSING THE FILE, so it fails `docker compose config` for the entire stack, including
+      # deployments that do not run flows at all. The refusal belongs to the process that needs the
+      # secret, where it names itself and stops only itself — and it is already there, and tested.
+      - MUNSHI_FLOWS_API_KEY=${MUNSHI_FLOWS_API_KEY:-}
+      # admin-api's OWN token, under the name flows reads it by. One credential, two spellings, is
+      # what F95 was; this is the second spelling of ADMIN_TOKEN and it is passed through, never
+      # re-defaulted to a literal of its own.
+      - MUNSHI_FLOWS_ADMIN_KEY=${MUNSHI_FLOWS_ADMIN_KEY:-${ADMIN_TOKEN:-}}
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+      - MUNSHI_FLOWS_TIMELINE_KEY=${MUNSHI_FLOWS_TIMELINE_KEY:-}
+      # ── the doors (#1453 made these required-explicit) ──────────────────────────────────────
+      # Service names on the compose network. An unnamed door is a loud refusal at the moment it
+      # would have been used, so naming them here is what makes the refusal never fire in a stack
+      # that does run these domains.
+      - MUNSHI_FLOWS_ADMIN_API_URL=http://admin-api:8001
+      - MUNSHI_FLOWS_GATEWAY_URL=http://gateway:8000
+      # OPTIONAL DOMAIN, and the reason it is a variable rather than a service name: decision 40
+      # says a deployment may not run the agent domain at all. Unset, steps that need it answer
+      # `not_present` instead of reaching for a door that is not there (#1453).
+      - MUNSHI_FLOWS_AGENT_API_URL=${MUNSHI_FLOWS_AGENT_API_URL:-}
+      # THE LINK PORT, not a door (PRD decision 4: flows owns a link port, the terminal is one
+      # adapter, the no-agents product has none). Unset, nothing is mailed with a link and any step
+      # that would compose one refuses naming this key — it no longer decides whether flows BOOTS.
+      - MUNSHI_UI_URL=${MUNSHI_UI_URL:-}
+      # ── the mailbox (read by the flows-mailbox lane above; one image, one declaration) ───────
+      - MUNSHI_MAIL_INBOX=${MUNSHI_MAIL_INBOX:-imap}
+      - MUNSHI_MAIL_ADDR=${MUNSHI_MAIL_ADDR:-}
+      - MUNSHI_MAIL_APP_PASSWORD=${MUNSHI_MAIL_APP_PASSWORD:-}
+      - MUNSHI_MAIL_SMTP_HOST=${MUNSHI_MAIL_SMTP_HOST:-}
+      - MUNSHI_MAIL_SMTP_PORT=${MUNSHI_MAIL_SMTP_PORT:-25}
+      - MUNSHI_MAILPIT_URL=${MUNSHI_MAILPIT_URL:-}
+      - MUNSHI_MAILPIT_LOOKBACK_S=${MUNSHI_MAILPIT_LOOKBACK_S:-300}
+      - MUNSHI_NOTIFY_CHANNEL=${MUNSHI_NOTIFY_CHANNEL:-smtp}
+      # ── who the mailbox will act for (R-B12) ────────────────────────────────────────────────
+      # UNSET IS NOT `EVERYONE`: unset means the mailbox's own domain. Empty here is therefore the
+      # safe value and not a hole.
+      - MUNSHI_FLOWS_MAIL_DOMAINS=${MUNSHI_FLOWS_MAIL_DOMAINS:-}
+      - MUNSHI_FLOWS_MAIL_QUARANTINE_REPLY=${MUNSHI_FLOWS_MAIL_QUARANTINE_REPLY:-}
+      - MUNSHI_FLOWS_MAIL_RATE_PER_SENDER=${MUNSHI_FLOWS_MAIL_RATE_PER_SENDER:-12}
+      - MUNSHI_FLOWS_MAIL_RATE_GLOBAL=${MUNSHI_FLOWS_MAIL_RATE_GLOBAL:-120}
+      - MUNSHI_FLOWS_MAIL_RATE_WINDOW_S=${MUNSHI_FLOWS_MAIL_RATE_WINDOW_S:-3600}
+      - MUNSHI_FLOWS_MAIL_BODY_MAX=${MUNSHI_FLOWS_MAIL_BODY_MAX:-4000}
+      # ── behaviour and content ───────────────────────────────────────────────────────────────
+      - MUNSHI_FLOWS_ATTENDEE_DOMAINS=${MUNSHI_FLOWS_ATTENDEE_DOMAINS:-}
+      - MUNSHI_FLOWS_DATA_STATEMENT=${MUNSHI_FLOWS_DATA_STATEMENT:-}
+      # The private behavior tree a deployment mounts (decision 12). EMPTY IS THE OSS PRODUCT: the
+      # showcase baked into the image at /behavior is what flows reads.
+      - MUNSHI_BEHAVIOR_DIR=${MUNSHI_BEHAVIOR_DIR:-}
+      - MUNSHI_JITSI_HOSTS=${MUNSHI_JITSI_HOSTS:-}
+      - MUNSHI_FLOWS_USER_KEY_TTL_S=${MUNSHI_FLOWS_USER_KEY_TTL_S:-900}
+      - MUNSHI_TIMELINE_SCAN_ROWS=${MUNSHI_TIMELINE_SCAN_ROWS:-2000}
+      # Set uniformly across this stack; the flows processes log through uvicorn's own level and do
+      # not read it. Carried in the declaration's `surface_only` list with that reason, so
+      # `gate:config-contract` records the drift instead of ignoring it.
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  # MCP service — the Model Context Protocol front for the PUBLIC API (v0.12 port of 0.10.6
+  # services/mcp). Stateless: every tool call forwards the caller's key to the gateway as
+  # X-API-Key. Fronted at the gateway edge under /mcp (#795) — an MCP client points at the
+  # gateway's public port like every other Munshi client. The direct host port below stays for
+  # local debugging (bypasses the edge, so it bypasses the edge's auth too).
+  mcp:
+    build:
+      context: ../../core/meetings/services/mcp
+      dockerfile: Dockerfile
+    image: ghcr.io/sunydepalpur/munshi-mcp:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${MCP_HOST_PORT:-18010}:8010"
+    environment:
+      - GATEWAY_URL=http://gateway:8000
+      - PORT=8010
+      # ── assembly (PRD decision 40) ─────────────────────────────────────────────────────────
+      # The domains this deployment carries. A domain whose URL is set is ASKED for its tool
+      # manifest at /.well-known/mcp-tools.json and its tools join the one MCP surface; a domain
+      # whose URL is unset is never asked and its tools are simply absent. That is the whole of the
+      # eight-configuration story — identity plus any subset of meetings, flows and agent — and it
+      # needs no profile name, because a profile name would be a second place to say what these
+      # URLs already say.
+      - ADMIN_API_URL=http://admin-api:8001
+      - MEETING_API_URL=http://meeting-api:8080
+      # DELIBERATELY LEFT WITHOUT THE SERVICE DEFAULT the gateway now carries, and the asymmetry is
+      # a fact about this cut rather than an oversight: `core/agent` ships no `mcp.tools.v1.json`,
+      # so naming the door here adds a domain that is asked for a manifest, answers 404, and
+      # contributes no tools. Give agent-api a tool manifest and this becomes
+      # `${AGENT_API_URL:-http://agent-api:8100}` like the gateway's, in the same commit.
+      - AGENT_API_URL=${AGENT_API_URL:-}
+      # DEFAULTS TO THE SERVICE. It used to default to empty, so a stack that ran flows still
+      # assembled without its tools unless somebody supplied a URL by hand — which is how a
+      # docker bridge address came to be the answer. Override to point at a flows elsewhere;
+      # set it empty to run a deployment that genuinely does not carry the domain.
+      - FLOWS_API_URL=${MUNSHI_FLOWS_API_URL:-http://flows-api:8200}
+      # A private deployment mounts its own manifests here — billing, seats, entitlement — and they
+      # are assembled exactly like the OSS ones, competing for names in the same space so a mount
+      # can collide but never shadow. EMPTY IS THE OSS PRODUCT, exactly.
+      - MUNSHI_MCP_MANIFEST_DIR=${MUNSHI_MCP_MANIFEST_DIR:-}
+      - MUNSHI_ENV=${MUNSHI_ENV:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Same declared-jitsi-hosts setting meeting-api reads — the two parsers must agree.
+      - MUNSHI_JITSI_HOSTS=${MUNSHI_JITSI_HOSTS:-}
+      # report_issue ticket sink. Unset (the default) → the tool answers 503 "not configured"
+      # and nothing else changes; set the URL to let calling agents file tickets to your webhook.
+      #
+      # POINT THIS AT A DEDICATED TICKETS REPO, NEVER AN OPERATIONAL ONE. Ticket bodies are
+      # third-party text: agent- and customer-submitted, data and never instruction. An
+      # operational repo's issues are read as work signal by planning and automation loops, so
+      # filing untrusted text there injects it straight into those loops. A dedicated (private)
+      # tickets repo enforces at the storage layer what the handler only promises. The token
+      # should be fine-grained, SINGLE-REPO, `issues: write` only, and supplied from a secret
+      # store (k8s `secretKeyRef` / an env file), never inlined here.
+      #
+      # MUNSHI_TICKET_SINK_FORMAT: `raw` (default) POSTs the ticket JSON to an opaque webhook.
+      # `github` maps it to POST /repos/{owner}/{repo}/issues so an issue tracker IS the sink.
+      - MUNSHI_TICKET_SINK_URL=${MUNSHI_TICKET_SINK_URL:-}
+      - MUNSHI_TICKET_SINK_TOKEN=${MUNSHI_TICKET_SINK_TOKEN:-}
+      - MUNSHI_TICKET_SINK_FORMAT=${MUNSHI_TICKET_SINK_FORMAT:-}
+      - MUNSHI_TICKET_SINK_LABELS=${MUNSHI_TICKET_SINK_LABELS:-}
+      - MUNSHI_TICKET_FINGERPRINT_SALT=${MUNSHI_TICKET_FINGERPRINT_SALT:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8010/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    depends_on:
+      gateway:
+        condition: service_healthy
+      # ASSEMBLY IS ONE-SHOT AND IT IS AT BOOT. `discover()` asks each configured domain for its
+      # `/.well-known/mcp-tools.json` exactly once; a domain that is configured but not yet
+      # LISTENING contributes nothing and is never asked again, so the server comes up healthy,
+      # permanently missing that domain's tools. On a cold `docker compose up` that races
+      # flows-api — and flows carries `whats_waiting`, the tool this server's own instructions
+      # name as every session's FIRST call. Waiting for its health endpoint costs a few seconds
+      # once and removes the race; it does not make flows a boot requirement for a deployment
+      # that does not run it (a stack without the flows services has no such dependency to wait
+      # on, and `FLOWS_API_URL=` is still how you say you do not carry the domain).
+      flows-api:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+  # The user-facing web UI (Next.js custom server). Proxies /ws → gateway and REST → agent-api/admin-api.
+  # The terminal is the front door for humans; the gateway remains the API front door for programmatic use.
+  terminal:
+    build:
+      context: ../../clients/terminal
+      dockerfile: Dockerfile
+      args:
+        # Google Analytics 4 measurement id, baked into the client bundle at build time (NEXT_PUBLIC_*).
+        # Set GA_MEASUREMENT_ID in .env, then rebuild the terminal image. Empty → GA stays off.
+        NEXT_PUBLIC_GA_MEASUREMENT_ID: ${GA_MEASUREMENT_ID:-}
+        # Terminal mode, baked at build time (NEXT_PUBLIC_* — see clients/terminal/src/app/mode.ts).
+        # "meetings" = meetings-only terminal: only the meetings list + meeting/canvas tabs + the
+        # API-tokens surface load, and the server proxy refuses agent-api paths (404). Uncomment
+        # (or set TERMINAL_MODE=meetings in .env) and REBUILD the terminal image to enable:
+        # NEXT_PUBLIC_TERMINAL_MODE: ${TERMINAL_MODE:-meetings}
+        # Bot display name baked into the bundle. Leave commented: the terminal then omits bot_name and
+        # meeting-api's DEFAULT_BOT_NAME (above) names the bot at runtime, renameable with a restart.
+        # Uncomment + REBUILD only to pin a name into the image, which then wins over DEFAULT_BOT_NAME:
+        # NEXT_PUBLIC_DEFAULT_BOT_NAME: ${TERMINAL_BOT_NAME:-}
+        # Runtime node_modules flavor (clients/terminal/Dockerfile): prod (default, pruned) or
+        # dev (full tree). Set TERMINAL_RUNTIME_DEPS=dev in .env on hosts that run the terminal
+        # under the hot overlay's NODE_ENV=development — dev-mode Next needs the dev toolchain at
+        # runtime and otherwise npm-installs it AT BOOT (slow, network-dependent, currently broken).
+        RUNTIME_DEPS: ${TERMINAL_RUNTIME_DEPS:-prod}
+    image: ghcr.io/sunydepalpur/munshi-terminal:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${TERMINAL_PORT:-13000}:3000"
+    environment:
+      - NODE_ENV=production
+      # HTTP scheme: the terminal's REST proxy fetches GATEWAY_URL as http; server.mjs converts it to
+      # ws:// itself for the /ws upgrade. ws:// here would break the REST proxy (502 fetch failed).
+      - GATEWAY_URL=http://gateway:8000
+      - AGENT_API_URL=http://agent-api:8100
+      - MUNSHI_ADMIN_API_URL=http://admin-api:8001
+      - MUNSHI_API_URL=http://gateway:8000
+      - MUNSHI_ADMIN_API_KEY=${ADMIN_TOKEN:-}
+      - MUNSHI_BOT_API_KEY=${MUNSHI_BOT_API_KEY:-}
+      # Hidden admin panel (/api/admin/*): comma-separated email allowlist — EMPTY = the panel is off
+      # for everyone. Identity is VERIFIED against admin-api /internal/validate over the internal-tier
+      # secret (never trusted from a cookie), and the same secret fronts agent-api's admin overview.
+      - MUNSHI_ADMIN_EMAILS=${MUNSHI_ADMIN_EMAILS:-}
+      # NO PLACEHOLDER FALLBACK. F95 removed the published `munshi-internal-secret` default from
+      # every service that REFUSES it at boot; these two lines kept it, so an unconfigured stack
+      # still PRESENTED the published literal as internal-tier authority. Unset is unset (A19).
+      - MUNSHI_INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+      # Declared self-hosted Jitsi hostnames — served to the client link parser
+      # (/api/meeting/jitsi-hosts) so pasted links on these hosts are recognized in the UI,
+      # matching meeting-api's and mcp's parsers (same setting).
+      - MUNSHI_JITSI_HOSTS=${MUNSHI_JITSI_HOSTS:-}
+      # Composer mic dictation (/api/stt) — same STT service the meeting pipeline uses; token stays
+      # server-side. Empty → the mic button reports "not configured" instead of failing silently.
+      # MODEL rides along so dictation hits a validating backend with the same id as the bots.
+      - TRANSCRIPTION_SERVICE_URL=${TRANSCRIPTION_SERVICE_URL:-}
+      - TRANSCRIPTION_SERVICE_TOKEN=${TRANSCRIPTION_SERVICE_TOKEN:-}
+      - TRANSCRIPTION_MODEL=${TRANSCRIPTION_MODEL:-}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-nextauth-secret}
+      # Public origin when self-hosting behind a domain/reverse-proxy (e.g. https://munshi.example.com).
+      # Empty by default (localhost). Setting an https:// value also flips auth cookies to Secure.
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-}
+      # OAuth login providers (NextAuth). Each provider self-gates on its creds: set BOTH the id and
+      # secret to expose that sign-in button on the login page; leave empty to hide it (the dev
+      # type-any-email login still works). Register the redirect URI in the provider console:
+      #   Google    → ${NEXTAUTH_URL}/api/auth/callback/google
+      #   Microsoft → ${NEXTAUTH_URL}/api/auth/callback/microsoft
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
+      # Microsoft tenant: "common" = work/school + personal accounts; or a specific tenant id for org-only.
+      - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID:-common}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    init: true
+    depends_on:
+      gateway:
+        condition: service_healthy
+      agent-api:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+  # DEPRECATED — the 0.10 dashboard, kept as an OFF-BY-DEFAULT profile while it is still
+  # load-bearing (#813). It is the multi-user web UI hosted production runs against the 0.12 core
+  # (the wiring below is the hosted-proven one), and some flows (authenticated-session lifecycle,
+  # browser-session provisioning) are only walkable through it today. The Terminal is the
+  # first-class UI; this ships pinned so the UI users see belongs to a release again instead of
+  # floating outside all of them. Start it explicitly:
+  #     docker compose --profile dashboard up -d
+  # Deprecation exit: when the Terminal covers the flows above, this block is deleted, not ported.
+  dashboard:
+    profiles: ["dashboard"]
+    image: ${DASHBOARD_IMAGE:-munshiai/dashboard:0.10.6.3.14}
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-13001}:3000"
+    environment:
+      # Core wiring — identical shape to hosted production (munshi-platform chart), pointed at the
+      # compose service DNS. The dashboard talks to the gateway's hosted-compat surface.
+      - MUNSHI_API_URL=http://gateway:8000
+      - MUNSHI_ADMIN_API_URL=http://admin-api:8001
+      - MUNSHI_ADMIN_API_KEY=${ADMIN_TOKEN:-}
+      - MUNSHI_PUBLIC_API_URL=${DASHBOARD_PUBLIC_API_URL:-http://localhost:18056}
+      - NEXT_PUBLIC_MUNSHI_WS_URL=${DASHBOARD_PUBLIC_WS_URL:-ws://localhost:18056/ws}
+      # Auth/session — self-hosted defaults: local registration on, no hosted-mode redirects.
+      - NEXTAUTH_URL=${DASHBOARD_URL:-http://localhost:13001}
+      - NEXT_PUBLIC_APP_URL=${DASHBOARD_URL:-http://localhost:13001}
+      - NEXT_PUBLIC_BASE_URL=${DASHBOARD_URL:-http://localhost:13001}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-nextauth-secret}
+      - JWT_SECRET=${NEXTAUTH_SECRET:-dev-nextauth-secret}
+      - ALLOW_REGISTRATIONS=${DASHBOARD_ALLOW_REGISTRATIONS:-true}
+      - NEXT_PUBLIC_HOSTED_MODE=false
+      - DEFAULT_BOT_NAME=${DEFAULT_BOT_NAME:-Munshi}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    init: true
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [munshi]
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  postgres-data:
+  storage-data:
+  agent-workspaces:
+
+networks:
+  munshi:
+    driver: bridge

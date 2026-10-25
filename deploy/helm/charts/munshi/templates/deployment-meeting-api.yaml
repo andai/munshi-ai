@@ -1,0 +1,250 @@
+{{- if .Values.meetingApi.enabled }}
+{{- $s3 := include "munshi.s3" . | fromYaml }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "munshi.componentName" (list . "meeting-api") }}
+  labels:
+    {{- include "munshi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.meetingApi.replicaCount }}
+  {{- include "munshi.deploymentStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      {{- include "munshi.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: meeting-api
+  template:
+    metadata:
+      labels:
+        {{- include "munshi.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: meeting-api
+      annotations:
+        # Roll the pods when storage.s3 changes: boto3 reads its config file once per process.
+        checksum/storage-s3: {{ include "munshi.s3" . | sha256sum }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.meetingApi.terminationGracePeriodSeconds | default 30 }}
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: meeting-api
+          securityContext:
+            {{- toYaml .Values.global.securityContext | nindent 12 }}
+          image: "{{ .Values.meetingApi.image.repository }}:{{ .Values.global.imageTag | default .Values.meetingApi.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - {{ printf "sleep %v" (.Values.meetingApi.preStopDelaySeconds | default 5) | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: {{ include "munshi.dbHostEffective" . | quote }}
+            - name: DB_PORT
+              value: {{ include "munshi.dbPortEffective" . | quote }}
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.postgresCredentialsSecretName" . | quote }}
+                  key: POSTGRES_DB
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.postgresCredentialsSecretName" . | quote }}
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.postgresCredentialsSecretName" . | quote }}
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_URL
+              value: {{ include "munshi.redisUrl" . | quote }}
+            - name: RUNTIME_API_URL
+              value: "http://{{ include "munshi.componentName" (list . "runtime") }}:{{ .Values.runtime.service.port }}"
+            - name: MEETING_API_URL
+              value: "http://{{ include "munshi.componentName" (list . "meeting-api") }}:{{ .Values.meetingApi.service.port }}"
+            # Required for calendar sync + capped auto-join: the sweep fetches the per-user
+            # spawn context (max-bots cap + webhook config) from admin-api's internal edge.
+            # Mirrors compose (docker-compose.yml ADMIN_API_URL=http://admin-api:8001).
+            - name: ADMIN_API_URL
+              value: "http://{{ include "munshi.componentName" (list . "admin-api") }}:{{ .Values.adminApi.service.port }}"
+            - name: INTERNAL_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.adminTokenSecretName" . }}
+                  key: INTERNAL_API_SECRET
+            # MeetingToken is signed AND verified with the SAME admin secret admin-api holds.
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.adminTokenSecretName" . }}
+                  key: ADMIN_API_TOKEN
+            - name: DEFAULT_BOT_NAME
+              value: {{ .Values.meetingApi.defaultBotName | default "" | quote }}
+            - name: TRANSCRIPTION_SERVICE_URL
+              value: {{ .Values.meetingApi.transcriptionServiceUrl | default "" | quote }}
+            - name: TRANSCRIPTION_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.adminTokenSecretName" . }}
+                  key: TRANSCRIPTION_SERVICE_TOKEN
+            - name: MUNSHI_SERVICE_AUTHORITY_CONFIG
+              value: {{ .Values.meetingApi.serviceAuthorityConfig | default "" | quote }}
+            - name: MUNSHI_SERVICE_AUTHORITY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.adminTokenSecretName" . }}
+                  key: MUNSHI_SERVICE_AUTHORITY_SECRET
+                  optional: true
+            - name: MUNSHI_SYSTEM_WEBHOOK_URL
+              value: {{ .Values.meetingApi.systemWebhookUrl | default "" | quote }}
+            - name: MUNSHI_SYSTEM_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "munshi.adminTokenSecretName" . }}
+                  key: MUNSHI_SYSTEM_WEBHOOK_SECRET
+                  optional: true
+            - name: MUNSHI_SYSTEM_WEBHOOK_ALLOW_PRIVATE_HTTP
+              value: {{ .Values.meetingApi.systemWebhookAllowPrivateHttp | default "false" | quote }}
+            - name: MUNSHI_SYSTEM_WEBHOOK_TIMEOUT_S
+              value: {{ .Values.meetingApi.systemWebhookTimeoutSeconds | default "10" | quote }}
+            # Object storage: storage.s3, the operator's own bucket (munshi.storage.validate refuses to
+            # render without it). meeting-api's own names for it: S3_ENDPOINT/S3_*_KEY are the
+            # explicit S3 settings; MINIO_BUCKET is the bucket it reads first, and MINIO_ACCESS_KEY/
+            # MINIO_SECRET_KEY are the keys its config.v1 `object_storage` capability (the /health
+            # row) is declared on. Each pair carries the same value, from the same Secret key.
+            - name: S3_ENDPOINT
+              value: {{ $s3.endpoint | quote }}
+            - name: MINIO_ENDPOINT
+              value: {{ $s3.endpoint | quote }}
+            - name: MINIO_SECURE
+              value: {{ hasPrefix "https://" (lower $s3.endpoint) | ternary "true" "false" | quote }}
+            - name: MINIO_BUCKET
+              value: {{ $s3.bucket | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3.existingSecret | quote }}
+                  key: {{ $s3.accessKeyIdKey | quote }}
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3.existingSecret | quote }}
+                  key: {{ $s3.secretAccessKeyKey | quote }}
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3.existingSecret | quote }}
+                  key: {{ $s3.accessKeyIdKey | quote }}
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3.existingSecret | quote }}
+                  key: {{ $s3.secretAccessKeyKey | quote }}
+            # The storage label stamped on each new recording's metadata (informational; reads do
+            # not route on it). Recordings made with the built-in MinIO keep their "minio" label.
+            - name: STORAGE_BACKEND
+              value: "s3"
+            # boto3 reads the addressing style, signing region and CA bundle from this file.
+            - name: AWS_CONFIG_FILE
+              value: /etc/munshi/s3/config
+            - name: LOG_LEVEL
+              value: {{ .Values.meetingApi.logLevel | default "info" | quote }}
+            # Authenticated-bot mode (deployment-scoped) — docs: /authenticated-bots.
+            - name: BOT_AUTHENTICATED
+              value: {{ .Values.meetingApi.botAuthenticated | default "false" | quote }}
+            - name: BOT_USERDATA_S3_PATH
+              value: {{ .Values.meetingApi.botUserdataS3Path | default "" | quote }}
+            - name: BOT_S3_ENDPOINT
+              value: {{ .Values.meetingApi.botS3Endpoint | default "" | quote }}
+            - name: BOT_S3_BUCKET
+              value: {{ .Values.meetingApi.botS3Bucket | default "" | quote }}
+            - name: BOT_S3_ACCESS_KEY
+              value: {{ .Values.meetingApi.botS3AccessKey | default "" | quote }}
+            - name: BOT_S3_SECRET_KEY
+              value: {{ .Values.meetingApi.botS3SecretKey | default "" | quote }}
+            {{- with .Values.meetingApi.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 40
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: s3-client
+              mountPath: /etc/munshi/s3
+              readOnly: true
+            {{- if or $s3.caConfigMap $s3.caSecret }}
+            - name: s3-ca
+              mountPath: /etc/munshi/s3-ca
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.meetingApi.resources | nindent 12 }}
+      volumes:
+        - name: s3-client
+          configMap:
+            name: {{ include "munshi.componentName" (list . "s3-client") }}
+            defaultMode: 0444
+        {{- if $s3.caConfigMap }}
+        - name: s3-ca
+          configMap:
+            name: {{ $s3.caConfigMap | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ $s3.caKey | quote }}
+                path: ca.crt
+        {{- else if $s3.caSecret }}
+        - name: s3-ca
+          secret:
+            secretName: {{ $s3.caSecret | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ $s3.caKey | quote }}
+                path: ca.crt
+        {{- end }}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (include "munshi.topologySpreadConstraints" (list . .Values.meetingApi "meeting-api")) }}
+      {{- . | nindent 6 }}
+      {{- end }}
+{{- end }}

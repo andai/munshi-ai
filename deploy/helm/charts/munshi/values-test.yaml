@@ -1,0 +1,80 @@
+# Smoke overlay for a single-node cluster (local k3s). Locally-built images imported into the node's
+# containerd, so never pull; everything single-replica; PDBs off (a PDB minAvailable:1 on a single
+# replica blocks drains); gateway via NodePort; dummy secrets; recordings in the TEST-ONLY S3 fixture
+# (deploy/helm/tests/s3-fixture.yaml), which must be running in the namespace first:
+#
+#   kubectl create namespace munshi
+#   kubectl -n munshi create secret generic s3-fixture-credentials \
+#     --from-literal=AWS_ACCESS_KEY_ID="$(openssl rand -hex 10)" \
+#     --from-literal=AWS_SECRET_ACCESS_KEY="$(openssl rand -hex 20)"
+#   kubectl -n munshi apply -f deploy/helm/tests/s3-fixture.yaml
+#   kubectl -n munshi wait --for=condition=complete job/s3-fixture-bucket --timeout=180s
+#   helm install munshi deploy/helm/charts/munshi -n munshi -f values-test.yaml
+#
+# Proves the control plane stands up + /health is green. Does NOT exercise live bot/agent spawn
+# (needs the bot image present on the node + RWX workspace storage — see README).
+
+global:
+  imagePullPolicy: IfNotPresent
+
+secrets:
+  adminApiToken: "test-admin-token"
+  # A RENDER fixture, never a running value — and deliberately not the old published literal:
+  # `munshi-internal-secret` is on every service's forbidden-values list now (F95) and a boot
+  # holding it refuses to start.
+  internalApiSecret: "helm-render-test-only"
+  transcriptionServiceToken: ""
+  dispatchSigningKey: "dev-dispatch-signing-key"
+
+gateway:
+  replicaCount: 1
+  service:
+    type: NodePort
+    nodePort: 30056
+
+adminApi:
+  replicaCount: 1
+
+meetingApi:
+  replicaCount: 1
+
+runtime:
+  replicaCount: 1
+  backend: "k8s"          # exercise the real cloud spawn path (SA + RBAC + kubectl in-image)
+
+agentApi:
+  replicaCount: 1
+  workspaces:
+    size: 1Gi
+
+postgres:
+  persistence:
+    size: 2Gi
+
+redis:
+  persistence:
+    size: 1Gi
+
+# The chart runs no object store: this points meeting-api at the test fixture, whose Secret the
+# caller creates (above). Nothing here is a shipped default.
+storage:
+  s3:
+    endpoint: "http://s3-fixture:7070"
+    bucket: "munshi-recordings"
+    existingSecret: "s3-fixture-credentials"
+
+ingress:
+  enabled: false
+
+# Single replica everywhere ⇒ no PDBs (they'd block node drains on one node).
+podDisruptionBudgets:
+  gateway:
+    enabled: false
+  adminApi:
+    enabled: false
+  meetingApi:
+    enabled: false
+  runtime:
+    enabled: false
+  agentApi:
+    enabled: false
