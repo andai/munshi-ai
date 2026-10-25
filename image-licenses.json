@@ -36,6 +36,12 @@
       "license": "MIT",
       "disposition": "sidecar",
       "note": "Opt-in local CPU speech-to-text sidecar for Lite (LOCAL_STT, WHISPER_IMAGE in deploy/lite/Makefile). Upstream speaches-ai/speaches (formerly fedirz/faster-whisper-server), MIT, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "axllent/mailpit",
+      "license": "MIT",
+      "disposition": "sidecar",
+      "note": "Development and CI mail catcher in the andai compose overlay (andai/deploy/compose/docker-compose.andai.yml, andai/images.json third_party), andai-core's default SMTP relay (D-30). MIT, Category A. Pulled as-is and not redistributed inside any ghcr.io/andai/* artifact."
     }
   ],
   "bundled": [

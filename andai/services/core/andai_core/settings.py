@@ -53,6 +53,23 @@ class Settings(BaseSettings):
     # Comma-separated hostnames or CIDRs whose X-Forwarded-For is believed.
     trusted_proxies_raw: str = Field(default="", validation_alias="ANDAI_TRUSTED_PROXIES")
 
+    # Session lifetimes: a session ends after this long without a request (idle) or this long
+    # after login (absolute), whichever comes first.
+    session_idle_seconds: int = Field(
+        default=12 * 3600, gt=0, validation_alias="ANDAI_SESSION_IDLE_SECONDS"
+    )
+    session_max_seconds: int = Field(
+        default=7 * 24 * 3600, gt=0, validation_alias="ANDAI_SESSION_MAX_SECONDS"
+    )
+    # Emailed links: a password-reset link lives 30 minutes, an invite (and the first owner's
+    # set-password link) 7 days.
+    reset_ttl_seconds: int = Field(
+        default=30 * 60, gt=0, validation_alias="ANDAI_RESET_TTL_SECONDS"
+    )
+    invite_ttl_seconds: int = Field(
+        default=7 * 24 * 3600, gt=0, validation_alias="ANDAI_INVITE_TTL_SECONDS"
+    )
+
     @property
     def is_dev(self) -> bool:
         return self.andai_env.strip().lower() == "dev"

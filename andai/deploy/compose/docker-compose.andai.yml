@@ -8,9 +8,9 @@
 #     --env-file <repo>/andai/deploy/compose/.env ...
 #
 # What it does:
-#   1. Adds the andai services (andai-core, andai-worker, andai-intake, andai-portal) on
-#      Munshi's `munshi` network. andai-core keeps its data in its own database `andai` on the
-#      stack's Postgres (never in Munshi's database).
+#   1. Adds the andai services (andai-core, andai-worker, andai-intake, andai-portal) and the
+#      Mailpit mail catcher on Munshi's `munshi` network. andai-core keeps its data in its own
+#      database `andai` on the stack's Postgres (never in Munshi's database).
 #   2. For Munshi services it changes ONLY `environment` entries and `ports` (D-15 perimeter). No
 #      Munshi file is edited; every other setting comes from the untracked .env.
 #
@@ -133,6 +133,26 @@ services:
       retries: 5
       start_period: 15s
     init: true
+    networks: [munshi]
+    restart: unless-stopped
+
+  # Mail catcher for development and CI (D-30): andai-core's default SMTP relay. It accepts any
+  # message on port 1025 inside the stack network (never published) and shows it in a web UI and
+  # HTTP API on 127.0.0.1 only. A deployment with a real relay sets SMTP_* and ignores it.
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    environment:
+      - MP_MAX_MESSAGES=5000
+      # No outbound calls from the perimeter (D-15): no release check against the internet.
+      - MP_DISABLE_VERSION_CHECK=true
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks: [munshi]
     restart: unless-stopped
 
