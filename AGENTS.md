@@ -1,192 +1,94 @@
-# AGENTS.md — the agent front door (in-repo)
+# AGENTS.md — working in the munshi.ai repository
 
-Two constitutions govern everything here — read them on the docs site or in this tree:
+munshi.ai is a self-hosted, open-source AI meeting assistant for Google Meet, Microsoft Teams and
+Zoom (English, Hindi, Hinglish), maintained by AND AI Platforms. This file is the contract for any
+person or agent changing this repository. `andai/AGENTS.md` adds detail for the `andai/` tree.
 
-- **[Architecture](https://example.invalid/governance/architecture)** — the P-book
-  ([`docs/docs/governance/architecture.mdx`](docs/docs/governance/architecture.mdx)): what the
-  software must be (P1–P23, enforced by the CI gate suite). Your change must fit these.
-- **[Delivery](https://example.invalid/governance/delivery)** — the D-book
-  ([`docs/docs/governance/delivery.mdx`](docs/docs/governance/delivery.mdx)): how change ships —
-  the whole loop (roadmap · PREPARE · TAKE · validation · merge bar · ship bar) in one file.
+## Repository map
 
-This file is the actor contract: intake, claim, and how a session behaves in the checkout.
+| Path | What lives there |
+|---|---|
+| `core/` | The meeting platform: `gateway`, `identity` (admin-api), `meetings` (bot, meeting-api, transcription, MCP), `runtime` (container orchestration), `agent` (agent-api, worker), `flows` |
+| `clients/` | Operator terminal (Next.js 15), browser extension, slim Python client |
+| `services/dashboard` | Operator dashboard |
+| `andai/` | munshi.ai's own services (`services/core`, `worker`, `intake`), the user portal (`portal`, Next.js 16), the compose overlay, image catalogue and operator scripts |
+| `deploy/` | Docker Compose (default) and Helm |
+| `docs/` | Docs site sources (`docs/docs`), ADRs, generated architecture views |
+| `architecture.calm.json` | The architecture chart; sealed in `architecture.seal.json` |
+| `scripts/gates.mjs` | The gate suite (structure, contracts, licenses, isolation, docs) |
 
-## Researching Munshi? Start here
+Bring the whole stack up with `make -C andai up` (see `andai/docs/dev-vm.md`).
 
-- **Found something** (bug, gap, docs lie)? **File a GitHub issue** — every report enters
-  `state: incoming` and waits for triage — three days is our target and we are not hitting it
-  (measured 2026-08-20: 26 waiting, median 13 days). Findings are contributions.
-- **Want to contribute?** The whole roadmap comes back in one public GraphQL call:
+## Branches and pull requests
 
-```bash
-gh api graphql -f query='
-query { organization(login: "Munshi-ai") { projectV2(number: 2) {
-  items(first: 100) { nodes {
-    content {
-      ... on Issue { number title url state milestone { title } labels(first: 10) { nodes { name } } }
-      ... on DraftIssue { title body }
-    }
-    fieldValues(first: 20) { nodes {
-      ... on ProjectV2ItemFieldSingleSelectValue {
-        field { ... on ProjectV2SingleSelectField { name } } name }
-    } }
-  } }
-} } }'
-```
+- `main` is the default and protected branch: it changes only through a pull request from
+  `development`. No direct pushes, no force-pushes, no deletion.
+- Cut every work branch from the latest `development` (`feat/…`, `fix/…`, `docs/…`), keep it to one
+  change, and merge it into `development` (`--no-ff`) or open a pull request against `development`.
+- Never edit files another person or session has left uncommitted in a checkout; work on your own
+  branch and surface the conflict instead.
 
-Four axes per item: **Lane** — the business value, named by who feels it (Google Meet · MS Teams
-· Zoom · API integrators · Transcription · Recordings · Webhooks & billing · First run ·
-Production ops · Feature shelf) — match it to what your contributor actually uses. **Human bar**
-— what validation costs in human terms (Desk check · Operator run · Solo meeting · Small group ·
-Crowd 5+ · In-the-loop UX). **Setup** — the infrastructure floor (None · Lite · Compose ·
-k8s/helm). **Milestone** — the version it gates (currently `v0.12.x`).
+## Commits
 
-Selection rule: filter to your contributor's lane(s), then to the Human bar and Setup they can
-afford. `state: ready` is claimable now; `state: prepared` after the maintainer stamp; items
-with no issue number are declared direction — ask about them, don't claim them.
+- Every commit is GPG-signed (`commit.gpgsign=true`); GitHub must be able to verify it.
+- Write the message as what the change does and why. Do not mention planning ids (phase, plan or
+  task numbers) unless asked.
+- AI co-author trailers are allowed: when an AI assistant helped, end the message with its
+  `Co-Authored-By:` line. No DCO sign-off is required.
+- Never commit secrets: `.env` files, keys, tokens, or values from the operator's environment.
+  `andai/deploy/compose/.env.example` holds placeholders only.
 
-## Driving Munshi from an agent session
+## Gates before you push
 
-Munshi speaks **MCP**. Point your client at `/mcp` on the same host as the rest of the API — the
-same key, the same gateway — and you get Munshi's meeting tools and prompts with no integration code:
+- The pre-push hook (`.githooks/pre-push`) runs the fast static gates; the full suite is
+  `node scripts/gates.mjs all` (or `pnpm gates`). Do not push red, and do not bypass the hook.
+- Changed `architecture.calm.json`? Run `pnpm seal:arch` in the same change. Changed a sealed
+  contract schema? Back-compatible → `pnpm seal:contracts`; breaking → add the next version (`vN+1`).
+  Changed the platform's DB models? `pnpm seal:schema`.
+- New or changed image reference? It must be in `andai/images.json`; `make -C andai images-check`
+  enforces it. Images are built from this repo and published as `ghcr.io/andai/munshi-<name>:<VERSION>`.
+- Green gates are necessary, not sufficient: prove user-facing behaviour at the level of the claim
+  (a live run for live behaviour, a browser run for UI).
 
-```json
-{"mcpServers": {"Munshi": {"command": "npx", "args": ["-y", "mcp-remote",
-  "https://example.invalid/mcp", "--header", "Authorization: Bearer ${MUNSHI_API_KEY}"]}}}
-```
+## Licensing
 
-The key lives in `MUNSHI_API_KEY`. **Scopes decide which tools work**: a `bot`-only key dispatches
-bots and reads recordings but gets `403 Insufficient scope` on transcripts and meetings. The
-key's prefix is a hint, not the truth — call `GET /auth/me` for the scopes you actually hold.
-Full page: https://example.invalid/munshi-mcp
+- Code here is Apache-2.0 (`LICENSE`); attribution and third-party notices live in `NOTICE` and
+  `THIRD_PARTY_LICENSES.md`. Keep them accurate.
+- New dependencies must be permissive (MIT, BSD, Apache-2.0, ISC). Weak copyleft (LGPL, MPL) needs an
+  entry in `license-exceptions.json`. Never add GPL, AGPL, SSPL, BUSL or non-commercial licenses.
+  Anything proprietary needs the CTO's explicit approval first.
 
-## Your issue is your PRD
+## Product rules that code must keep
 
-A prepared issue is a worked delivery spec — read it end to end before touching code:
+- **Data stays in-house.** No hosted third-party endpoints in the data path: speech-to-text and
+  language models go to an endpoint the operator runs. Never add telemetry, analytics or "phone
+  home" calls.
+- **One name.** The product, code, configs, images, docs and prompts say munshi (or andai for AND AI's
+  own services). Never introduce the name of the project this codebase started from; the only
+  permitted mention is the attribution in `NOTICE`.
+- **Org isolation and least privilege.** Every org-scoped read or write is checked; secrets are
+  write-only and encrypted at rest; admin credentials never reach a browser.
+- **Consent.** The meeting bot always identifies itself as a recorder.
 
-- **Where we are (honest)** — code-grounded claims (`file:line`), era notes where a report
-  predates the tree. Spot-check them; a wrong claim is a finding, report it on the issue.
-- **Components** — your waypoints: one module/seam each, with the existing harness + fixtures
-  you compose (you don't invent scaffolding).
-- **Prepared solution + forks** — the mechanism and the branches you may actually hit.
-  Alternates welcome, never required.
-- **The acceptance table — your definition of done.** Present its observations (red→green
-  pairs, negative controls, anchors) and the PR **merges — that's a promise** (D10). If your
-  bundle satisfies the table and something is still wrong, that's *our* table bug, not yours.
-- **Deployments to validate · docs surface · preferred validator** — the change isn't done
-  until its docs move with it and someone is named to witness it.
+## How to work
 
-## Claiming — and say hello on Discord
+- **Expect before you act.** Write the expected result, run it, record the actual result (commands,
+  outputs, counts — and what you did not check), then the verdict. An unexpected result is a finding
+  to explain, never something to paper over.
+- **Fix where a defect is introduced,** not where it is observed; reproduce it without a live meeting
+  first when you can.
+- **The core owns its contracts;** clients adapt at their own boundary.
+- **Source describes the present design.** No history or bug archaeology in comments.
+- **Report facts first,** then your interpretation, labelled as yours.
 
-1. **Comment on the issue** to claim it (D14b).
-2. **Announce it on [Discord](https://discord.gg/Ga9duGkVz9)** — strongly recommended: one line,
-   "taking #NNN". This opens the human-to-human channel; questions, steering, and validation
-   scheduling all move faster once a maintainer knows a person, not just a branch.
-3. **Heartbeat = visible activity** on the issue/PR. Hours of silence release the claim back
-   to the queue — no hard feelings, no stuck work. Going quiet deliberately? Say so on the
-   issue and the lease holds.
+## Planning
 
-## How you work the checkout
+Roadmap, specs and plans are kept with the GSDD workflow in `.work/` (git-ignored, local to the
+maintainers' machines). The workflow skills live in `.agents/skills/` and `.claude/`. Lifecycle:
+`gsdd-new-project → gsdd-plan → gsdd-execute → gsdd-verify → gsdd-audit-milestone`. Implement only
+what the approved plan or a direct request says; record unrelated ideas instead of doing them.
 
-- **Contribution rights are a human decision; automate the mechanics.** Before the first commit,
-  read [`CONTRIBUTOR_RIGHTS.md`](CONTRIBUTOR_RIGHTS.md) and ask the human to choose independent,
-  employer/client-controlled, or unsure. Never choose or tick the PR declaration for them. After
-  the human explicitly chooses the independent or corporate path, inspect repository-local
-  `user.name` and `user.email`, surface any mismatch, and create every commit with
-  `git commit --signoff`. Never change global identity, insert another person's sign-off, enable
-  third-party remediation, or use a maintainer override. Diagnose missing/mismatched commits by
-  SHA. Before an amend/rebase/force-push, show the exact rewrite and obtain explicit approval;
-  prefer the DCO App's individual remediation commit on a shared branch.
+## Security issues
 
-- **Discord is the working channel** — blockers, steering, quick questions live there while you
-  work. One rule keeps the record honest: **anything decided lands back on the issue**, or it
-  didn't happen. The issue is the source of truth; Discord is the speed.
-- **Your own worktree BEFORE your first edit — always.** A session's opening move on any work
-  that will touch files is `git worktree add ../munshi-<slug> -b <your-branch>`; only then edit.
-  You do not own `main`, the primary checkout, or any tree you did not create this session —
-  even when the change "belongs on" a branch that lives there. Two tells that you are about to
-  trespass, and the remedy for each:
-  - `git worktree add` says the branch is **"already used by worktree …"** — that tree is
-    another session's checkout, not an invitation. Branch FROM that ref into a fresh worktree
-    of your own (`git worktree add ../munshi-<slug> -b <your-branch> <their-branch>`) and build
-    on it there; coordinate the eventual merge on the issue, never in their tree.
-  - `git status` in a tree you're about to edit shows **uncommitted files you didn't write** —
-    stop, surface them, move to your own worktree. Never adopt, commit, or clean another
-    session's uncommitted state.
-  One worktree per session, one session per worktree — no exceptions for "just one file",
-  docs, or governance edits (this rule was added from a session that edited another agent's
-  checkout after seeing the first tell).
-- **Never fan two parallel agents onto the same hot file — write your own file, or sequence.**
-  Parallel PRs that all append to one file's tail collide on the same last line even when the
-  additions don't interact — the v0.12.9 batch paid 5 manual conflict-resolution cycles to exactly
-  this. The three hot files and their remedy:
-  - **`docs/docs/changelog.mdx`** — do **not** edit it for a per-PR line. Drop a fragment at
-    `docs/changelog.d/<pr>-<slug>.md` (one file per PR → zero collisions; the release collector
-    folds them in, `docs-reflects` stamp intact). See
-    [`docs/changelog.d/README.md`](docs/changelog.d/README.md). That fragment is your `docs-current` touch.
-  - **`deploy/helm/tests/test_template.sh`** and **`docs/docs/deployment-kubernetes.mdx`** — no
-    fragment mechanism, and **not** `merge=union`-safe (the helm test's `need <count>` assertions are
-    *edited* when a resource count changes, not appended; the k8s page is prose). If two claimed
-    issues both touch one of these, **flag it on the issues and sequence the PRs** (land one, rebase
-    the other) rather than racing them into a conflict. This is the same "anything decided lands back
-    on the issue" rule applied before the collision.
-- **Read the chart first.** [`docs/views/architecture.dsl`](docs/views/architecture.dsl)
-  (~1.4k tokens) is the generated whole-graph index: every node, edge, carrier, owner. For a
-  slice: `pnpm arch:viz cluster:<domain>`. If your change adds/moves a module or alters a
-  data flow, update `architecture.calm.json` in the SAME change and `pnpm seal:arch` (P23).
-- **The loop — expect before you act.** For every objective, write the falsifiable **Expected**
-  first, act, then record the **Actual** (raw evidence: commands, outputs, counts — and what
-  you did NOT check), and a **Verdict**. Expected ⇒ continue; unexpected ⇒ stop and interpret —
-  an unexpected result is a finding, never something to paper over. Unfinished scaffolding you
-  were always meant to complete is NOT "unexpected" — finish it; stop only on genuine
-  contradiction.
-- **Debug ≠ deliver — the two loops.** Prove a diff on the hottest loop that carries the real
-  external semantics (live exec · overlay · spawn probe, seconds–minutes) *before* you package it
-  through the release pipeline; never cut a build to find out whether the code works, never rerun a
-  deterministic red as a "flake", and rehearse the demo path end-to-end before the human walks it.
-  See [the two loops](docs/docs/governance/delivery.mdx) (§7 in this tree — the law at YOUR
-  checkout's revision; the published copy is at
-  [example.invalid/governance/delivery#the-two-loops](https://example.invalid/governance/delivery#the-two-loops)).
-- **Gates green before push:** `node scripts/gates.mjs all` (also runs on pre-push). Green is
-  necessary, never sufficient — prove user-facing behavior at the altitude of the claim (P19):
-  a live leg for live behavior, not just unit green.
-
-## The hard rules (from the P-book — the ones sessions trip on)
-
-- **Fix at the point of introduction, never the point of observation.** A defect surfaces in a
-  consumer but is born in a producer. Trace it hop-by-hop back to where it's introduced, then
-  fix there. Never patch a consumer to compensate for a producer's bug — we don't work around
-  our own bugs. Reproduce without a live meeting before you fix.
-- **The core owns its contracts; clients adapt.** A consumer's legacy shape is translated at
-  the client boundary, never pushed upstream into the core.
-- **Brick front doors are per-runtime; inject runtime dependencies.** Browser-reachable front
-  doors are types-only; node-only capability lives behind a subpath; cross-brick runtime deps
-  are injected. The bundler is the gate a logic test passes right over.
-- **Source states the designed present, not its history.** No "this used to be X", no bug
-  archaeology in comments — write code as if it had always been this way.
-- **Report facts, then your reading — labelled as yours.** State the objective, ship raw
-  evidence (including what was NOT checked), and put "done/works" downstream of the data (P21).
-
-## Delivering — the PR
-
-**Witness your own value first.** Before opening the PR, run your change live at the issue's
-declared human bar — your own run is the bundle's first row. You never ask another human to
-witness value you haven't witnessed yourself.
-
-Then the PR carries two artifacts, judged on different axes (D8):
-
-1. **The observation bundle** — your acceptance table mapped row-by-row to evidence, in the
-   issue's own numbering, your live witness included. This answers *"is the value real?"*
-2. **The diff** — which passes review and the security checks the issue names. This answers
-   *"is it correct and safe?"*
-
-A diff with no bundle is not reviewable. Authorship: agents are instruments — **what you ship
-is yours**, full responsibility, honored as full authorship and credit; no agent co-author
-trailers (D13).
-
-The maintainer triages your PR by the
-[TAKE protocol](https://example.invalid/governance/delivery#take-protocol) — read it to know
-exactly how you'll be read. Then a **non-author validates the value**
-([the attestation shape](https://example.invalid/governance/delivery#validation)); validators are
-credited in release notes alongside you, and the reporter of the original bug is the preferred
-signer of your fix.
+Report vulnerabilities privately through GitHub Security Advisories on `andai/munshi-ai`
+(see `SECURITY.md`), never in a public issue.
