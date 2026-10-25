@@ -1,7 +1,7 @@
 # Dev VM
 
 The dev environment is one AWS VM running the whole stack (Munshi + the andai overlay) with Docker
-Compose (D-20). Code reaches the VM only through the public GitHub repository (`sunydepalpur/munshi-ai`, D-24) and
+Compose (D-20). Code reaches the VM only through the public GitHub repository (`andai/munshi-ai`, D-24) and
 `andai/scripts/vm.sh`; evidence comes back the same way. Nothing on the VM is exposed publicly in
 Phase 1: every service binds to `127.0.0.1` (D-15), there is no TLS, DNS or public hostname, and
 operators reach UIs through SSH port forwarding.
@@ -86,7 +86,7 @@ pnpm --version; uv --version; espeak-ng --version
 ## 4. Clone
 
 The repository is public, so the VM clones it over HTTPS with no credentials:
-`git clone https://github.com/sunydepalpur/munshi-ai.git ~/andai-meet`. The VM never needs write
+`git clone https://github.com/andai/munshi-ai.git ~/andai-meet`. The VM never needs write
 access: `vm.sh sync` pushes from the developer machine and the VM only pulls.
 
 ```bash

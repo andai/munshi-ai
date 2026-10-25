@@ -244,7 +244,7 @@ const packages = [{
   SPDXID: ROOT_ID,
   name: "munshi",
   versionInfo: VERSION.replace(/^v/, ""),
-  downloadLocation: "https://github.com/sunydepalpur/munshi-ai",
+  downloadLocation: "https://github.com/andai/munshi-ai",
   filesAnalyzed: false,
   licenseConcluded: "NOASSERTION",
   licenseDeclared: repoLicense(),

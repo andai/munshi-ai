@@ -29,9 +29,9 @@ See Quick Start and Local Development sections below.
 
 ---
 
-Open-source web UI for [Munshi](https://github.com/sunydepalpur/munshi-ai): join meetings, watch live transcripts, manage users/tokens, and review transcript history.
+Open-source web UI for [Munshi](https://github.com/andai/munshi-ai): join meetings, watch live transcripts, manage users/tokens, and review transcript history.
 
-Main backend repo: [Munshi](https://github.com/sunydepalpur/munshi-ai)
+Main backend repo: [Munshi](https://github.com/andai/munshi-ai)
 
 ## Quick Start (Docker)
 
@@ -51,7 +51,7 @@ Then open `http://localhost:3000`. (The container listens on port 3000; the `npm
 The dashboard lives in the Munshi monorepo at `services/dashboard/`.
 
 ```bash
-git clone https://github.com/sunydepalpur/munshi-ai.git
+git clone https://github.com/andai/munshi-ai.git
 cd munshi/services/dashboard
 npm install
 cp .env.example .env.local

@@ -5,9 +5,9 @@ type: application
 # Chart version (SemVer). appVersion tracks the v0.12 control-plane image tag the chart deploys.
 version: 0.12.2
 appVersion: "0.12.28"
-home: https://github.com/sunydepalpur/munshi-ai
+home: https://github.com/andai/munshi-ai
 sources:
-  - https://github.com/sunydepalpur/munshi-ai
+  - https://github.com/andai/munshi-ai
 keywords:
   - munshi
   - meeting-bot
