@@ -140,8 +140,19 @@ make -C andai logs S=meeting-api
 make -C andai down      # stop (volumes kept)
 ```
 
-Operator UIs (terminal `13000`, dashboard `13001`, andai portal `13100`) are reachable only through
-an SSH tunnel, e.g. `ssh -L 13000:127.0.0.1:13000 -L 13001:127.0.0.1:13001 $VM_HOST`.
+Operator UIs (terminal `13000`, dashboard `13001`, andai portal `13100`, Mailpit `8025`) are
+reachable only through an SSH tunnel, e.g. `ssh -L 13000:127.0.0.1:13000 -L 8025:127.0.0.1:8025 $VM_HOST`.
+
+First owner: on a fresh database, create the first org and its owner once. andai-core mails the owner
+a set-password link through its SMTP relay (by default the stack's Mailpit, so the mail appears in
+the Mailpit UI on `8025`):
+
+```bash
+make -C andai bootstrap EMAIL=owner@example.com ORG="Example Ltd"
+```
+
+(It runs `python -m andai_core bootstrap` in the andai-core container; `POST /api/v1/bootstrap` does
+the same. Both are refused once any user exists.)
 
 ## 7. Working from a laptop: `andai/scripts/vm.sh`
 

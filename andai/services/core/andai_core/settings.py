@@ -63,7 +63,9 @@ class Settings(BaseSettings):
     )
     # Emailed links: a password-reset link lives 30 minutes, an invite (and the first owner's
     # set-password link) 7 days.
-    reset_ttl_seconds: int = Field(default=30 * 60, gt=0, validation_alias="ANDAI_RESET_TTL_SECONDS")
+    reset_ttl_seconds: int = Field(
+        default=30 * 60, gt=0, validation_alias="ANDAI_RESET_TTL_SECONDS"
+    )
     invite_ttl_seconds: int = Field(
         default=7 * 24 * 3600, gt=0, validation_alias="ANDAI_INVITE_TTL_SECONDS"
     )

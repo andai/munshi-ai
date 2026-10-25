@@ -414,3 +414,62 @@ def fresh_app_engine(postgres: Postgres, migrated: Postgres) -> Iterator[Engine]
         with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
         admin.dispose()
+
+
+def link_token(text_body: str, page: str) -> str:
+    """The token of the `/<page>?token=` link in a mail body."""
+    import re
+
+    match = re.search(rf"{re.escape(PORTAL_ORIGIN)}/{page}\?token=([A-Za-z0-9_-]+)", text_body)
+    assert match, f"no /{page} link in the mail"
+    return match.group(1)
+
+
+def invite_user(
+    engine: Engine,
+    harness: Harness,
+    *,
+    org_id: uuid.UUID,
+    email: str,
+    role: str = "member",
+    invited_by: uuid.UUID | None = None,
+) -> str:
+    """The internal invite path (the admin route arrives with team management): create the invite
+    in the org's transaction and return its token."""
+    from andai_core.auth.invites import create_invite
+    from andai_core.db.session import transaction
+
+    with transaction(engine, org_id=org_id) as tx:
+        return create_invite(
+            tx,
+            org_id=org_id,
+            email=email,
+            role=role,
+            invited_by=invited_by,
+            settings=harness.services.settings,
+            now=harness.clock(),
+        )
+
+
+def mailpit_messages(api_url: str, to: str, *, expect: int = 1, timeout: float = 15.0) -> list:
+    """Messages Mailpit holds for `to` (full bodies), waiting until at least `expect` arrived."""
+    import json
+
+    deadline = time.monotonic() + timeout
+    found: list = []
+    while time.monotonic() < deadline:
+        with urllib.request.urlopen(f"{api_url}/api/v1/messages?limit=500", timeout=5) as r:
+            listing = json.load(r)
+        ids = [
+            m["ID"]
+            for m in listing.get("messages", [])
+            if any(a.get("Address", "").lower() == to.lower() for a in m.get("To", []))
+        ]
+        if len(ids) >= expect:
+            found = []
+            for message_id in ids:
+                with urllib.request.urlopen(f"{api_url}/api/v1/message/{message_id}", timeout=5) as r:
+                    found.append(json.load(r))
+            return found
+        time.sleep(0.3)
+    return found

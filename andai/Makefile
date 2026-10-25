@@ -5,6 +5,7 @@
 #   make -C andai health        # every service healthy?
 #   make -C andai db-init       # create andai-core's database and roles (idempotent; `up` runs it)
 #   make -C andai db-migrate    # migrate andai-core's database to head (`up` runs it)
+#   make -C andai bootstrap EMAIL=owner@example.com ORG="Example Ltd"   # first org + owner, once
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
 #   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/andai
@@ -43,11 +44,12 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate agent-worker images images-check images-push down ps logs health _env-ready _env-file
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap agent-worker images images-check images-push down ps logs health _env-ready _env-file
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
 	@echo "make -C andai db-init | db-migrate                       andai database + roles (idempotent) | migrate to head"
+	@echo "make -C andai bootstrap EMAIL=a@b.c ORG=name [NAME=..]   first org + owner (mails a set-password link)"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
 	@echo "make -C andai health   HTTP health on 127.0.0.1 + container states"
@@ -110,6 +112,15 @@ db-migrate: _env-file
 	 if [ -z "$$owner" ]; then echo "db-migrate: ANDAI_DB_PASSWORD_OWNER is empty in $(ENV_FILE)" >&2; exit 1; fi; \
 	 ANDAI_DB_URL_OWNER="postgresql+psycopg://andai_owner:$$owner@postgres:5432/andai" \
 	   $(DC) run --rm -T -e ANDAI_DB_URL_OWNER andai-core python -m alembic upgrade head
+
+## bootstrap — create the first org and its owner in the running andai-core (refused once any user
+## exists). The owner gets a set-password link by mail (the stack's Mailpit unless SMTP_* say otherwise).
+EMAIL ?=
+ORG ?=
+NAME ?=
+bootstrap: _env-file
+	@test -n "$(EMAIL)" && test -n "$(ORG)" || { echo "usage: make -C andai bootstrap EMAIL=owner@example.com ORG='Example Ltd' [NAME='A. Owner']" >&2; exit 2; }
+	$(DC) exec -T andai-core python -m andai_core bootstrap --email "$(EMAIL)" --org "$(ORG)" $(if $(NAME),--name "$(NAME)")
 
 ## images — build every catalogue entry in order (bases first), tagged
 ## ghcr.io/andai/munshi-<name>:$(VERSION) and :dev; prints size and build time per image.

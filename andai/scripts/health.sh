@@ -59,6 +59,7 @@ check andai-core   "$(getv ANDAI_CORE_PORT 18300)"       /healthz
 check andai-worker "$(getv ANDAI_WORKER_PORT 18301)"     /healthz
 check andai-intake "$(getv ANDAI_INTAKE_PORT 18302)"     /healthz
 check andai-portal "$(getv ANDAI_PORTAL_PORT 13100)"     /api/health
+check mailpit      "$(getv MAILPIT_UI_PORT 8025)"        /readyz
 
 if [ "$read_containers" = - ]; then
   echo "== Containers"
