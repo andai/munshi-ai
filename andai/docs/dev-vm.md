@@ -154,6 +154,13 @@ make -C andai bootstrap EMAIL=owner@example.com ORG="Example Ltd"
 (It runs `python -m andai_core bootstrap` in the andai-core container; `POST /api/v1/bootstrap` does
 the same. Both are refused once any user exists.)
 
+The link opens the portal's `/invite` page, where the owner sets a password; then they sign in at
+`http://127.0.0.1:13100/sign-in` (through the tunnel: `-L 13100:127.0.0.1:13100`). Use exactly that
+origin, not `localhost`: andai-core refuses state-changing requests whose `Origin` is not
+`ANDAI_PORTAL_ORIGIN`. From the portal the owner invites people (Members), creates teams and can
+require two-factor login (Security). The portal's browser tests run against a separate compose
+project with the dev stack down: see `andai/portal/e2e/README.md`.
+
 ## 7. Working from a laptop: `andai/scripts/vm.sh`
 
 On the laptop, in the local checkout:

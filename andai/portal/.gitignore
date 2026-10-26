@@ -2,3 +2,6 @@
 .next/
 next-env.d.ts
 *.tsbuildinfo
+# Playwright (andai portal e2e): reports, traces and screenshots stay local
+playwright-report/
+test-results/

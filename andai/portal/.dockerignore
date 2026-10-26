@@ -4,3 +4,7 @@ node_modules
 next-env.d.ts
 Dockerfile
 .dockerignore
+e2e
+playwright.config.ts
+playwright-report
+test-results
