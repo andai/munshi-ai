@@ -266,7 +266,7 @@ def test_admin_client_errors_name_the_call_not_the_secrets() -> None:
 
 def test_admin_client_refuses_a_token_with_other_scopes() -> None:
     def narrow(request: httpx.Request) -> httpx.Response:
-        body = {"id": 1, "token": "vxa_x", "user_id": 1, "scopes": ["bot"]}
+        body = {"id": 1, "token": "tok_x", "user_id": 1, "scopes": ["bot"]}
         return httpx.Response(201, json=body)
 
     client = HttpPlatformAdmin(
@@ -277,5 +277,5 @@ def test_admin_client_refuses_a_token_with_other_scopes() -> None:
 
 
 def test_minted_values_do_not_show_the_key_in_their_repr() -> None:
-    minted = principals.Minted(platform_user_id=1, token_id=2, key="vxa_secret_value")
-    assert "vxa_secret_value" not in repr(minted)
+    minted = principals.Minted(platform_user_id=1, token_id=2, key="tok_secret_value")
+    assert "tok_secret_value" not in repr(minted)

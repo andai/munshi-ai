@@ -343,7 +343,7 @@ class FakeAdminApi:
                 return httpx.Response(404, json={"detail": "User not found"})
             scopes = request.url.params["scopes"].split(",")
             token_id = next(self._ids)
-            token = f"vxa_bot_{secrets.token_urlsafe(24)}"
+            token = f"tok_bot_{secrets.token_urlsafe(24)}"
             self.tokens[token_id] = {"token": token, "user_id": user_id, "scopes": scopes}
             return httpx.Response(
                 201, json={"id": token_id, "token": token, "user_id": user_id, "scopes": scopes}
