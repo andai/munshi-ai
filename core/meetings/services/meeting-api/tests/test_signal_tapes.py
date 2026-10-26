@@ -316,3 +316,34 @@ async def test_janitor_ignores_stray_objects_under_the_signal_prefix():
     await sweep_signal_tapes(storage, budget_bytes=1, now=NOW)
     assert storage.blobs["signal/README"] == b"not a tape"
     assert not any(k.startswith(p1) for k in storage.blobs)
+
+
+ORG_PREFIX = "org/3f2b8c1e-9a4d-4e7f-8b21-5c6d7e8f9a0b"
+
+
+def test_tape_upload_route_writes_under_the_meeting_prefix():
+    """A meeting with ``data.storage_prefix`` keeps its tapes in ``{prefix}/signal/…``; the bot's
+    request names only the part and session."""
+    repo, storage = InMemoryRecordingRepo(), InMemoryStorage()
+    repo.seed(meeting_id=MEETING_ID, user_id=USER, session_uid=SESSION_UID,
+              storage_prefix=ORG_PREFIX)
+    r = _post_tape(_client_for(repo, storage), part="stt", data=STT_TAPE)
+    assert r.status_code == 200, r.text
+    assert r.json()["storage_path"] == (
+        f"{ORG_PREFIX}/signal/{USER}/{MEETING_ID}/{SESSION_UID}/stt.jsonl"
+    )
+    assert list(storage.blobs) == [r.json()["storage_path"]]
+
+
+async def test_janitor_evicts_a_prefixed_tape_whole():
+    storage = InMemoryStorage()
+    legacy = _seed_tape(storage, meeting_id=1, size=100, mtime=OLD_ENOUGH)
+    org = signal_tape_prefix(user_id=USER, meeting_id=2, session_uid="sess-2",
+                             storage_prefix=ORG_PREFIX)
+    for part in ("captured-signal.jsonl", "stt.jsonl"):
+        storage.blobs[f"{org}{part}"] = b"z" * 100
+        storage.mtimes[f"{org}{part}"] = OLD_ENOUGH - 1
+    out = await sweep_signal_tapes(storage, budget_bytes=250, now=NOW)
+    assert out["evicted"] == 1
+    assert not any(k.startswith(org) for k in storage.blobs), "both parts of the oldest tape went"
+    assert any(k.startswith(legacy) for k in storage.blobs)

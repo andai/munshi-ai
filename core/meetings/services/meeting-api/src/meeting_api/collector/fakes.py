@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from .ports import recordings_for_artifact_deletion
+
 
 def _segment_to_api(seg: dict) -> dict:
     """A stored segment → api.v1 ``TranscriptionSegment`` (start/end/text/language required)."""
@@ -728,7 +730,7 @@ class InMemoryTranscriptStore:
             m["data"] = data
         return {
             "meeting_id": meeting_id,
-            "recordings": list(data.get("recordings") or []),
+            "recordings": recordings_for_artifact_deletion(data),
             "already_deleted": already_deleted,
         }
 

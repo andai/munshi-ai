@@ -11,8 +11,8 @@ Two layers, deliberately split:
     settings evals use, proving the platform kill switch reaches the response and that clearing it
     restores the default.
 
-The per-user tier has no HTTP writer today (``UserAdminPatch.data`` is a closed billing model), so
-it is a DB-level escape hatch — covered at the resolver, which is where its logic lives.
+The per-user tier is written by the admin PATCH (``data.diagnostics.capture_signal``); its resolution
+is covered here at the resolver, and the PATCH itself in ``test_storage_prefix.py``.
 """
 import pytest
 from fastapi.testclient import TestClient

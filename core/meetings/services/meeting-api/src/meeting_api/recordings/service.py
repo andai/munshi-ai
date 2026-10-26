@@ -89,6 +89,9 @@ async def upload_chunk(
         raise SessionNotFound("MeetingToken meeting_id does not match the session's meeting")
 
     owner = await repo.owner_of(meeting_id)
+    # The meeting's storage prefix comes from the meeting row (snapshotted from identity at spawn),
+    # never from the upload request.
+    storage_prefix = await repo.storage_prefix_of(meeting_id)
 
     # Find / start the bot recording for this session.
     recordings = await repo.get_recordings(meeting_id)
@@ -102,6 +105,7 @@ async def upload_chunk(
     key = chunk_storage_key(
         user_id=owner or 0, recording_id=recording_id, session_uid=session_uid,
         media_type=media_type, media_format=media_format, chunk_seq=chunk_seq,
+        storage_prefix=storage_prefix,
     )
     await storage.upload(key, data, content_type=_content_type(media_format))
 
@@ -163,8 +167,8 @@ async def upload_signal_tape(
         every meeting the user never asked to record.
       * **No master, no chunk sequence.** The bot uploads a whole flushed file once at teardown;
         there is nothing to assemble and nothing to finalize-on-read.
-      * **Its own keyspace** (``signal/…``), so the budget janitor can list every tape in the
-        deployment without paging through the recordings prefix.
+      * **Its own keyspace** (``[{storage_prefix}/]signal/…``), so the budget janitor can list every
+        tape in the deployment without paging through the recordings prefix.
 
     Returns ``{"status": "stored", "storage_path", "bytes"}``. Raises ``SessionNotFound`` (404) when
     the session is unknown — unlike a chunk there is no "pending" case, because a tape is only ever
@@ -196,7 +200,8 @@ async def upload_signal_tape(
 
     owner = await repo.owner_of(meeting_id)
     key = signal_tape_key(user_id=owner or 0, meeting_id=meeting_id, session_uid=session_uid,
-                          part=part, media_format=media_format)
+                          part=part, media_format=media_format,
+                          storage_prefix=await repo.storage_prefix_of(meeting_id))
     await storage.upload(key, data, content_type=_content_type(media_format))
     log_event(
         "signal_tape_stored", audience="operator", span="recordings.signal",

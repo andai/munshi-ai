@@ -22,6 +22,22 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, Optional, Protocol, runtime_checkable
 
 
+def recordings_for_artifact_deletion(meeting_data: dict) -> list[dict]:
+    """The meeting's recordings, each carrying the meeting's ``storage_prefix`` (``None`` when
+    unset), as ``prepare_completed_artifact_deletion`` hands them to the object deleter.
+
+    The prefix lives on the meeting, not on each recording; attaching it here lets the deleter list
+    the keyspace the recording was actually written to (``org/<uuid>/recordings/…`` or
+    ``recordings/…``). It is attached to the returned copies only, never stored.
+    """
+    prefix = meeting_data.get("storage_prefix") or None
+    return [
+        {**r, "storage_prefix": prefix}
+        for r in (meeting_data.get("recordings") or [])
+        if isinstance(r, dict)
+    ]
+
+
 @runtime_checkable
 class TranscriptStore(Protocol):
     """Read a meeting's transcript; list a user's meetings; append a segment; authorize a
@@ -337,8 +353,10 @@ class TranscriptStore(Protocol):
         """OWNER-scoped snapshot for a completed/failed meeting's artifact erasure.
 
         Returns ``None`` for unknown/unowned, ``{"error": "conflict"}`` while the FSM is active,
-        or a retryable snapshot containing the persisted recording metadata. It records a
-        ``pending`` tombstone under the row lock so ``continue_meeting`` cannot reopen the row, but
+        or a retryable snapshot containing the persisted recording metadata (built with
+        ``recordings_for_artifact_deletion``, so each recording names the meeting's storage
+        prefix). It records a ``pending`` tombstone under the row lock so ``continue_meeting``
+        cannot reopen the row, but
         retains every artifact and path; storage failures therefore remain addressable/retryable.
         """
         ...

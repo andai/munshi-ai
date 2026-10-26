@@ -47,6 +47,13 @@ class InMemoryStorage:
             if k.startswith(prefix)
         ]
 
+    async def list_children(self, prefix: str) -> list[str]:
+        children = set()
+        for k in self.blobs:
+            if k.startswith(prefix) and "/" in k[len(prefix):]:
+                children.add(prefix + k[len(prefix):].split("/", 1)[0] + "/")
+        return sorted(children)
+
     async def delete(self, key: str) -> None:
         self.blobs.pop(key, None)
         self.content_types.pop(key, None)
@@ -76,10 +83,13 @@ class InMemoryRecordingRepo:
         self._sessions: dict[str, int] = {}
 
     def seed(
-        self, *, meeting_id: int, user_id: int, session_uid: str, status: str = "active"
+        self, *, meeting_id: int, user_id: int, session_uid: str, status: str = "active",
+        storage_prefix: Optional[str] = None,
     ) -> None:
         self._meetings.setdefault(
-            meeting_id, {"user_id": user_id, "status": status, "recordings": []}
+            meeting_id,
+            {"user_id": user_id, "status": status, "recordings": [],
+             "storage_prefix": storage_prefix},
         )
         self._sessions[session_uid] = meeting_id
 
@@ -106,6 +116,9 @@ class InMemoryRecordingRepo:
     async def owner_of(self, meeting_id: int) -> Optional[int]:
         return self._meetings.get(meeting_id, {}).get("user_id")
 
+    async def storage_prefix_of(self, meeting_id: int) -> Optional[str]:
+        return self._meetings.get(meeting_id, {}).get("storage_prefix") or None
+
     async def prepare_recording_deletion(self, user_id: int, recording_id: int) -> Optional[dict]:
         for meeting_id, meeting in self._meetings.items():
             if meeting.get("user_id") != user_id:
@@ -122,7 +135,7 @@ class InMemoryRecordingRepo:
                 prepared if r.get("id") == recording_id else r
                 for r in meeting.get("recordings", [])
             ]
-            return prepared
+            return {**prepared, "storage_prefix": meeting.get("storage_prefix") or None}
         return None
 
     async def list_meeting_recordings(self, user_id: int) -> list[dict]:

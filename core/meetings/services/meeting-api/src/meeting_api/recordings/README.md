@@ -23,6 +23,25 @@ and stamps the JSONB media-file.
 `file_size_bytes` / `chunk_count`, the chunk/master `storage_path`, and `is_final` / `finalized_by`
 (Pack U.7 master-preserve + sticky-COMPLETED status are ported verbatim).
 
+## Object keys and the storage prefix
+A meeting may carry `meeting.data.storage_prefix` (`org/<uuid>`). The spawn copies it from the
+owner's identity record (admin-api `/internal/users/{id}/bot-context`); it never comes from a
+request, and it is fixed for the meeting's lifetime. Every object written for the meeting is keyed
+under it:
+
+| Object | Without a prefix | With a prefix |
+|---|---|---|
+| Recording chunk | `recordings/{user}/{rec}/{session}/{type}/{seq:06d}.{fmt}` | `{prefix}/recordings/…` |
+| Master | `recordings/{user}/{rec}/{session}/{type}/master.{fmt}` | `{prefix}/recordings/…` |
+| Signal tape part | `signal/{user}/{meeting}/{session}/{part}.{fmt}` | `{prefix}/signal/…` |
+
+The key builders (`chunk_storage_key`, `signal_tape_prefix`, `signal_tape_key`) take the prefix
+and raise `InvalidStoragePrefix` for any value not shaped `org/<uuid>`. Upload and tape writes read
+it with `RecordingRepo.storage_prefix_of(meeting_id)`; deletion receives it on the recording dicts
+the repository hands over (`prepare_recording_deletion`, and the collector's
+`recordings_for_artifact_deletion`) and lists only that keyspace. The tape janitor sweeps the
+top-level `signal/` root and each `org/<uuid>/signal/` root under one budget.
+
 ## P3 seams (NOT built here)
 The raw byte-stream / Range download of a finalized master, and the lifecycle-driven server-side
 finalize (this carve finalizes lazily on read via `GET /recordings/{id}/master`).

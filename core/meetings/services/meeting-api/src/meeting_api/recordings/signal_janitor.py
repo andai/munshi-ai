@@ -1,4 +1,7 @@
-"""The captured-signal tape budget — rolling eviction over the ``signal/`` prefix (O-TEL-1).
+"""The captured-signal tape budget — rolling eviction over the ``signal/`` roots (O-TEL-1).
+
+Tapes live under the top-level ``signal/`` root, or under ``org/<uuid>/signal/`` for meetings with
+a storage prefix. The budget is one budget across every root.
 
 Fixture collection is DEFAULT ON, so the bound cannot live on the capture side: every prod meeting
 tapes, and the only question is how much we keep. This is that answer — a keep-side budget with
@@ -28,7 +31,12 @@ import time
 from typing import Optional
 
 from ..obs import log_event
-from .jsonb import SIGNAL_PROMOTED_MARKER, SIGNAL_ROOT_PREFIX
+from .jsonb import (
+    ORG_STORAGE_ROOT,
+    SIGNAL_PROMOTED_MARKER,
+    SIGNAL_ROOT_PREFIX,
+    STORAGE_PREFIX_RE,
+)
 from .ports import Storage
 
 # 50 GB of tapes. The number is the deployment's storage bill, not a technical limit — it is env
@@ -39,19 +47,34 @@ DEFAULT_MIN_AGE_S = 600.0
 
 
 def _tape_prefix(key: str) -> Optional[str]:
-    """The owning tape prefix (``signal/{user}/{meeting}/{session}/``) for an object key.
+    """The owning tape prefix (``[org/<uuid>/]signal/{user}/{meeting}/{session}/``) for a key.
 
     Returns ``None`` for anything that is not shaped like a tape object, which is how a stray key
     under ``signal/`` gets LEFT ALONE rather than swept up by a delete loop that assumed everything
     it listed was ours.
     """
-    if not key.startswith(SIGNAL_ROOT_PREFIX):
-        return None
     parts = key.split("/")
+    root = 0
+    if len(parts) == 7 and STORAGE_PREFIX_RE.fullmatch("/".join(parts[:2])):
+        root = 2  # org / <uuid> / signal / …
     # signal / user / meeting / session / <file>
-    if len(parts) != 5 or not parts[4]:
+    tape = parts[root:]
+    if len(tape) != 5 or f"{tape[0]}/" != SIGNAL_ROOT_PREFIX or not tape[4]:
         return None
-    return "/".join(parts[:4]) + "/"
+    return "/".join(parts[:root + 4]) + "/"
+
+
+async def signal_tape_roots(storage: Storage) -> list[str]:
+    """Every ``signal/`` root in the bucket: the top-level one and one per ``org/<uuid>/`` prefix.
+
+    Org prefixes are found with a delimiter listing of ``org/``, which returns one entry per org and
+    never pages through the recordings stored inside them.
+    """
+    roots = [SIGNAL_ROOT_PREFIX]
+    for child in await storage.list_children(ORG_STORAGE_ROOT):
+        if STORAGE_PREFIX_RE.fullmatch(child.rstrip("/")):
+            roots.append(f"{child}{SIGNAL_ROOT_PREFIX}")
+    return roots
 
 
 def group_tapes(objects: list[dict]) -> dict[str, dict]:
@@ -84,15 +107,19 @@ async def sweep_signal_tapes(
     budget_bytes: int = DEFAULT_BUDGET_BYTES,
     min_age_s: float = DEFAULT_MIN_AGE_S,
     now: Optional[float] = None,
-    prefix: str = SIGNAL_ROOT_PREFIX,
+    prefix: Optional[str] = None,
 ) -> dict:
     """Run ONE budget sweep. Returns counters; never raises for an ordinary storage hiccup.
+
+    ``prefix`` limits the sweep to one root; by default it covers every root
+    (``signal_tape_roots``) under one budget.
 
     Under budget → nothing is deleted and nothing is logged at operator level (a quiet sweep is the
     normal case, and a log line per tick would bury the one that matters).
     """
     now = time.time() if now is None else now
-    objects = await storage.list_detailed(prefix)
+    roots = [prefix] if prefix is not None else await signal_tape_roots(storage)
+    objects = [obj for root in roots for obj in await storage.list_detailed(root)]
     tapes = group_tapes(objects)
     total = sum(t["bytes"] for t in tapes.values())
     if total <= budget_bytes:
