@@ -48,10 +48,9 @@ this file by `gate:config-contract`.
 
 Every service answers `GET /health` and carries a compose healthcheck; `depends_on` waits on
 `condition: service_healthy` so the bring-up is ordered. The `runtime` mounts
-`/var/run/docker.sock` and spawns the bot (`BROWSER_IMAGE=ghcr.io/andai/munshi-bot:v012`, published — a
-reference, never built here; never point it at the published `ghcr.io/andai/munshi-bot:dev`, which is the
-old 0.10 line and incompatible with this stack's `lifecycle.v1`) on demand and the per-dispatch
-agent worker (`ghcr.io/andai/munshi-agent-worker:v012`, a `build-only` compose profile); neither is a
+`/var/run/docker.sock` and spawns the bot (`BROWSER_IMAGE=ghcr.io/andai/munshi-bot:<VERSION>`, published — a
+reference, never built here; `:dev` is the locally-built tag from `make dev`, never published) on demand and the per-dispatch
+agent worker (`ghcr.io/andai/munshi-agent-worker:<VERSION>`, a `build-only` compose profile); neither is a
 long-running compose service.
 
 ## Usage
