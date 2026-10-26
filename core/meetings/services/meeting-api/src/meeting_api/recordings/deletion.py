@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .jsonb import recording_session_prefix, recordings_owner_prefix
 from .ports import RecordingRepo, Storage
 
 
@@ -15,19 +16,31 @@ class MeetingNotTerminal(Exception):
 
 
 def _recording_prefix(recording: dict) -> Optional[str]:
-    """Return the canonical key prefix for every chunk/master belonging to ``recording``."""
+    """Return the canonical key prefix for every chunk/master belonging to ``recording``.
+
+    ``recording["storage_prefix"]`` is the owning meeting's ``data.storage_prefix``, attached by the
+    repository that loaded the meeting row (it is not stored on the recording itself). A malformed
+    value raises, so a deletion never lists outside ``org/<uuid>/``.
+    """
     user_id = recording.get("user_id")
     recording_id = recording.get("id")
     session_uid = recording.get("session_uid")
     if user_id is None or recording_id is None or not session_uid:
         return None
-    return f"recordings/{user_id}/{recording_id}/{session_uid}/"
+    return recording_session_prefix(
+        user_id=user_id, recording_id=recording_id, session_uid=session_uid,
+        storage_prefix=recording.get("storage_prefix"),
+    )
 
 
 def _owner_prefix(recording: dict) -> Optional[str]:
     """The owner's whole object namespace — the boundary a deletion may never reach past."""
     user_id = recording.get("user_id")
-    return f"recordings/{user_id}/" if user_id is not None else None
+    if user_id is None:
+        return None
+    return recordings_owner_prefix(
+        user_id=user_id, storage_prefix=recording.get("storage_prefix"),
+    )
 
 
 async def recording_object_keys(storage: Storage, recording: dict) -> list[str]:

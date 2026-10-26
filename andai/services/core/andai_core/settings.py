@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     platform_admin_token: SecretStr | None = Field(
         default=None, validation_alias="PLATFORM_ADMIN_TOKEN"
     )
+    # How many bots one org may have in meetings at once (its principal's cap on the platform).
+    org_max_concurrent_bots: int = Field(
+        default=3, ge=0, validation_alias="ANDAI_ORG_MAX_CONCURRENT_BOTS"
+    )
 
     # Outgoing mail (settings-only SMTP; Mailpit in development).
     smtp_host: str = Field(default="mailpit", validation_alias="SMTP_HOST")

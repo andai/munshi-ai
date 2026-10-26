@@ -109,6 +109,9 @@ OWNER_ONLY_KEYS = frozenset({
     # The reader roster — every user id that can read this meeting. A share recipient enumerating it
     # learns who ELSE the owner shared with, which is other people's material, not theirs.
     "transcript_viewers",
+    # The object-storage prefix (``org/<uuid>``) the meeting's recordings are written under — the
+    # owner's storage layout, which names their org; nothing a share recipient can use.
+    "storage_prefix",
 })
 
 # What a NON-OWNER's response drops explicitly: both tiers. Kept as one name because that is the

@@ -19,6 +19,7 @@ exercises:
 """
 import hmac
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -146,9 +147,46 @@ class PlatformBillingDataPatch(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+#: The only shape an object-storage prefix may take: ``org/<lowercase uuid>``. The prefix is put in
+#: front of every object key meeting-api writes for this user's meetings, so it is validated on the
+#: way in (PATCH) and again on the way out (bot-context) — a stored value of any other shape is
+#: never handed to a key builder.
+STORAGE_PREFIX_PATTERN = (
+    r"^org/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_STORAGE_PREFIX_RE = re.compile(STORAGE_PREFIX_PATTERN)
+
+
+def valid_storage_prefix(value: Any) -> Optional[str]:
+    """``value`` when it is a well-formed storage prefix, else ``None``."""
+    if isinstance(value, str) and _STORAGE_PREFIX_RE.fullmatch(value):
+        return value
+    return None
+
+
+class DiagnosticsDataPatch(BaseModel):
+    """Per-user diagnostics kill switches (``users.data["diagnostics"]``)."""
+
+    capture_signal: Optional[bool] = None
+
+    model_config = {"extra": "forbid"}
+
+
+class UserAdminDataPatch(PlatformBillingDataPatch):
+    """The ``users.data`` keys an operator may set with the admin token.
+
+    ``storage_prefix`` places every object stored for this user's meetings under that prefix; it is
+    set by the operator (andai-core's org principal provisioning), never by the user or a meeting
+    request. ``null`` removes it, and later meetings use the unprefixed layout again.
+    """
+
+    storage_prefix: Optional[str] = Field(default=None, pattern=STORAGE_PREFIX_PATTERN)
+    diagnostics: Optional[DiagnosticsDataPatch] = None
+
+
 class UserAdminPatch(BaseModel):
     max_concurrent_bots: Optional[int] = Field(default=None, ge=0)
-    data: Optional[PlatformBillingDataPatch] = None
+    data: Optional[UserAdminDataPatch] = None
 
     model_config = {"extra": "forbid"}
 
@@ -556,10 +594,16 @@ def create_app() -> FastAPI:
         if patch.max_concurrent_bots is not None:
             user.max_concurrent_bots = patch.max_concurrent_bots
         if patch.data:
-            user.data = {
-                **(user.data or {}),
-                **patch.data.model_dump(exclude_unset=True),
-            }
+            current = dict(user.data or {})
+            changes = patch.data.model_dump(exclude_unset=True)
+            if isinstance(changes.get("diagnostics"), dict):
+                # Merge, so setting one kill switch leaves any other stored switch in place.
+                stored = current.get("diagnostics")
+                changes["diagnostics"] = {
+                    **(stored if isinstance(stored, dict) else {}),
+                    **changes["diagnostics"],
+                }
+            user.data = {**current, **changes}
         await db.commit()
         await db.refresh(user)
         return UserResponse.model_validate(user)
@@ -1246,6 +1290,12 @@ def create_app() -> FastAPI:
         resp["capture_signal"] = _resolve_capture_signal(
             data, await _platform_setting("diagnostics", db)
         )
+        # Object-storage prefix for this user's meetings (org principals: ``org/{org_id}``).
+        # meeting-api snapshots it onto the meeting at spawn. Absent for unprefixed users, and a
+        # stored value of the wrong shape is withheld rather than passed on.
+        storage_prefix = valid_storage_prefix(data.get("storage_prefix"))
+        if storage_prefix:
+            resp["storage_prefix"] = storage_prefix
         if data.get("webhook_url"):
             resp["webhook_url"] = data["webhook_url"]
             if data.get("webhook_secret"):

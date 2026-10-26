@@ -235,6 +235,27 @@ def _capture_signal_from_context(ctx: dict) -> bool:
     return ctx.get("capture_signal") is not False
 
 
+def _storage_prefix_from_context(ctx: dict) -> Optional[str]:
+    """The owner's object-storage prefix (``org/<uuid>``) out of a bot-context body, or None.
+
+    admin-api states it only for users that have one (org principals) and validates its shape.
+    The spawn snapshots it onto ``meeting.data.storage_prefix``; every object key written for the
+    meeting then starts with it. A value of any other shape is not stored (and is logged), so the
+    key builders never see one. An unreachable identity yields None: the meeting keeps the
+    unprefixed layout, which stays owner-scoped by user id.
+    """
+    from ..recordings.jsonb import InvalidStoragePrefix, normalize_storage_prefix
+
+    try:
+        return normalize_storage_prefix(ctx.get("storage_prefix"))
+    except InvalidStoragePrefix:
+        log_event(
+            "bot_spawn_storage_prefix_rejected", audience="operator", level="warning",
+            span="bots.create", fields={"reason": "malformed storage_prefix in bot-context"},
+        )
+        return None
+
+
 def _bot_name_from_context(ctx: dict) -> Optional[str]:
     """This person's default bot name out of a bot-context body, or None.
 
@@ -478,6 +499,8 @@ async def request_bot(
     # without identity being consulted about it at all — the answer could not change anything.
     if not bot_name:
         bot_name = _bot_name_from_context(bot_context)
+    # Fourth reader: the object-storage prefix this meeting's recordings and tapes are written under.
+    storage_prefix = _storage_prefix_from_context(bot_context)
     transcription_provider: Optional[str] = "none" if not transcribe_enabled else None
     if configured.get("url"):
         transcription_service_url = configured["url"]
@@ -694,6 +717,10 @@ async def request_bot(
         if transcription_provider is not None:
             meeting_data["transcription_provider"] = transcription_provider
         meeting_data["service_authority"] = authority_record
+        # Fixed for the meeting's lifetime: a reopened meeting (continue_meeting above) keeps the
+        # layout its first session was stored under, so one meeting never spans two keyspaces.
+        if storage_prefix:
+            meeting_data["storage_prefix"] = storage_prefix
         # The serialization key for authenticated spawns — find_active_by_userdata matches on it.
         if authenticated and auth_userdata_path:
             meeting_data["auth_userdata_path"] = auth_userdata_path

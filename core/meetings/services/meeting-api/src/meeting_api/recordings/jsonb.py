@@ -9,6 +9,7 @@ is NO separate recordings table).
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -135,16 +136,62 @@ def apply_chunk_to_recording(
     return rec_payload, status_transitioned
 
 
+# ── object-storage prefix ───────────────────────────────────────────────────────────────────────
+# A meeting may carry ``data.storage_prefix`` (``org/<uuid>``), snapshotted at spawn from the
+# owner's identity record (admin-api bot-context) and never from a request. When it is set, every
+# object stored for the meeting lives under it: ``{prefix}/recordings/…`` and ``{prefix}/signal/…``.
+# When it is absent the keys are the unprefixed ``recordings/…`` and ``signal/…``.
+#
+# The shape is checked again here, at the last step before a key exists: a value of any other shape
+# raises instead of producing a key, so no stored value can steer a write outside ``org/<uuid>/``.
+ORG_STORAGE_ROOT = "org/"
+STORAGE_PREFIX_RE = re.compile(
+    r"org/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+
+class InvalidStoragePrefix(ValueError):
+    """A stored storage prefix is not of the form ``org/<uuid>``."""
+
+
+def normalize_storage_prefix(value: Any) -> Optional[str]:
+    """``None`` for no prefix (``None`` or ``""``), the prefix itself when well formed, and
+    ``InvalidStoragePrefix`` for anything else."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and STORAGE_PREFIX_RE.fullmatch(value):
+        return value
+    raise InvalidStoragePrefix(f"storage prefix must be org/<uuid>, got {value!r}")
+
+
+def _prefixed(storage_prefix: Optional[str], key: str) -> str:
+    prefix = normalize_storage_prefix(storage_prefix)
+    return f"{prefix}/{key}" if prefix else key
+
+
+def recordings_owner_prefix(*, user_id: int, storage_prefix: Optional[str] = None) -> str:
+    """Everything stored for one owner's recordings: ``[{prefix}/]recordings/{user_id}/``."""
+    return _prefixed(storage_prefix, f"recordings/{user_id}/")
+
+
+def recording_session_prefix(
+    *, user_id: int, recording_id: int, session_uid: str, storage_prefix: Optional[str] = None,
+) -> str:
+    """Every chunk and master of one recording session: ``…/recordings/{user}/{rec}/{session}/``."""
+    return _prefixed(storage_prefix, f"recordings/{user_id}/{recording_id}/{session_uid}/")
+
+
 def chunk_storage_key(
     *, user_id: int, recording_id: int, session_uid: str, media_type: str, media_format: str,
-    chunk_seq: int,
+    chunk_seq: int, storage_prefix: Optional[str] = None,
 ) -> str:
     """The object key for one uploaded chunk (parent's scheme — ``media_type`` in the path keeps
-    audio/video from colliding at ``chunk_seq=0``)."""
-    return (
-        f"recordings/{user_id}/{recording_id}/{session_uid}/{media_type}/"
-        f"{chunk_seq:06d}.{media_format}"
+    audio/video from colliding at ``chunk_seq=0``), under the meeting's storage prefix if any."""
+    session = recording_session_prefix(
+        user_id=user_id, recording_id=recording_id, session_uid=session_uid,
+        storage_prefix=storage_prefix,
     )
+    return f"{session}{media_type}/{chunk_seq:06d}.{media_format}"
 
 
 def master_storage_key(chunk_key: str, media_format: str) -> str:
@@ -160,10 +207,11 @@ def master_storage_key(chunk_key: str, media_format: str) -> str:
 # folding would make a "recording" appear in ``GET /recordings`` for every meeting the user never
 # asked to record, carrying a media_files entry no player can open.
 #
-# Its keyspace is TOP-LEVEL ``signal/`` rather than a ``signal/`` folder nested inside a recording's
+# Its keyspace is a ``signal/`` root of its own (top-level, or directly under a meeting's storage
+# prefix: ``org/<uuid>/signal/``) rather than a ``signal/`` folder nested inside a recording's
 # prefix. That is the janitor's constraint, not an aesthetic one: the budget sweep lists every tape
 # in the bucket on a timer, and a nested layout would force it to page through every recording chunk
-# object in the deployment to find them. A top-level prefix keeps the sweep O(tapes).
+# object in the deployment to find them. A ``signal/`` root per prefix keeps the sweep O(tapes).
 _SIGNAL_PREFIX = "signal"
 SIGNAL_ROOT_PREFIX = f"{_SIGNAL_PREFIX}/"
 # The files one bot session leaves: the frame/hint tape, the STT round-trip sidecar, the Teams
@@ -198,21 +246,24 @@ SIGNAL_TAPE_PART_FORMATS = {"botlog": "txt"}
 SIGNAL_PROMOTED_MARKER = "PROMOTED"
 
 
-def signal_tape_prefix(*, user_id: int, meeting_id: int, session_uid: str) -> str:
+def signal_tape_prefix(*, user_id: int, meeting_id: int, session_uid: str,
+                       storage_prefix: Optional[str] = None) -> str:
     """The prefix holding ONE bot session's tape (both parts + any promotion marker).
 
     Keyed by the SESSION, not by a recording id: a tape exists for meetings that were never
     recorded, so there is often no recording to hang it off, and minting a synthetic recording id
     would only create a second identifier for the same thing. ``meeting_id`` is the join back to the
     meeting row; ``session_uid`` (the bot's connectionId) is what a curator actually looks up.
+    A meeting with a storage prefix keeps its tapes under ``{prefix}/signal/…``.
     """
-    return f"{_SIGNAL_PREFIX}/{user_id}/{meeting_id}/{session_uid}/"
+    return _prefixed(storage_prefix, f"{_SIGNAL_PREFIX}/{user_id}/{meeting_id}/{session_uid}/")
 
 
 def signal_tape_key(*, user_id: int, meeting_id: int, session_uid: str, part: str,
-                    media_format: str = "jsonl") -> str:
+                    media_format: str = "jsonl", storage_prefix: Optional[str] = None) -> str:
     """The object key for one tape part. ``part`` MUST be in ``SIGNAL_TAPE_PARTS``."""
     if part not in SIGNAL_TAPE_PARTS:
         raise ValueError(f"unknown signal tape part {part!r}; known: {list(SIGNAL_TAPE_PARTS)}")
-    prefix = signal_tape_prefix(user_id=user_id, meeting_id=meeting_id, session_uid=session_uid)
+    prefix = signal_tape_prefix(user_id=user_id, meeting_id=meeting_id, session_uid=session_uid,
+                                storage_prefix=storage_prefix)
     return f"{prefix}{part}.{media_format}"

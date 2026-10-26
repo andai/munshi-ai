@@ -279,3 +279,135 @@ def test_admin_client_refuses_a_token_with_other_scopes() -> None:
 def test_minted_values_do_not_show_the_key_in_their_repr() -> None:
     minted = principals.Minted(platform_user_id=1, token_id=2, key="tok_secret_value")
     assert "tok_secret_value" not in repr(minted)
+
+
+# ─── the principal's platform settings: storage prefix, tapes off, bot cap ───────────────────────
+
+
+def expected_patch(org_id: uuid.UUID, cap: int) -> dict:
+    return {
+        "data": {
+            "storage_prefix": f"org/{org_id}",
+            "diagnostics": {"capture_signal": False},
+        },
+        "max_concurrent_bots": cap,
+    }
+
+
+def test_a_new_principal_gets_the_org_prefix_tapes_off_and_the_cap(
+    harness: Harness, app_engine: Engine
+) -> None:
+    default = new_org(harness, app_engine)
+    custom = new_org(harness, app_engine, max_concurrent_bots=7)
+    assert harness.admin_api.patches == [
+        (default.platform_user_id, expected_patch(default.org_id, 3)),
+        (custom.platform_user_id, expected_patch(custom.org_id, 7)),
+    ]
+    # The PATCH follows the user and its key, before anything is stored.
+    calls = [c for c in harness.admin_api.calls if c[1].startswith("/admin/users")]
+    assert [m for m, _ in calls[:3]] == ["POST", "POST", "PATCH"]
+
+
+def test_bootstrap_applies_the_configured_cap(fresh_app_engine: Engine) -> None:
+    harness = make_harness(fresh_app_engine, ANDAI_ORG_MAX_CONCURRENT_BOTS="5")
+    response = harness.client().post(
+        "/api/v1/bootstrap", json={"email": "cap@example.com", "org_name": "Capped"}
+    )
+    assert response.status_code in (200, 201), response.text
+    [(user_id, body)] = harness.admin_api.patches
+    assert body["max_concurrent_bots"] == 5
+    assert body["data"]["storage_prefix"].startswith("org/")
+
+
+def test_a_failed_settings_patch_creates_no_org_and_revokes_the_key(
+    harness: Harness, app_engine: Engine, superuser_engine: Engine
+) -> None:
+    name = f"Unconfigured {uuid.uuid4().hex[:8]}"
+    harness.admin_api.fail.add("update user")
+
+    with pytest.raises(PlatformAdminError, match="update user answered 500"):
+        new_org(harness, app_engine, name=name)
+
+    assert org_count(superuser_engine, name) == 0
+    assert harness.admin_api.tokens == {}
+
+
+def _unconfigured_orgs(harness: Harness, engine: Engine, n: int) -> list:
+    """Orgs whose principals exist but carry no platform settings (as orgs made before
+    configuration existed do)."""
+    created = [new_org(harness, engine) for _ in range(n)]
+    harness.admin_api.patches.clear()
+    harness.admin_api.records.clear()
+    return created
+
+
+def test_sync_configures_every_existing_principal_once_and_is_idempotent(
+    fresh_app_engine: Engine,
+) -> None:
+    harness = make_harness(fresh_app_engine)
+    a, b = _unconfigured_orgs(harness, fresh_app_engine, 2)
+    admin = harness.services.platform_admin
+
+    first = principals.sync(fresh_app_engine, admin, max_concurrent_bots=4)
+    assert first == principals.SyncResult(orgs=2, configured=2, failed=0)
+    assert sorted(harness.admin_api.patches) == sorted([
+        (a.platform_user_id, expected_patch(a.org_id, 4)),
+        (b.platform_user_id, expected_patch(b.org_id, 4)),
+    ])
+    records = {k: dict(v) for k, v in harness.admin_api.records.items()}
+
+    second = principals.sync(fresh_app_engine, admin, max_concurrent_bots=4)
+    assert second == first
+    assert harness.admin_api.records == records
+    assert records[a.platform_user_id] == {
+        "data": expected_patch(a.org_id, 4)["data"], "max_concurrent_bots": 4,
+    }
+
+
+def test_sync_runs_as_the_app_role_without_an_org_context(fresh_app_engine: Engine) -> None:
+    harness = make_harness(fresh_app_engine)
+    a, b = _unconfigured_orgs(harness, fresh_app_engine, 2)
+    with fresh_app_engine.connect() as conn:
+        assert conn.execute(text("SELECT current_user")).scalar_one() == "andai_app"
+    assert set(principals.org_ids_with_principal(fresh_app_engine)) == {a.org_id, b.org_id}
+    with transaction(fresh_app_engine) as tx:
+        assert tx.execute(text("SELECT count(*) FROM platform_principals")).scalar_one() == 0
+
+
+def test_sync_counts_a_failing_org_and_carries_on(fresh_app_engine: Engine) -> None:
+    harness = make_harness(fresh_app_engine)
+    _unconfigured_orgs(harness, fresh_app_engine, 2)
+    harness.admin_api.fail.add("update user")
+    result = principals.sync(fresh_app_engine, harness.services.platform_admin,
+                             max_concurrent_bots=3)
+    assert result == principals.SyncResult(orgs=2, configured=0, failed=2)
+
+
+def test_principals_sync_command_prints_counts_and_never_a_key(
+    fresh_app_engine: Engine, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from andai_core.__main__ import main
+
+    harness = make_harness(fresh_app_engine)
+    _unconfigured_orgs(harness, fresh_app_engine, 2)
+    code = main(["principals-sync"], engine=fresh_app_engine, admin=harness.services.platform_admin)
+    out = capsys.readouterr()
+    assert code == 0, out.err
+    assert out.out.strip() == "principals-sync: 2 orgs with a principal, 2 configured, 0 failed"
+    for minted in harness.admin_api.tokens.values():
+        assert minted["token"] not in out.out + out.err
+    assert FakeAdminApi.ADMIN_KEY not in out.out + out.err
+
+    harness.admin_api.fail.add("update user")
+    assert main(["principals-sync"], engine=fresh_app_engine,
+                admin=harness.services.platform_admin) == 1
+
+
+def test_admin_client_update_user_sends_the_patch() -> None:
+    fake = FakeAdminApi()
+    client = fake.client()
+    user_id = client.ensure_user("someone@example.test")
+    client.update_user(user_id, data={"storage_prefix": "org/x"}, max_concurrent_bots=2)
+    assert fake.calls[-1] == ("PATCH", f"/admin/users/{user_id}")
+    assert fake.patches == [(user_id, {"data": {"storage_prefix": "org/x"},
+                                       "max_concurrent_bots": 2})]

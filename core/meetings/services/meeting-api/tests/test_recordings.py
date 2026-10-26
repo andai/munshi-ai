@@ -646,3 +646,30 @@ def test_a_persisted_path_outside_the_owners_namespace_is_never_deleted():
 
     assert mine in keys
     assert theirs not in keys, "a foreign-owner path must never enter the delete set"
+
+
+ORG_PREFIX = "org/3f2b8c1e-9a4d-4e7f-8b21-5c6d7e8f9a0b"
+
+
+async def test_prefixed_meeting_full_read_path_serves_the_prefixed_master():
+    """A meeting with ``data.storage_prefix`` keeps chunks and master under it, and the player path
+    (GET /recordings -> /master -> /raw) reads the bytes back from there."""
+    repo = InMemoryRecordingRepo()
+    repo.seed(meeting_id=MEETING_ID, user_id=USER, session_uid=SESSION_UID,
+              storage_prefix=ORG_PREFIX)
+    storage = InMemoryStorage()
+    parts = [_counting_wav(k) for k in range(3)]
+    for k, part in enumerate(parts):
+        receipt = await upload_chunk(
+            repo, storage, token_meeting_id=MEETING_ID, session_uid=SESSION_UID,
+            data=part, media_type="audio", media_format="wav", chunk_seq=k, is_final=k == 2,
+        )
+        assert receipt["storage_path"].startswith(f"{ORG_PREFIX}/recordings/{USER}/")
+    client = _client_for(repo, storage)
+    rid = client.get("/recordings", headers=_HDRS).json()["recordings"][0]["id"]
+    master = client.get(f"/recordings/{rid}/master?type=audio", headers=_HDRS).json()
+    assert master["storage_path"].startswith(f"{ORG_PREFIX}/recordings/{USER}/")
+    raw = client.get(master["raw_url"], headers=_HDRS)
+    assert raw.status_code == 200, raw.text
+    assert raw.content == build_recording_master(parts, "wav")
+    assert all(k.startswith(f"{ORG_PREFIX}/") for k in storage.blobs)

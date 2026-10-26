@@ -54,6 +54,12 @@ class Storage(Protocol):
         """
         ...
 
+    async def list_children(self, prefix: str) -> list[str]:
+        """The immediate "folders" under ``prefix`` (``prefix + name + "/"``), sorted — a
+        delimiter listing that never pages through the objects inside them. The tape janitor uses
+        it to find each ``org/<uuid>/`` storage prefix without listing that org's recordings."""
+        ...
+
     async def delete(self, key: str) -> None:
         """Remove ONE object. The only destructive operation on this port, used solely by the
         captured-signal budget janitor — stated here rather than reached for through the concrete
@@ -89,13 +95,21 @@ class RecordingRepo(Protocol):
         """The ``user_id`` that owns ``meeting_id`` — used to scope ``GET /recordings`` listing."""
         ...
 
+    async def storage_prefix_of(self, meeting_id: int) -> Optional[str]:
+        """The meeting's ``data.storage_prefix`` (``org/<uuid>``), or ``None`` when it has none.
+
+        Every object key written for the meeting starts with it. It is read from the meeting row,
+        which took it from the owner's identity record at spawn — never from an upload request."""
+        ...
+
     async def prepare_recording_deletion(
         self, user_id: int, recording_id: int
     ) -> Optional[dict]:
         """Lock and mark one owner-scoped recording deletion-pending while retaining its paths.
 
         Returns ``None`` for unknown/unowned and ``{"error": "conflict"}`` for a non-terminal
-        meeting. The pending marker prevents ``continue_meeting`` from reopening the terminal row
+        meeting. The returned recording carries the meeting's ``storage_prefix`` (``None`` when
+        unset) so deletion lists the right keyspace; that key is not written back. The pending marker prevents ``continue_meeting`` from reopening the terminal row
         while object deletion is in flight.
         """
         ...

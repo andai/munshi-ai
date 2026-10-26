@@ -346,3 +346,84 @@ def test_bootstrap_inserts_org_and_owner_after_setting_org_id(
     with pytest.raises(ProgrammingError, match=RLS_ERROR):
         with transaction(app_engine, org_id=uuid.uuid4()) as tx:
             tx.add(Org(id=uuid.uuid4(), name="Wrong context", slug=f"y-{uuid.uuid4().hex}"))
+
+
+# ─── cross-org listing of principal org ids (migration 0003) ──────────────────────────────────────
+
+
+def test_principal_org_ids_lists_every_org_while_the_table_stays_hidden(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    with transaction(app_engine) as tx:  # andai_app, no app.org_id
+        listed = set(tx.scalars(text("SELECT andai_principal_org_ids()")))
+        direct = tx.execute(text("SELECT count(*) FROM platform_principals")).scalar_one()
+    assert {org_a.org_id, org_b.org_id} <= listed
+    assert direct == 0
+
+
+def test_principal_org_ids_reveals_org_ids_only(superuser_engine: Engine) -> None:
+    with superuser_engine.connect() as conn:
+        fn = conn.execute(
+            text(
+                "SELECT p.prosecdef, r.rolname, p.proconfig, pg_get_function_result(p.oid),"
+                " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                " FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner"
+                " WHERE p.proname = 'andai_principal_org_ids'"
+            )
+        ).one()
+        columns = {
+            column: conn.execute(
+                text("SELECT has_column_privilege('andai_scan', 'platform_principals', :c,"
+                     " 'SELECT')"),
+                {"c": column},
+            ).scalar_one()
+            for column in ("org_id", "platform_user_id", "key_ciphertext", "key_id")
+        }
+        other_tables = conn.execute(
+            text(
+                "SELECT count(*) FROM pg_tables t WHERE t.schemaname = 'public' AND ("
+                " has_table_privilege('andai_scan', format('%I.%I', t.schemaname, t.tablename),"
+                "   'SELECT, INSERT, UPDATE, DELETE'))"
+            )
+        ).scalar_one()
+        can_create = conn.execute(
+            text("SELECT has_schema_privilege('andai_scan', 'public', 'CREATE')")
+        ).scalar_one()
+    assert fn[0] is True and fn[1] == "andai_scan"
+    assert fn[2] == ["search_path=public, pg_temp"]
+    assert fn[3] == "SETOF uuid"
+    assert (fn[4], fn[5]) == (False, True)
+    assert columns == {
+        "org_id": True, "platform_user_id": False, "key_ciphertext": False, "key_id": False
+    }
+    assert other_tables == 0
+    assert can_create is False
+
+
+def test_scan_role_cannot_log_in(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb"
+                    " FROM pg_roles WHERE rolname = 'andai_scan'"
+                )
+            ).one()
+    finally:
+        engine.dispose()
+    assert tuple(row) == (False, False, False, False, False)
+    scan = create_engine(migrated.url("andai_scan", "anything"))
+    try:
+        with pytest.raises(Exception, match="(?i)not permitted to log in|password authentication"):
+            with scan.connect():
+                pass
+    finally:
+        scan.dispose()
+
+
+def test_app_role_cannot_call_the_scan_role_directly(app_engine: Engine) -> None:
+    with pytest.raises(ProgrammingError):
+        with transaction(app_engine) as tx:
+            tx.execute(text("SET ROLE andai_scan"))

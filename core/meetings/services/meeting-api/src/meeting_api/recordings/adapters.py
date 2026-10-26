@@ -126,6 +126,26 @@ class S3Storage:
                 )
         return sorted(out, key=lambda o: o["key"])
 
+    async def list_children(self, prefix: str) -> list[str]:
+        """Common prefixes one level below ``prefix`` (``Delimiter="/"``), paginated to exhaustion."""
+        out: list[str] = []
+        token: Optional[str] = None
+        while True:
+            kw = {"Bucket": self._bucket, "Prefix": prefix, "Delimiter": "/"}
+            if token is not None:
+                kw["ContinuationToken"] = token
+            resp = await self._run(self._c().list_objects_v2, **kw)
+            out.extend(p["Prefix"] for p in resp.get("CommonPrefixes", []) if p.get("Prefix"))
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+            if not token:
+                raise RuntimeError(
+                    f"list_objects_v2 reported IsTruncated with no NextContinuationToken "
+                    f"(prefix={prefix!r}); prefix listing may be incomplete"
+                )
+        return sorted(out)
+
     async def delete(self, key: str) -> None:
         await self._run(self._c().delete_object, Bucket=self._bucket, Key=key)
 
@@ -202,6 +222,16 @@ class SqlAlchemyRecordingRepo:
             m = (await db.execute(select(Meeting).where(Meeting.id == meeting_id))).scalars().first()
             return m.user_id if m else None
 
+    async def storage_prefix_of(self, meeting_id):
+        from sqlalchemy import select
+
+        from ..sessions.models import Meeting
+
+        async with self._session_factory() as db:
+            m = (await db.execute(select(Meeting).where(Meeting.id == meeting_id))).scalars().first()
+            data = m.data if m is not None and isinstance(m.data, dict) else {}
+            return data.get("storage_prefix") or None
+
     async def prepare_recording_deletion(self, user_id, recording_id):
         from sqlalchemy import select
         from sqlalchemy.orm.attributes import flag_modified
@@ -229,7 +259,7 @@ class SqlAlchemyRecordingRepo:
                 meeting.data = data
                 flag_modified(meeting, "data")
                 await db.commit()
-                return prepared
+                return {**prepared, "storage_prefix": data.get("storage_prefix") or None}
             return None
 
     async def list_meeting_recordings(self, user_id):

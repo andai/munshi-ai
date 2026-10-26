@@ -25,6 +25,7 @@ Public surface:
 from __future__ import annotations
 
 from .jsonb import (
+    InvalidStoragePrefix,
     SIGNAL_PROMOTED_MARKER,
     SIGNAL_ROOT_PREFIX,
     SIGNAL_TAPE_PARTS,
@@ -33,6 +34,7 @@ from .jsonb import (
     chunk_storage_key,
     master_storage_key,
     new_recording_numeric_id,
+    normalize_storage_prefix,
     signal_tape_key,
     signal_tape_prefix,
 )
@@ -46,7 +48,12 @@ from .service import (
     upload_chunk,
     upload_signal_tape,
 )
-from .signal_janitor import DEFAULT_BUDGET_BYTES, DEFAULT_MIN_AGE_S, sweep_signal_tapes
+from .signal_janitor import (
+    DEFAULT_BUDGET_BYTES,
+    DEFAULT_MIN_AGE_S,
+    signal_tape_roots,
+    sweep_signal_tapes,
+)
 
 __all__ = [
     "build_router",
@@ -56,6 +63,9 @@ __all__ = [
     "chunk_storage_key",
     "master_storage_key",
     "new_recording_numeric_id",
+    # per-meeting object-storage prefix (org/<uuid>), snapshotted from identity at spawn.
+    "InvalidStoragePrefix",
+    "normalize_storage_prefix",
     "RecordingRepo",
     "Storage",
     "SessionNotFound",
@@ -70,6 +80,7 @@ __all__ = [
     "signal_tape_key",
     "signal_tape_prefix",
     "sweep_signal_tapes",
+    "signal_tape_roots",
     "DEFAULT_BUDGET_BYTES",
     "DEFAULT_MIN_AGE_S",
 ]

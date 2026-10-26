@@ -25,7 +25,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from .ports import RedisBus, TranscriptStore
+from .ports import RedisBus, TranscriptStore, recordings_for_artifact_deletion
 
 log = logging.getLogger("meeting_api.collector.adapters")
 
@@ -1631,7 +1631,7 @@ class SqlAlchemyTranscriptStore:
                 await db.commit()
             return {
                 "meeting_id": meeting.id,
-                "recordings": list(data.get("recordings") or []),
+                "recordings": recordings_for_artifact_deletion(data),
                 "already_deleted": already_deleted,
             }
 
