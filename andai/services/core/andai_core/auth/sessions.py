@@ -5,8 +5,10 @@ Secure outside `ANDAI_ENV=dev`); the `sessions` table holds only its SHA-256. A 
 the first of: its absolute expiry (`expires_at`, set at login), `idle` without a request
 (`last_seen_at`), logout, or `revoke_all` (password reset, disabling the user).
 
-`stage` says how far the login got: `full` is a complete login; the two-factor stages
-(`mfa_pending`, `enroll_required`) admit only their own routes.
+`stage` says how far the login got: `full` is a complete login; the two-factor stages admit only
+their own routes (`stage_gate.py`). An `mfa_pending` session (password right, code not yet
+entered) lives at most 5 minutes; an `enroll_required` session (the org requires two-factor login
+and the user has not set it up) has the ordinary lifetimes.
 
 `sessions` and `users` are global tables (no row-level security); every query here filters by
 token hash or user id.
@@ -29,6 +31,10 @@ from andai_core.settings import Settings
 
 COOKIE_NAME = "andai_session"
 FULL = "full"
+MFA_PENDING = "mfa_pending"
+ENROLL_REQUIRED = "enroll_required"
+STAGES = (MFA_PENDING, ENROLL_REQUIRED, FULL)
+PENDING_TTL = timedelta(minutes=5)
 # `last_seen_at` is written at most this often, so a busy session is not an UPDATE per request.
 TOUCH_INTERVAL = timedelta(seconds=60)
 
@@ -77,6 +83,9 @@ def create(
     user_agent: str | None = None,
 ) -> str:
     """Insert a new session and return its token (the only time the token exists in clear)."""
+    if stage not in STAGES:
+        raise ValueError(f"unknown session stage {stage!r}")
+    lifetime = min(lifetimes.absolute, PENDING_TTL) if stage == MFA_PENDING else lifetimes.absolute
     token, token_hash = new_token()
     tx.add(
         Session(
@@ -87,7 +96,7 @@ def create(
             stage=stage,
             created_at=now,
             last_seen_at=now,
-            expires_at=now + lifetimes.absolute,
+            expires_at=now + lifetime,
             ip=_inet(ip),
             user_agent=None if user_agent is None else user_agent[:512],
         )
@@ -139,6 +148,16 @@ def revoke_id(tx: Tx, session_id: uuid.UUID) -> None:
 def revoke_all(tx: Tx, user_id: uuid.UUID) -> int:
     """End every session of `user_id`; returns how many there were."""
     result = tx.execute(delete(Session).where(Session.user_id == user_id))
+    return result.rowcount
+
+
+def revoke_in_org(tx: Tx, org_id: uuid.UUID, user_ids: list[uuid.UUID]) -> int:
+    """End the sessions of `user_ids` that are signed in to `org_id`; returns how many."""
+    if not user_ids:
+        return 0
+    result = tx.execute(
+        delete(Session).where(Session.org_id == org_id, Session.user_id.in_(user_ids))
+    )
     return result.rowcount
 
 

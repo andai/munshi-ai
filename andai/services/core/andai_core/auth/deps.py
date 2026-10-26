@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session as Tx
 from andai_core.auth import sessions
 from andai_core.auth.clientip import ClientIpResolver
 from andai_core.auth.ratelimit import Limiter
+from andai_core.crypto import Keyring
 from andai_core.db.session import transaction
 from andai_core.mail import Mailer
 from andai_core.settings import Settings
@@ -35,8 +36,10 @@ class Services:
     engine: Engine
     login_limiter: Limiter
     reset_limiter: Limiter
+    mfa_limiter: Limiter
     mailer: Mailer
     ip_resolver: ClientIpResolver
+    keyring: Keyring
     clock: Callable[[], datetime] = utcnow
 
     @property

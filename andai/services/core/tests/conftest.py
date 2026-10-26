@@ -319,7 +319,9 @@ class Harness:
 def make_harness(engine: Engine, **settings: str) -> Harness:
     from andai_core.auth.clientip import ClientIpResolver
     from andai_core.auth.deps import Services
+    from andai_core.auth.mfa import MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS
     from andai_core.auth.ratelimit import MemoryLimiter
+    from andai_core.crypto import KEY_BYTES, Keyring
     from andai_core.mail import MemoryMailer
 
     clock = Clock()
@@ -330,8 +332,10 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
         engine=engine,
         login_limiter=MemoryLimiter(),
         reset_limiter=MemoryLimiter(),
+        mfa_limiter=MemoryLimiter(MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS),
         mailer=mailer,
         ip_resolver=ClientIpResolver(config.trusted_proxies),
+        keyring=Keyring(os.urandom(KEY_BYTES)),
         clock=clock,
     )
     return Harness(services=services, mailer=mailer, clock=clock)
@@ -473,3 +477,88 @@ def mailpit_messages(api_url: str, to: str, *, expect: int = 1, timeout: float =
             return found
         time.sleep(0.3)
     return found
+
+
+# ─── two-factor helpers ───────────────────────────────────────────────────────────────────────────
+
+LOGIN_PATH = "/api/v1/auth/login"
+MFA_VERIFY_PATH = "/api/v1/auth/mfa/verify"
+MFA_PATH = "/api/v1/me/mfa"
+
+
+def totp_code(totp, clock: Clock, steps: int = 0) -> str:
+    """The code of `totp` at the harness clock, `steps` 30-second steps away."""
+    return totp.generate_otp(totp.timecode(clock()) + steps)
+
+
+def enroll(client, clock: Clock):
+    """Enroll the signed-in user of `client`; returns (pyotp.TOTP, recovery codes). The clock moves
+    on one step afterwards, so the confirming code's step is spent."""
+    import pyotp
+
+    start = client.post(MFA_PATH)
+    assert start.status_code == 200, start.text
+    totp = pyotp.parse_uri(start.json()["otpauth_uri"])
+    confirm = client.post(f"{MFA_PATH}/confirm", json={"code": totp_code(totp, clock)})
+    assert confirm.status_code == 200, confirm.text
+    clock.advance(seconds=30)
+    return totp, confirm.json()["recovery_codes"]
+
+
+def audit_actions(superuser_engine: Engine, user_id: uuid.UUID) -> list[str]:
+    """The audit actions whose target is `user_id`, oldest first."""
+    with superuser_engine.connect() as conn:
+        return list(
+            conn.execute(
+                text("SELECT action FROM audit_events WHERE target = :t ORDER BY at, action"),
+                {"t": f"user:{user_id}"},
+            ).scalars()
+        )
+
+
+def staged_session(engine: Engine, member: Member, stage: str, clock: Clock) -> str:
+    """A session token in `stage` for `member`, inserted directly (not through login)."""
+    from datetime import timedelta
+
+    from andai_core.auth import sessions
+    from andai_core.db.session import transaction
+
+    lifetimes = sessions.Lifetimes(idle=timedelta(hours=12), absolute=timedelta(days=7))
+    with transaction(engine) as tx:
+        return sessions.create(
+            tx,
+            user_id=member.user_id,
+            org_id=member.org_id,
+            stage=stage,
+            lifetimes=lifetimes,
+            now=clock(),
+        )
+
+
+def sign_in(harness: Harness, member: Member, totp=None):
+    """A client with a `full` session for `member` (through the code step if `totp` is given)."""
+    client = harness.client()
+    stage = client.post(
+        LOGIN_PATH, json={"email": member.email, "password": member.password}
+    ).json()["stage"]
+    if totp is not None:
+        assert stage == "mfa_pending"
+        verified = client.post(MFA_VERIFY_PATH, json={"code": totp_code(totp, harness.clock)})
+        assert verified.json() == {"stage": "full"}
+        harness.clock.advance(seconds=30)
+    else:
+        assert stage == "full"
+    return client
+
+
+def enrolled_member(harness: Harness, engine: Engine, **kwargs):
+    member = new_member(engine, **kwargs)
+    totp, _ = enroll(sign_in(harness, member), harness.clock)
+    return member, totp
+
+
+def session_count(superuser_engine: Engine, user_id: uuid.UUID) -> int:
+    with superuser_engine.connect() as conn:
+        return conn.execute(
+            text("SELECT count(*) FROM sessions WHERE user_id = :u"), {"u": user_id}
+        ).scalar_one()
