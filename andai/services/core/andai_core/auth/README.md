@@ -25,6 +25,7 @@ Human authentication for andai-core, mounted under `/api/v1`:
 - `resets.py` — 30-minute single-use reset links; confirming one ends every session.
 - `invites.py` — invite tokens and mails; accepting sets the password, activates the user and adds
   the membership.
-- `bootstrap.py` — the first org and owner, only while no user exists.
+- `bootstrap.py` — the first org (through `org.service.create_org`, with its platform principal)
+  and owner, only while no user exists.
 - `links.py` — address validation and portal links; `tokens.py` — random tokens and their stored
   hashes; `users.py` — disabling a user.

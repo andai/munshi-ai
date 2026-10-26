@@ -301,11 +301,78 @@ class Clock:
         self.now += timedelta(**delta)
 
 
+class FakeAdminApi:
+    """The meeting platform's admin-api, in memory, behind an `httpx.MockTransport`: the calls
+    `HttpPlatformAdmin` makes, with the real service's answers (create user is idempotent by email
+    with 201/200; tokens are minted per call and revocable). `fail` names calls to answer 500."""
+
+    ADMIN_KEY = "test-admin-key-" + secrets.token_hex(8)
+
+    def __init__(self) -> None:
+        self.users: dict[str, int] = {}
+        self.tokens: dict[int, dict] = {}
+        self.calls: list[tuple[str, str]] = []
+        self.fail: set[str] = set()
+        self._ids = iter(range(1000, 10**9))
+
+    def handler(self, request):
+        import json
+        import re
+
+        import httpx
+
+        path = request.url.path
+        self.calls.append((request.method, path))
+        if request.headers.get("x-admin-api-key") != self.ADMIN_KEY:
+            return httpx.Response(403, json={"detail": "Invalid or missing admin token."})
+        if request.method == "POST" and path == "/admin/users":
+            if "create user" in self.fail:
+                return httpx.Response(500, json={"detail": "boom"})
+            email = json.loads(request.content)["email"].lower()
+            created = email not in self.users
+            if created:
+                self.users[email] = next(self._ids)
+            return httpx.Response(
+                201 if created else 200, json={"id": self.users[email], "email": email}
+            )
+        if request.method == "POST" and re.fullmatch(r"/admin/users/\d+/tokens", path):
+            if "mint token" in self.fail:
+                return httpx.Response(500, json={"detail": "boom"})
+            user_id = int(path.split("/")[3])
+            if user_id not in self.users.values():
+                return httpx.Response(404, json={"detail": "User not found"})
+            scopes = request.url.params["scopes"].split(",")
+            token_id = next(self._ids)
+            token = f"vxa_bot_{secrets.token_urlsafe(24)}"
+            self.tokens[token_id] = {"token": token, "user_id": user_id, "scopes": scopes}
+            return httpx.Response(
+                201, json={"id": token_id, "token": token, "user_id": user_id, "scopes": scopes}
+            )
+        if request.method == "DELETE" and path.startswith("/admin/tokens/"):
+            if self.tokens.pop(int(path.rsplit("/", 1)[1]), None) is None:
+                return httpx.Response(404, json={"detail": "Token not found"})
+            return httpx.Response(204)
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    def client(self):
+        import httpx
+        from pydantic import SecretStr
+
+        from andai_core.platform.admin_client import HttpPlatformAdmin
+
+        return HttpPlatformAdmin(
+            "http://admin-api.test",
+            SecretStr(self.ADMIN_KEY),
+            transport=httpx.MockTransport(self.handler),
+        )
+
+
 @dataclass
 class Harness:
     services: object
     mailer: object
     clock: Clock
+    admin_api: FakeAdminApi
 
     def client(self, ip: str = CLIENT_IP, origin: str | None = PORTAL_ORIGIN):
         from fastapi.testclient import TestClient
@@ -326,6 +393,7 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
 
     clock = Clock()
     mailer = MemoryMailer()
+    admin_api = FakeAdminApi()
     config = make_settings(**settings)
     services = Services(
         settings=config,
@@ -336,9 +404,10 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
         mailer=mailer,
         ip_resolver=ClientIpResolver(config.trusted_proxies),
         keyring=Keyring(os.urandom(KEY_BYTES)),
+        platform_admin=admin_api.client(),
         clock=clock,
     )
-    return Harness(services=services, mailer=mailer, clock=clock)
+    return Harness(services=services, mailer=mailer, clock=clock, admin_api=admin_api)
 
 
 @pytest.fixture

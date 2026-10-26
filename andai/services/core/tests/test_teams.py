@@ -80,7 +80,8 @@ def test_putting_members_replaces_the_team(
     org = role_org(app_engine)
     owner = sign_in(harness, org.owner)
 
-    response = owner.put(members_path(org.team), json={"members": [entry(org.admin.user_id, "lead")]})
+    body = {"members": [entry(org.admin.user_id, "lead")]}
+    response = owner.put(members_path(org.team), json=body)
 
     assert response.status_code == 200
     assert team_rows(superuser_engine, org.team) == {(str(org.admin.user_id), "lead")}
@@ -128,7 +129,8 @@ def test_team_members_must_belong_to_the_org(
         assert outsider.email not in response.text
     duplicate = {"members": [entry(org.lead.user_id, "lead"), entry(org.lead.user_id, "member")]}
     assert admin.put(members_path(org.team), json=duplicate).status_code == 422
-    assert admin.put(members_path(org.team), json={"members": [{"user_id": "x"}]}).status_code == 422
+    malformed = {"members": [{"user_id": "x"}]}
+    assert admin.put(members_path(org.team), json=malformed).status_code == 422
 
     assert team_rows(superuser_engine, org.team) == before
 

@@ -23,6 +23,7 @@ from andai_core.auth.ratelimit import Limiter
 from andai_core.crypto import Keyring
 from andai_core.db.session import transaction
 from andai_core.mail import Mailer
+from andai_core.platform.admin_client import PlatformAdmin
 from andai_core.settings import Settings
 
 
@@ -40,6 +41,7 @@ class Services:
     mailer: Mailer
     ip_resolver: ClientIpResolver
     keyring: Keyring
+    platform_admin: PlatformAdmin
     clock: Callable[[], datetime] = utcnow
 
     @property

@@ -1,4 +1,4 @@
-"""Org administration: members, invites and teams.
+"""Org administration: creating an org, members, invites and teams.
 
 Every function runs in the caller's transaction, whose row-level-security context is the caller's
 org (`app.org_id`) and user (`app.user_id`). `users` is a global table, so people are always reached
@@ -14,15 +14,22 @@ Rules the routes rely on:
 * A team lead may change who is in their team, but not who leads it.
 
 Each change writes one audit event in the same transaction.
+
+`create_org` is the one way an org comes into being (bootstrap uses it): it provisions the org's
+platform principal through the admin-api first, then inserts the org, its owner membership and
+the sealed principal in one transaction, so an org never exists without its principal and a failed
+admin-api call creates nothing.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import Engine, delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as Tx
 
@@ -30,11 +37,24 @@ from andai_core import audit
 from andai_core.auth import users
 from andai_core.auth.invites import create_invite
 from andai_core.auth.tokens import hash_token
-from andai_core.db.models import Invite, OrgMembership, Team, TeamMembership, User, UserTotp
+from andai_core.crypto import Keyring
+from andai_core.db.models import (
+    Invite,
+    Org,
+    OrgMembership,
+    Team,
+    TeamMembership,
+    User,
+    UserTotp,
+)
+from andai_core.db.session import set_context, transaction
+from andai_core.platform import principals
+from andai_core.platform.admin_client import PlatformAdmin
 from andai_core.settings import Settings
 
 INVITE_ROLES = ("admin", "member")
 OWNER = "owner"
+MAX_ORG_NAME = 200
 
 
 class NotFound(Exception):
@@ -60,6 +80,96 @@ class Invited:
     role: str
     expires_at: datetime
     token: str  # mailed, never returned
+
+
+# ─── orgs ──────────────────────────────────────────────────────────────────────────────────────────
+
+
+class InvalidOrgName(ValueError):
+    """The org name is empty or too long."""
+
+
+@dataclass(frozen=True)
+class CreatedOrg:
+    org_id: uuid.UUID
+    owner_id: uuid.UUID
+    platform_user_id: int
+
+
+def slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug[:63].strip("-") or "org"
+
+
+def _insert_org(tx: Tx, org_id: uuid.UUID, name: str) -> None:
+    """Insert the org under its name's slug, or the slug plus the id's prefix if that is taken
+    (slugs are unique across orgs, which this transaction cannot see)."""
+    base = slugify(name)
+    for slug in (base, f"{base[:54]}-{org_id.hex[:8]}"):
+        try:
+            with tx.begin_nested():
+                tx.add(Org(id=org_id, name=name, slug=slug))
+                tx.flush()
+            return
+        except IntegrityError:
+            continue
+    raise Conflict("could not choose a unique address for this organisation")
+
+
+def create_org(
+    engine: Engine,
+    *,
+    name: str,
+    owner_email: str,
+    owner_display_name: str | None,
+    admin: PlatformAdmin,
+    keyring: Keyring,
+    now: datetime,
+    actor: uuid.UUID | None = None,
+    ip: str | None = None,
+    guard: Callable[[Tx], None] | None = None,
+    finish: Callable[[Tx, CreatedOrg], None] | None = None,
+) -> CreatedOrg:
+    """Create an org owned by `owner_email` (canonical; the user is created as `invited` if new)
+    with its platform principal, in one transaction.
+
+    `guard(tx)` runs first and may raise to refuse (bootstrap: only on an empty database);
+    `finish(tx, created)` runs last, before the commit (bootstrap: the owner's invite and mail).
+    The admin-api is called before anything is inserted; if anything after that fails, the minted
+    key is revoked and nothing is stored. Raises `PlatformAdminError` if the platform refuses."""
+    name = name.strip()
+    if not name or len(name) > MAX_ORG_NAME:
+        raise InvalidOrgName(f"the org name must be 1 to {MAX_ORG_NAME} characters")
+    minted: principals.Minted | None = None
+    try:
+        with transaction(engine) as tx:
+            if guard is not None:
+                guard(tx)
+            org_id = uuid.uuid4()
+            minted = principals.provision(admin, org_id)
+            set_context(tx, org_id=org_id)
+            _insert_org(tx, org_id, name)
+            owner_id = tx.scalar(select(User.id).where(User.email == owner_email))
+            if owner_id is None:
+                owner_id = uuid.uuid4()
+                display_name = (owner_display_name or "").strip() or owner_email.split("@")[0]
+                tx.add(User(id=owner_id, email=owner_email, display_name=display_name))
+                tx.flush()
+            tx.add(OrgMembership(org_id=org_id, user_id=owner_id, role=OWNER))
+            tx.flush()
+            if not principals.store(tx, keyring, org_id, minted, now):
+                raise Conflict("this organisation already has a platform principal")
+            audit.record(tx, org_id, actor, "platform_principal.provision", f"org:{org_id}", ip)
+            created = CreatedOrg(
+                org_id=org_id, owner_id=owner_id, platform_user_id=minted.platform_user_id
+            )
+            if finish is not None:
+                finish(tx, created)
+    except BaseException:
+        if minted is not None:
+            principals.discard(admin, minted)
+        raise
+    return created
 
 
 # ─── members ──────────────────────────────────────────────────────────────────────────────────────
