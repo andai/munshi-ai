@@ -20,7 +20,7 @@ env_file="$1"
 
 if [ ! -f "$env_file" ]; then
   echo "gen-secrets: $env_file does not exist." >&2
-  echo "  cp andai/deploy/compose/.env.example andai/deploy/compose/.env, fill the __OLLM_*__ values, retry." >&2
+  echo "  cp .env.example .env (repo root), fill the __OLLM_*__ values, retry." >&2
   exit 1
 fi
 case "$(basename "$env_file")" in

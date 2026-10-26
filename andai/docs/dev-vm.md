@@ -101,11 +101,11 @@ Never edit files in the VM checkout by hand: `vm.sh sync` fast-forwards it and f
 ## 5. Environment file
 
 ```bash
-cp andai/deploy/compose/.env.example andai/deploy/compose/.env
-chmod 600 andai/deploy/compose/.env
+cp .env.example .env
+chmod 600 .env
 ```
 
-Then edit `andai/deploy/compose/.env` **on the VM** and replace every `__OLLM_*__` placeholder:
+Then edit `.env` (repo root) **on the VM** and replace every `__OLLM_*__` placeholder:
 
 | Placeholder | Meaning |
 |---|---|
@@ -115,7 +115,7 @@ Then edit `andai/deploy/compose/.env` **on the VM** and replace every `__OLLM_*_
 | `__OLLM_CHAT_MODEL__` | Chat model id served on `/v1/chat/completions` (also the model allowlist). |
 | `__OLLM_AGENT_MODEL__` | Model id the agent harness requests on OLLM's Anthropic-compatible `/v1/messages` (must handle tool calls; may equal the chat model). |
 
-`grep -c __OLLM_ andai/deploy/compose/.env` must print `0`. Leave the secrets (`ADMIN_TOKEN`,
+`grep -v '^#' .env | grep -c __OLLM_` must print `0`. `.env.example` describes every other setting and names the containers that read it. Leave the secrets (`ADMIN_TOKEN`,
 `INTERNAL_API_SECRET`, …) empty: `make -C andai up` mints them. The file is git-ignored; never
 commit it.
 

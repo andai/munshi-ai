@@ -13,7 +13,7 @@
 #   - ANTHROPIC_BASE_URL defaults to an unroutable host, so a worker spawned without the OLLM value
 #     fails closed instead of falling back to api.anthropic.com. The runtime's spawn env overrides it.
 #
-# The runtime uses this image because AGENT_WORKER_IMAGE (andai/deploy/compose/.env) names it.
+# The runtime uses this image because AGENT_WORKER_IMAGE (the repo-root .env) names it.
 # VERSION (the repo's VERSION file) is passed by `make -C andai images`; there is no default, so the
 # base can never silently drift from the version this image is tagged with.
 ARG VERSION

@@ -4,7 +4,7 @@
  * real as content lands — "an artifact exists only when gate-green" (P9).
  * Usage: node scripts/gates.mjs [readme|isolation|isolation-py|exports|graph|graph-py|schema|
  *                                contract-version|config-contract|python|stack|node|health|access|
- *                                tracing|replay|telemetry|eval|licenses|compose|execution-env|
+ *                                tracing|replay|telemetry|eval|licenses|compose|execution-env|env-example|
  *                                lite-makefile|all]
  */
 import { readdirSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
@@ -794,6 +794,17 @@ function gateEval() {
   return true;
 }
 
+// gate:env-example — the repo-root .env.example (the whole stack's env template) lists every variable a
+// container interpolates, nothing that no container or tool reads, and every key's generated `# used by:`
+// line is current. The check is andai/scripts/env_example.py over `docker compose config --no-interpolate`
+// (`make -C andai env-check`); fix with `make -C andai env-example`.
+function gateEnvExample() {
+  try { execFileSync("make", ["-s", "--no-print-directory", "-C", join(ROOT, "andai"), "env-check"], { stdio: "pipe" }); }
+  catch (e) { return fail([`env-example:\n${errText(e).slice(-2000)}`]); }
+  console.log("  ✓ gate:env-example — root .env.example documents every container variable; used-by lines current");
+  return true;
+}
+
 // gate:execution-env (ADR-0020) — the execution-target registry conforms. Planning resolves every stage's
 // `Runs on:`/`Resources:` against this registry IN ADVANCE (the AGENTS.md rule); this gate is the mechanical
 // half: the committed template (deploy/execution-targets.example.json) MUST exist + conform to
@@ -1430,7 +1441,7 @@ function gateLiteMakefile() {
   return true;
 }
 
-const GATES = { readme: gateReadme, "lite-makefile": gateLiteMakefile, "docs-version": gateDocsVersion, dataflow: gateDataflow, isolation: gateIsolation, "isolation-py": gateIsolationPy, exports: gateExports, graph: gateGraph, "graph-py": gateGraphPy, schema: gateSchema, "contract-version": gateContractVersion, "config-contract": gateConfigContract, "db-schema": gateDbSchema, "db-budget": gateDbBudget, python: gatePython, stack: gateStack, node: gateNode, health: gateHealth, access: gateAccess, tracing: gateTracing, replay: gateReplay, telemetry: gateTelemetry, eval: gateEval, licenses: gateLicenses, "image-licenses": gateImageLicenses, "runtime-parity": gateRuntimeParity, compose: gateCompose, "execution-env": gateExecutionEnv, "test-isolation": gateTestIsolation, "arch-report": gateArchReport, parity: gateParity, "compose-stress": gateComposeStress, "compose-chaos": gateComposeChaos, "eval-baseline": gateEvalBaseline, "contract-conformance": gateContractConformance };
+const GATES = { readme: gateReadme, "lite-makefile": gateLiteMakefile, "docs-version": gateDocsVersion, dataflow: gateDataflow, isolation: gateIsolation, "isolation-py": gateIsolationPy, exports: gateExports, graph: gateGraph, "graph-py": gateGraphPy, schema: gateSchema, "contract-version": gateContractVersion, "config-contract": gateConfigContract, "db-schema": gateDbSchema, "db-budget": gateDbBudget, python: gatePython, stack: gateStack, node: gateNode, health: gateHealth, access: gateAccess, tracing: gateTracing, replay: gateReplay, telemetry: gateTelemetry, eval: gateEval, licenses: gateLicenses, "image-licenses": gateImageLicenses, "runtime-parity": gateRuntimeParity, compose: gateCompose, "execution-env": gateExecutionEnv, "env-example": gateEnvExample, "test-isolation": gateTestIsolation, "arch-report": gateArchReport, parity: gateParity, "compose-stress": gateComposeStress, "compose-chaos": gateComposeChaos, "eval-baseline": gateEvalBaseline, "contract-conformance": gateContractConformance };
 const which = process.argv[2] || "all";
 
 // `seal` (not a gate) — (re)freeze the current published contracts into contracts.seal.json.

@@ -68,9 +68,9 @@ endpoint you host (Whisper speech-to-text on `/v1/audio/transcriptions`, chat on
 ```bash
 git clone https://github.com/andai/munshi-ai.git
 cd munshi-ai
-cp andai/deploy/compose/.env.example andai/deploy/compose/.env
-# edit andai/deploy/compose/.env: replace every __OLLM_*__ placeholder with your endpoint,
-# API key and model ids
+cp .env.example .env && chmod 600 .env
+# edit .env: replace every __OLLM_*__ placeholder with your endpoint, API key and model ids
+# (.env.example documents every setting and which containers read it)
 make -C andai up       # generates secrets, pulls/builds images, starts everything, waits for health
 make -C andai health   # every service healthy?
 ```

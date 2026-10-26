@@ -6,7 +6,7 @@ OLLM STT route cannot be shown to be AND AI-hosted (D-21), switch STT to Munshi'
 unit in `deploy/transcription`. This is a documented option only: Phase 1 does not deploy it.
 
 Nothing in the andai overlay changes for this switch. It is three values in
-`andai/deploy/compose/.env` plus a separately deployed unit.
+`.env` (repo root) plus a separately deployed unit.
 
 ## What the unit is
 
@@ -54,7 +54,7 @@ Perimeter rules that apply here (PLAT-02, D-15):
 
 ## Point the stack at it
 
-In `andai/deploy/compose/.env` on the stack host:
+In `.env` (repo root) on the stack host:
 
 ```dotenv
 # base URL only; the bot client appends /v1/audio/transcriptions
