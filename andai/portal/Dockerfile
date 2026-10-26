@@ -19,9 +19,12 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
     PORT=3000 \
-    ANDAI_VERSION=dev
+    ANDAI_VERSION=dev \
+    ANDAI_CORE_URL=http://andai-core:8000
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
+# Rewrites X-Forwarded-For to the address the portal believes before Next sees a request.
+COPY --from=build --chown=node:node /app/lib/client-ip.cjs ./client-ip.cjs
 USER node
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "--require", "./client-ip.cjs", "server.js"]
