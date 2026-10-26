@@ -493,14 +493,14 @@ async def request_bot(
     # O-TEL-1 fixture collection, resolved from the SAME best-effort lookup (one hop, two readers).
     # Default ON: only an explicit false from identity stops the tape.
     capture_signal_enabled = _capture_signal_from_context(bot_context)
-    # Fourth reader: the object-storage prefix this meeting's recordings and tapes are written under.
-    storage_prefix = _storage_prefix_from_context(bot_context)
     # THE NAME THIS PERSON'S BOT SHOWS UP AS — third reader of the same one hop. Precedence is
     # auto-join's, unchanged: an explicit name on THIS request, then this person's default from
     # identity, then the deployment's (applied at `build_invocation` below). An explicit name wins
     # without identity being consulted about it at all — the answer could not change anything.
     if not bot_name:
         bot_name = _bot_name_from_context(bot_context)
+    # Fourth reader: the object-storage prefix this meeting's recordings and tapes are written under.
+    storage_prefix = _storage_prefix_from_context(bot_context)
     transcription_provider: Optional[str] = "none" if not transcribe_enabled else None
     if configured.get("url"):
         transcription_service_url = configured["url"]
