@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from andai_core.mail import Mail, MailError, SmtpMailer
 from conftest import (
     PASSWORD,
     PORTAL_ORIGIN,
+    AdminApiServer,
     Mailpit,
     link_token,
     mailpit_messages,
@@ -91,13 +93,20 @@ def test_unknown_address_gets_no_mail(mailpit: Mailpit, app_engine: Engine) -> N
 
 
 def test_cli_bootstrap_mails_the_owner_through_smtp(
-    mailpit: Mailpit, fresh_app_engine: Engine
+    mailpit: Mailpit, fresh_app_engine: Engine, admin_api_server: AdminApiServer
 ) -> None:
     owner = f"{uuid.uuid4().hex}@example.test"
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("ANDAI_", "SMTP_"))}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("ANDAI_", "SMTP_", "PLATFORM_"))
+    }
     env.update(
         ANDAI_DB_URL_APP=fresh_app_engine.url.render_as_string(hide_password=False),
         ANDAI_PORTAL_ORIGIN=PORTAL_ORIGIN,
+        ANDAI_KEK=base64.b64encode(os.urandom(32)).decode(),
+        PLATFORM_ADMIN_URL=admin_api_server.url,
+        PLATFORM_ADMIN_TOKEN=admin_api_server.fake.ADMIN_KEY,
         SMTP_HOST=mailpit.smtp_host,
         SMTP_PORT=str(mailpit.smtp_port),
     )
@@ -115,6 +124,10 @@ def test_cli_bootstrap_mails_the_owner_through_smtp(
     assert message["Subject"] == "Set your munshi.ai password for Smtp Org"
     token = link_token(message["Text"], "invite")
     assert token not in result.stdout + result.stderr
+    # The org's principal was provisioned over HTTP; its key appears in no output.
+    [minted] = admin_api_server.fake.tokens.values()
+    assert minted["scopes"] == ["bot", "tx"]
+    assert minted["token"] not in result.stdout + result.stderr
     harness = make_harness(fresh_app_engine)
     accepted = harness.client().post(
         "/api/v1/auth/invite/accept", json={"token": token, "password": PASSWORD}

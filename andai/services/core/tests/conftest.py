@@ -693,3 +693,50 @@ def served(app) -> set[tuple[str, str]]:
         for context in iter_route_contexts(app.routes)
         for method in context.methods or ()
     }
+
+
+@dataclass(frozen=True)
+class AdminApiServer:
+    url: str
+    fake: FakeAdminApi
+
+
+@pytest.fixture
+def admin_api_server() -> Iterator[AdminApiServer]:
+    """`FakeAdminApi` over real HTTP on a loopback port, for a CLI run in a subprocess."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import httpx
+
+    fake = FakeAdminApi()
+
+    class Handler(BaseHTTPRequestHandler):
+        def _serve(self) -> None:
+            length = int(self.headers.get("content-length") or 0)
+            request = httpx.Request(
+                self.command,
+                f"http://admin-api.test{self.path}",
+                headers=dict(self.headers.items()),
+                content=self.rfile.read(length) if length else b"",
+            )
+            response = fake.handler(request)
+            self.send_response(response.status_code)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        do_GET = do_POST = do_DELETE = _serve
+
+        def log_message(self, *args: object) -> None:  # keep test output quiet
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield AdminApiServer(f"http://127.0.0.1:{server.server_address[1]}", fake)
+    finally:
+        server.shutdown()
+        server.server_close()
