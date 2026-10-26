@@ -10,15 +10,17 @@
 #   make -C andai live-dispatch URL='<test meeting link>' LANGUAGE_CODE=en   # live harness (docs/live-test.md)
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
+#   make -C andai env-check     # the root .env.example lists every variable a container reads
+#   make -C andai env-example   # regenerate the `# used by:` lines in the root .env.example
 #   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/andai
 #
 # `make -C andai` runs with cwd=andai/, so every path below is absolute, derived from ROOT.
 # Munshi's compose file keeps its own relative paths because --project-directory is deploy/compose.
-# Override the env file with ENV_FILE=/abs/path (default: andai/deploy/compose/.env, git-ignored)
+# Override the env file with ENV_FILE=/abs/path (default: <repo>/.env, git-ignored; template: <repo>/.env.example)
 # and the compose project with PROJECT=name (default: andai-meet).
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
-ENV_FILE ?= $(ROOT)/andai/deploy/compose/.env
+ENV_FILE ?= $(ROOT)/.env
 PROJECT ?= andai-meet
 # Images: ghcr.io/andai/munshi-<name>:$(VERSION) for every entry of andai/images.json, built
 # for PLATFORM (the dev VM is linux/amd64; Apple silicon builds it emulated). PULL=1 makes `up` pull
@@ -29,7 +31,7 @@ PULL ?=
 ONLY ?=
 IMAGES = python3 -I $(ROOT)/andai/scripts/images.py
 # images-check renders the tracked template (no secrets), not the operator's .env.
-CHECK_ENV_FILE ?= $(ROOT)/andai/deploy/compose/.env.example
+CHECK_ENV_FILE ?= $(ROOT)/.env.example
 # Shell variables override --env-file in Compose interpolation, and Munshi's compose file interpolates
 # ANTHROPIC_* / CLAUDE_CODE_OAUTH_TOKEN / HOST_CLAUDE_CREDENTIALS (incl. a credentials bind mount).
 # Strip them so a developer shell (e.g. one running Claude Code) can never inject an Anthropic
@@ -46,7 +48,7 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync live-dispatch agent-worker images images-check images-push down ps logs health _env-ready _env-file
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync live-dispatch agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
@@ -56,6 +58,7 @@ help:
 	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file]   real bot into a TEST meeting"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
+	@echo "make -C andai env-check | env-example                    root .env.example is complete | regenerate its used-by lines"
 	@echo "make -C andai health   HTTP health on 127.0.0.1 + container states"
 	@echo "make -C andai ps | logs [S=service] | down | config"
 	@echo "ENV_FILE=$(ENV_FILE)  PROJECT=$(PROJECT)"
@@ -78,7 +81,7 @@ _env-file:
 
 ## _env-ready — the env file exists, is not the tracked template, and has no OLLM placeholders.
 _env-ready:
-	@test -f "$(ENV_FILE)" || { echo "missing $(ENV_FILE): cp andai/deploy/compose/.env.example andai/deploy/compose/.env and fill the __OLLM_*__ values" >&2; exit 1; }
+	@test -f "$(ENV_FILE)" || { echo "missing $(ENV_FILE): cp .env.example .env (repo root) and fill the __OLLM_*__ values" >&2; exit 1; }
 	@case "$(ENV_FILE)" in *.example) echo "ENV_FILE must not be the tracked template" >&2; exit 1;; esac
 	@if grep -v '^[[:space:]]*#' "$(ENV_FILE)" | grep -q '__OLLM_'; then echo "$(ENV_FILE) still has __OLLM_*__ placeholders; fill them first (andai/docs/dev-vm.md)" >&2; exit 1; fi
 
@@ -159,6 +162,20 @@ agent-worker:
 ## self-hosted STT compose files, and fail on any image that is neither a catalogue image at
 ## $(VERSION) nor on images.json's third_party allowlist; also checks every catalogue Dockerfile's
 ## FROM lines. ALLOW_TEST_IMAGES=1 accepts the mock-bot:dev test alias (CI/test override only).
+## _env-stack-json — the whole stack (every profile) rendered WITHOUT interpolation from the tracked
+## template, so each service's ${VAR} references stay visible. No secrets are read.
+_env-stack-json:
+	@env $(STRIP_ENV) ANDAI_ROOT=$(ROOT) COMPOSE_PROFILES='*' docker compose -p env-check --project-directory $(ROOT)/deploy/compose -f $(ROOT)/deploy/compose/docker-compose.yml -f $(ROOT)/andai/deploy/compose/docker-compose.andai.yml --env-file $(CHECK_ENV_FILE) config --no-interpolate --format json
+
+## env-check — the root .env.example lists every variable a container reads, nothing unused, and its
+## `# used by:` lines are current (gate:env-example; pre-push).
+env-check:
+	@$(MAKE) --no-print-directory -s _env-stack-json | python3 -I $(ROOT)/andai/scripts/env_example.py --compose-json - --env-example $(CHECK_ENV_FILE) --check
+
+## env-example — regenerate the `# used by:` lines in the root .env.example after adding or moving a key.
+env-example:
+	@$(MAKE) --no-print-directory -s _env-stack-json | python3 -I $(ROOT)/andai/scripts/env_example.py --compose-json - --env-example $(CHECK_ENV_FILE) --write
+
 images-check:
 	@set -e; t="$$(mktemp -d)"; trap 'rm -rf "$$t"' EXIT; \
 	 env $(STRIP_IMAGE_ENV) $(MAKE) --no-print-directory -s config-json ENV_FILE=$(CHECK_ENV_FILE) COMPOSE_PROFILES='*' > "$$t/stack.json"; \

@@ -5,7 +5,7 @@
 #   ANDAI_ROOT=<repo> docker compose -p andai-meet --project-directory <repo>/deploy/compose \
 #     -f <repo>/deploy/compose/docker-compose.yml \
 #     -f <repo>/andai/deploy/compose/docker-compose.andai.yml \
-#     --env-file <repo>/andai/deploy/compose/.env ...
+#     --env-file <repo>/.env ...        (template: <repo>/.env.example)
 #
 # What it does:
 #   1. Adds the andai services (andai-core, andai-worker, andai-intake, andai-portal) and the

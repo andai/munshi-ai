@@ -39,7 +39,7 @@ Live runs use their own env file outside the repository's tracked files, `.work/
 
 ```bash
 mkdir -p .work/.local
-cp andai/deploy/compose/.env.example .work/.local/env.live
+cp .env.example .work/.local/env.live
 chmod 600 .work/.local/env.live
 ```
 

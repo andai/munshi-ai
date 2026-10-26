@@ -36,7 +36,10 @@ Bring the whole stack up with `make -C andai up` (see `andai/docs/dev-vm.md`).
 - AI co-author trailers are allowed: when an AI assistant helped, end the message with its
   `Co-Authored-By:` line. No DCO sign-off is required.
 - Never commit secrets: `.env` files, keys, tokens, or values from the operator's environment.
-  `andai/deploy/compose/.env.example` holds placeholders only.
+  The root `.env.example` holds placeholders only.
+- Every environment variable a container reads is listed in the root `.env.example` with a description;
+  `make -C andai env-check` (gate:env-example, pre-push) fails otherwise. After adding or moving a key,
+  run `make -C andai env-example` to regenerate its `# used by:` lines.
 
 ## Gates before you push
 
