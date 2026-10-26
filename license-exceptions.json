@@ -24,6 +24,14 @@
       "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv, where it stays replaceable by the user.",
       "scope": "andai/services/core (andai-core runtime dependency: psycopg, psycopg-binary)",
       "approved": "ADR-0004"
+    },
+    {
+      "package": "certifi",
+      "license": "MPL-2.0",
+      "reason": "Mozilla's CA certificate bundle, a required dependency of httpx, which andai-core uses to call the meeting platform's admin-api. MPL-2.0 is file-level weak copyleft; the package is used unmodified as a separately installed Python package (a data file plus a path lookup), never copied into munshi.ai source, so it qualifies as FINOS/ASF Category B.",
+      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv.",
+      "scope": "andai/services/core (andai-core runtime dependency via httpx)",
+      "approved": "ADR-0004"
     }
   ]
 }

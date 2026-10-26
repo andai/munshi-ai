@@ -301,11 +301,78 @@ class Clock:
         self.now += timedelta(**delta)
 
 
+class FakeAdminApi:
+    """The meeting platform's admin-api, in memory, behind an `httpx.MockTransport`: the calls
+    `HttpPlatformAdmin` makes, with the real service's answers (create user is idempotent by email
+    with 201/200; tokens are minted per call and revocable). `fail` names calls to answer 500."""
+
+    ADMIN_KEY = "test-admin-key-" + secrets.token_hex(8)
+
+    def __init__(self) -> None:
+        self.users: dict[str, int] = {}
+        self.tokens: dict[int, dict] = {}
+        self.calls: list[tuple[str, str]] = []
+        self.fail: set[str] = set()
+        self._ids = iter(range(1000, 10**9))
+
+    def handler(self, request):
+        import json
+        import re
+
+        import httpx
+
+        path = request.url.path
+        self.calls.append((request.method, path))
+        if request.headers.get("x-admin-api-key") != self.ADMIN_KEY:
+            return httpx.Response(403, json={"detail": "Invalid or missing admin token."})
+        if request.method == "POST" and path == "/admin/users":
+            if "create user" in self.fail:
+                return httpx.Response(500, json={"detail": "boom"})
+            email = json.loads(request.content)["email"].lower()
+            created = email not in self.users
+            if created:
+                self.users[email] = next(self._ids)
+            return httpx.Response(
+                201 if created else 200, json={"id": self.users[email], "email": email}
+            )
+        if request.method == "POST" and re.fullmatch(r"/admin/users/\d+/tokens", path):
+            if "mint token" in self.fail:
+                return httpx.Response(500, json={"detail": "boom"})
+            user_id = int(path.split("/")[3])
+            if user_id not in self.users.values():
+                return httpx.Response(404, json={"detail": "User not found"})
+            scopes = request.url.params["scopes"].split(",")
+            token_id = next(self._ids)
+            token = f"tok_bot_{secrets.token_urlsafe(24)}"
+            self.tokens[token_id] = {"token": token, "user_id": user_id, "scopes": scopes}
+            return httpx.Response(
+                201, json={"id": token_id, "token": token, "user_id": user_id, "scopes": scopes}
+            )
+        if request.method == "DELETE" and path.startswith("/admin/tokens/"):
+            if self.tokens.pop(int(path.rsplit("/", 1)[1]), None) is None:
+                return httpx.Response(404, json={"detail": "Token not found"})
+            return httpx.Response(204)
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    def client(self):
+        import httpx
+        from pydantic import SecretStr
+
+        from andai_core.platform.admin_client import HttpPlatformAdmin
+
+        return HttpPlatformAdmin(
+            "http://admin-api.test",
+            SecretStr(self.ADMIN_KEY),
+            transport=httpx.MockTransport(self.handler),
+        )
+
+
 @dataclass
 class Harness:
     services: object
     mailer: object
     clock: Clock
+    admin_api: FakeAdminApi
 
     def client(self, ip: str = CLIENT_IP, origin: str | None = PORTAL_ORIGIN):
         from fastapi.testclient import TestClient
@@ -326,6 +393,7 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
 
     clock = Clock()
     mailer = MemoryMailer()
+    admin_api = FakeAdminApi()
     config = make_settings(**settings)
     services = Services(
         settings=config,
@@ -336,9 +404,10 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
         mailer=mailer,
         ip_resolver=ClientIpResolver(config.trusted_proxies),
         keyring=Keyring(os.urandom(KEY_BYTES)),
+        platform_admin=admin_api.client(),
         clock=clock,
     )
-    return Harness(services=services, mailer=mailer, clock=clock)
+    return Harness(services=services, mailer=mailer, clock=clock, admin_api=admin_api)
 
 
 @pytest.fixture
@@ -562,3 +631,112 @@ def session_count(superuser_engine: Engine, user_id: uuid.UUID) -> int:
         return conn.execute(
             text("SELECT count(*) FROM sessions WHERE user_id = :u"), {"u": user_id}
         ).scalar_one()
+
+
+# ─── orgs with every role ─────────────────────────────────────────────────────────────────────────
+
+
+def new_team(
+    engine: Engine, org_id: uuid.UUID, members: dict[uuid.UUID, str], name: str | None = None
+) -> uuid.UUID:
+    """A team in `org_id` with `members` ({user_id: "lead" | "member"}), inserted directly."""
+    from andai_core.db.models import Team, TeamMembership
+    from andai_core.db.session import transaction
+
+    team_id = uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(Team(id=team_id, org_id=org_id, name=name or f"Team {team_id.hex[:8]}"))
+        tx.flush()
+        tx.add_all(
+            TeamMembership(team_id=team_id, org_id=org_id, user_id=user_id, role=role)
+            for user_id, role in members.items()
+        )
+    return team_id
+
+
+@dataclass(frozen=True)
+class RoleOrg:
+    """An org with an owner, an admin, a member, a lead (org role member) of `team`, and a
+    second team `other_team` led by nobody the roles above know."""
+
+    owner: Member
+    admin: Member
+    member: Member
+    lead: Member
+    team: uuid.UUID
+    other_team: uuid.UUID
+
+    def by_role(self, role: str) -> Member:
+        return getattr(self, role)
+
+
+ROLES = ("owner", "admin", "member", "lead")
+
+
+def role_org(engine: Engine) -> RoleOrg:
+    owner = new_member(engine)
+    admin = new_member(engine, role="admin", org_id=owner.org_id)
+    member = new_member(engine, role="member", org_id=owner.org_id)
+    lead = new_member(engine, role="member", org_id=owner.org_id)
+    team = new_team(engine, owner.org_id, {lead.user_id: "lead", member.user_id: "member"})
+    other_team = new_team(engine, owner.org_id, {member.user_id: "member"})
+    return RoleOrg(owner, admin, member, lead, team, other_team)
+
+
+def served(app) -> set[tuple[str, str]]:
+    """Every (method, path template) `app` serves, included routers flattened (an included router
+    is one entry in `app.routes`)."""
+    from fastapi.routing import iter_route_contexts
+
+    return {
+        (method, context.path)
+        for context in iter_route_contexts(app.routes)
+        for method in context.methods or ()
+    }
+
+
+@dataclass(frozen=True)
+class AdminApiServer:
+    url: str
+    fake: FakeAdminApi
+
+
+@pytest.fixture
+def admin_api_server() -> Iterator[AdminApiServer]:
+    """`FakeAdminApi` over real HTTP on a loopback port, for a CLI run in a subprocess."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import httpx
+
+    fake = FakeAdminApi()
+
+    class Handler(BaseHTTPRequestHandler):
+        def _serve(self) -> None:
+            length = int(self.headers.get("content-length") or 0)
+            request = httpx.Request(
+                self.command,
+                f"http://admin-api.test{self.path}",
+                headers=dict(self.headers.items()),
+                content=self.rfile.read(length) if length else b"",
+            )
+            response = fake.handler(request)
+            self.send_response(response.status_code)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        do_GET = do_POST = do_DELETE = _serve
+
+        def log_message(self, *args: object) -> None:  # keep test output quiet
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield AdminApiServer(f"http://127.0.0.1:{server.server_address[1]}", fake)
+    finally:
+        server.shutdown()
+        server.server_close()

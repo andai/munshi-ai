@@ -41,6 +41,7 @@ from andai_core.auth.resets import InvalidReset, confirm_reset, request_reset
 from andai_core.db.models import Org, OrgMembership, User
 from andai_core.db.session import set_context, transaction
 from andai_core.mail import Mail, Mailer, MailError
+from andai_core.platform.admin_client import PlatformAdminError
 
 router = APIRouter(prefix="/api/v1")
 
@@ -500,7 +501,8 @@ def bootstrap_first_owner(
     services: Services = Depends(get_services),
     ip: str | None = Depends(client_ip),
 ) -> dict:
-    """Create the first org and owner; refused (409) once any user exists."""
+    """Create the first org (with its platform principal) and owner; refused (409) once any user
+    exists."""
     try:
         email = canonical_email(body.email)
         done = bootstrap(
@@ -511,6 +513,8 @@ def bootstrap_first_owner(
             settings=services.settings,
             now=services.clock(),
             send=lambda mail: anyio.from_thread.run(services.mailer.send, mail),
+            admin=services.platform_admin,
+            keyring=services.keyring,
             ip=ip,
         )
     except ValueError as exc:  # an invalid email or org name
@@ -520,5 +524,10 @@ def bootstrap_first_owner(
     except MailError:
         raise HTTPException(
             status_code=503, detail="the set-password mail could not be sent; nothing was created"
+        ) from None
+    except PlatformAdminError:
+        raise HTTPException(
+            status_code=503,
+            detail="the meeting platform could not set up the organisation; nothing was created",
         ) from None
     return {"org_id": str(done.org_id), "user_id": str(done.user_id), "status": "invited"}
