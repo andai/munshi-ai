@@ -8,10 +8,11 @@ BROWSER_IMAGE ?= mock-bot:dev
 EMAIL ?= self-host@example.com
 SCOPES ?= bot,tx
 COMPOSE  = docker compose -p $(PROJECT) -f docker-compose.yml
-# Install pulls the published bot (ghcr.io/andai/munshi-bot:v012 — release-validated since v0.12.1).
+# Install pulls the published bot (ghcr.io/andai/munshi-bot:$(VERSION), the repo's VERSION).
 # `make bot` builds from source into the LOCAL namespace (munshi/, like munshi/meet-join-env:dev) so a
 # source build can never shadow the published pointer (#569).
 REPO_ROOT := $(abspath ../..)
+VERSION := $(shell cat $(REPO_ROOT)/VERSION)
 BOT_IMAGE ?= munshi/bot:dev
 
 .PHONY: stack-test stack-test-bot stack-test-mock stack-test-v010 dashboard-harness provision-token up dev digest-audit down destroy help build ps logs bot _preflight _bot_check _creds_check _access _storage_note migrate-storage
@@ -34,7 +35,7 @@ dashboard-harness:
 stack-test:
 	./bin/stack-test
 
-## stack-test-bot — + the real bot-spawn proof (COMPOSE_BOT=1; slow, needs ghcr.io/andai/munshi-bot:v012).
+## stack-test-bot — + the real bot-spawn proof (COMPOSE_BOT=1; slow, needs ghcr.io/andai/munshi-bot:$(VERSION)).
 stack-test-bot:
 	COMPOSE_BOT=1 ./bin/stack-test
 
@@ -64,15 +65,15 @@ stack-test-v010:
 
 ## up — the INSTALL entrypoint: PULLS the published, release-validated images (#569 — what users
 ## run must be the bytes the release machinery proved; a local build must never shadow a published
-## :v012 pointer). Seeds .env from .env.example if absent and mints every secret the services refuse
+## :$(VERSION) image). Seeds .env from .env.example if absent and mints every secret the services refuse
 ## to boot without (mint-dev-env.sh — never overwrites a value already set), pulls everything (services + the
 ## build-only agent-worker profile + the bot), brings the stack up WITHOUT building, then mints +
-## prints an API key. Building from source is `make dev` (images tagged :dev, never v012 names).
+## prints an API key. Building from source is `make dev` (images tagged :dev, never the release tag).
 up:
 	@$(MAKE) --no-print-directory _preflight
 	@./mint-dev-env.sh .env
 	$(COMPOSE) pull
-	@_tag=$$(grep -E '^IMAGE_TAG=' .env | head -1 | cut -d= -f2- | tr -d '[:space:]'); _tag=$${_tag:-v012}; \
+	@_tag=$$(grep -E '^IMAGE_TAG=' .env | head -1 | cut -d= -f2- | tr -d '[:space:]'); _tag=$${_tag:-$(VERSION)}; \
 	 echo "→ pulling spawn-time images (agent-worker is a build-only compose profile pull skips)"; \
 	 docker pull "ghcr.io/andai/munshi-agent-worker:$$_tag"; \
 	 _bi=$$(grep -E '^BROWSER_IMAGE=' .env | head -1 | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$$//; s/[[:space:]]+$$//'); \
@@ -85,7 +86,7 @@ up:
 	@$(MAKE) --no-print-directory _access
 
 ## dev — build the whole stack FROM THIS CHECKOUT, tagged :dev (the repo-wide 'dev = locally-built'
-## convention) so a source build can never impersonate a published :v012 image. The running stack's
+## convention) so a source build can never impersonate a published :$(VERSION) image. The running stack's
 ## interpolated refs (AGENT_WORKER_IMAGE etc.) follow IMAGE_TAG=dev coherently.
 dev:
 	@$(MAKE) --no-print-directory _preflight
@@ -115,7 +116,7 @@ _storage_note:
 ## carry a RepoDigest (= came from the registry). A locally-built image has NO RepoDigest, so a
 ## shadowed pointer fails here loudly. Run after `make up` to prove the install is artifact-true.
 digest-audit:
-	@_tag=$$(grep -E '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]'); _tag=$${_tag:-v012}; \
+	@_tag=$$(grep -E '^IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]'); _tag=$${_tag:-$(VERSION)}; \
 	 fail=0; \
 	 for img in $$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^ghcr.io/andai/munshi-.*:$$_tag$$"); do \
 	   d=$$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$$img"); \
@@ -144,9 +145,8 @@ _preflight:
 	 esac
 
 ## bot — build the meeting bot FROM SOURCE for development, tagged into the LOCAL munshi/ namespace
-## (BOT_IMAGE, default munshi/bot:dev) so it can never shadow the published ghcr.io/andai/munshi-bot:v012
-## the install pulls. (ghcr.io/andai/munshi-bot:dev on Docker Hub is the OLDER 0.10 line — neither pulled nor
-## overwritten here.) Builds the join-env base first, then the bot. Point BROWSER_IMAGE (.env) at
+## (BOT_IMAGE, default munshi/bot:dev) so it can never shadow the published ghcr.io/andai/munshi-bot:$(VERSION)
+## the install pulls. Builds the join-env base first, then the bot. Point BROWSER_IMAGE (.env) at
 ## BOT_IMAGE so the runtime spawns your build.
 bot:
 	@echo "→ [1/2] join-env base: munshi/meet-join-env:dev"
