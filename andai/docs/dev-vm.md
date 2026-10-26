@@ -161,6 +161,12 @@ origin, not `localhost`: andai-core refuses state-changing requests whose `Origi
 require two-factor login (Security). The portal's browser tests run against a separate compose
 project with the dev stack down: see `andai/portal/e2e/README.md`.
 
+Every org acts on the meeting platform through its own principal, which keeps the org's recordings
+under `org/<org_id>/` in object storage, has diagnostic signal tapes off and is capped at
+`ANDAI_ORG_MAX_CONCURRENT_BOTS` (default 3) bots at once. New orgs get these settings when they are
+created; `make -C andai principals-sync` re-applies them to every existing org (idempotent; run it
+once after upgrading a stack whose orgs were created before these settings existed).
+
 ## 7. Working from a laptop: `andai/scripts/vm.sh`
 
 On the laptop, in the local checkout:

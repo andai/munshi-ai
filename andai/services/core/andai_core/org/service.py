@@ -16,9 +16,10 @@ Rules the routes rely on:
 Each change writes one audit event in the same transaction.
 
 `create_org` is the one way an org comes into being (bootstrap uses it): it provisions the org's
-platform principal through the admin-api first, then inserts the org, its owner membership and
-the sealed principal in one transaction, so an org never exists without its principal and a failed
-admin-api call creates nothing.
+platform principal through the admin-api first (user, key, then its settings: storage prefix
+`org/<org_id>`, diagnostic tapes off, the org's bot cap), then inserts the org, its owner membership
+and the sealed principal in one transaction, so an org never exists without a configured principal
+and a failed admin-api call creates nothing.
 """
 
 from __future__ import annotations
@@ -129,12 +130,14 @@ def create_org(
     ip: str | None = None,
     guard: Callable[[Tx], None] | None = None,
     finish: Callable[[Tx, CreatedOrg], None] | None = None,
+    max_concurrent_bots: int = principals.DEFAULT_MAX_CONCURRENT_BOTS,
 ) -> CreatedOrg:
     """Create an org owned by `owner_email` (canonical; the user is created as `invited` if new)
     with its platform principal, in one transaction.
 
     `guard(tx)` runs first and may raise to refuse (bootstrap: only on an empty database);
     `finish(tx, created)` runs last, before the commit (bootstrap: the owner's invite and mail).
+    `max_concurrent_bots` is the org's bot cap on the platform (`ANDAI_ORG_MAX_CONCURRENT_BOTS`).
     The admin-api is called before anything is inserted; if anything after that fails, the minted
     key is revoked and nothing is stored. Raises `PlatformAdminError` if the platform refuses."""
     name = name.strip()
@@ -147,6 +150,9 @@ def create_org(
                 guard(tx)
             org_id = uuid.uuid4()
             minted = principals.provision(admin, org_id)
+            principals.configure(
+                admin, minted.platform_user_id, org_id, max_concurrent_bots=max_concurrent_bots
+            )
             set_context(tx, org_id=org_id)
             _insert_org(tx, org_id, name)
             owner_id = tx.scalar(select(User.id).where(User.email == owner_email))

@@ -3,8 +3,10 @@
 Reads the stack's env file named by `ENV_FILE` (skips without it): `ADMIN_TOKEN` and the admin-api
 host port (`ADMIN_API_PORT`, default 18057), the andai database on the published Postgres port
 (`POSTGRES_HOST_PORT`, default 5458) as the app role, and `ANDAI_KEK`. It creates one org through
-`create_org`, proves the stored key is a working `bot,tx` key of that org's platform user, and
-removes what it created afterwards (its tokens through the admin-api; its rows as the stack's
+`create_org`, proves the stored key is a working `bot,tx` key of that org's platform user and that
+the platform user carries the org's settings (bot-context reports the storage prefix `org/<org_id>`
+and `capture_signal: false`; `INTERNAL_API_SECRET` from the env file), and removes what it created
+afterwards (its tokens through the admin-api; its rows as the stack's
 database superuser, so the dev database stays empty for a later bootstrap).
 
     ENV_FILE=$PWD/.work/.local/env.smoke uv run --directory andai pytest -q -m live \\
@@ -44,7 +46,7 @@ def _env() -> dict[str, str]:
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip().strip("'\"")
-    required = ("ADMIN_TOKEN", "ANDAI_DB_PASSWORD_APP", "ANDAI_KEK")
+    required = ("ADMIN_TOKEN", "ANDAI_DB_PASSWORD_APP", "ANDAI_KEK", "INTERNAL_API_SECRET")
     missing = [k for k in required if not values.get(k)]
     if missing:
         pytest.fail(f"{name} lacks {', '.join(missing)}", pytrace=False)
@@ -126,6 +128,19 @@ def test_create_org_provisions_a_working_principal_through_the_real_admin_api(
             # The stored key is a working key of that platform user.
             own = client.get("/user/webhook", headers={"X-API-Key": key})
             assert own.status_code == 200, own.status_code
+
+        # The principal carries the org's platform settings, as meeting-api reads them at spawn.
+        with httpx.Client(base_url=admin_url, timeout=10) as client:
+            user = client.get(f"/admin/users/{created.platform_user_id}", headers=headers).json()
+            context = client.get(
+                f"/internal/users/{created.platform_user_id}/bot-context",
+                headers={"X-Internal-Secret": stack["INTERNAL_API_SECRET"]},
+            )
+        assert user["max_concurrent_bots"] == principals.DEFAULT_MAX_CONCURRENT_BOTS
+        assert context.status_code == 200, context.status_code
+        assert context.json()["storage_prefix"] == f"org/{org_id}"
+        assert context.json()["capture_signal"] is False
+        assert context.json()["max_concurrent"] == principals.DEFAULT_MAX_CONCURRENT_BOTS
 
         # Provisioning the same org again finds the same platform user.
         extra = principals.provision(admin, org_id)

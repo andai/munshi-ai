@@ -8,6 +8,10 @@ Every call carries `X-Admin-API-Key: PLATFORM_ADMIN_TOKEN` to `PLATFORM_ADMIN_UR
 * `POST /admin/users/{id}/tokens?scopes=bot,tx` — mints a new API token (tokens are additive);
   `DELETE /admin/tokens/{id}` revokes one.
 
+`PATCH /admin/users/{id} {"data", "max_concurrent_bots"}` sets the principal's platform settings
+(its storage prefix, diagnostics switches and bot cap); the admin-api merges `data` into the user's
+record, so applying the same patch twice changes nothing.
+
 Errors say which call failed and its status, never a token, the admin key or a response body.
 """
 
@@ -42,6 +46,8 @@ class PlatformAdmin(Protocol):
     def mint_token(self, user_id: int, scopes: Sequence[str]) -> MintedToken: ...
 
     def revoke_token(self, token_id: int) -> None: ...
+
+    def update_user(self, user_id: int, *, data: dict, max_concurrent_bots: int) -> None: ...
 
 
 class HttpPlatformAdmin:
@@ -116,3 +122,12 @@ class HttpPlatformAdmin:
 
     def revoke_token(self, token_id: int) -> None:
         self._call("revoke token", "DELETE", f"/admin/tokens/{int(token_id)}")
+
+    def update_user(self, user_id: int, *, data: dict, max_concurrent_bots: int) -> None:
+        """Merge `data` into the platform user's record and set its concurrent-bot cap."""
+        self._call(
+            "update user",
+            "PATCH",
+            f"/admin/users/{int(user_id)}",
+            json={"data": data, "max_concurrent_bots": int(max_concurrent_bots)},
+        )

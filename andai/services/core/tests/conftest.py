@@ -4,7 +4,7 @@ Session-scoped disposable containers, started with `docker run` on random loopba
 removed at the end of the session; each starts only when a test asks for it:
 
 * `postgres:17-alpine` — initialised with `migrations/db-init.sql` exactly as `make db-init`
-  does (database `andai`, roles `andai_owner` and `andai_app`).
+  does (database `andai`, roles `andai_owner`, `andai_app` and the NOLOGIN `andai_scan`).
 * `valkey/valkey:8-alpine`
 * `axllent/mailpit:v1.32.0`
 
@@ -304,13 +304,16 @@ class Clock:
 class FakeAdminApi:
     """The meeting platform's admin-api, in memory, behind an `httpx.MockTransport`: the calls
     `HttpPlatformAdmin` makes, with the real service's answers (create user is idempotent by email
-    with 201/200; tokens are minted per call and revocable). `fail` names calls to answer 500."""
+    with 201/200; tokens are minted per call and revocable; PATCH merges `data` into the user's
+    record like the real one, `diagnostics` key by key). `fail` names calls to answer 500."""
 
     ADMIN_KEY = "test-admin-key-" + secrets.token_hex(8)
 
     def __init__(self) -> None:
         self.users: dict[str, int] = {}
         self.tokens: dict[int, dict] = {}
+        self.records: dict[int, dict] = {}  # user id -> {"data", "max_concurrent_bots"}
+        self.patches: list[tuple[int, dict]] = []
         self.calls: list[tuple[str, str]] = []
         self.fail: set[str] = set()
         self._ids = iter(range(1000, 10**9))
@@ -348,6 +351,24 @@ class FakeAdminApi:
             return httpx.Response(
                 201, json={"id": token_id, "token": token, "user_id": user_id, "scopes": scopes}
             )
+        if request.method == "PATCH" and re.fullmatch(r"/admin/users/\d+", path):
+            if "update user" in self.fail:
+                return httpx.Response(500, json={"detail": "boom"})
+            user_id = int(path.rsplit("/", 1)[1])
+            if user_id not in self.users.values():
+                return httpx.Response(404, json={"detail": "User not found"})
+            body = json.loads(request.content)
+            self.patches.append((user_id, body))
+            record = self.records.setdefault(user_id, {"data": {}, "max_concurrent_bots": 3})
+            data = dict(body.get("data") or {})
+            if isinstance(data.get("diagnostics"), dict):
+                data["diagnostics"] = {
+                    **record["data"].get("diagnostics", {}), **data["diagnostics"]
+                }
+            record["data"] = {**record["data"], **data}
+            if body.get("max_concurrent_bots") is not None:
+                record["max_concurrent_bots"] = body["max_concurrent_bots"]
+            return httpx.Response(200, json={"id": user_id, **record})
         if request.method == "DELETE" and path.startswith("/admin/tokens/"):
             if self.tokens.pop(int(path.rsplit("/", 1)[1]), None) is None:
                 return httpx.Response(404, json={"detail": "Token not found"})
@@ -472,7 +493,7 @@ def fresh_app_engine(postgres: Postgres, migrated: Postgres) -> Iterator[Engine]
     db_admin = create_engine(postgres.url("postgres", postgres.superuser_password, name))
     with db_admin.begin() as conn:
         conn.execute(text("REVOKE ALL ON SCHEMA public FROM PUBLIC"))
-        conn.execute(text("GRANT USAGE ON SCHEMA public TO andai_app"))
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO andai_app, andai_scan"))
     db_admin.dispose()
     command.upgrade(
         alembic_config(postgres.url("andai_owner", postgres.owner_password, name)), "head"
@@ -727,7 +748,7 @@ def admin_api_server() -> Iterator[AdminApiServer]:
             self.end_headers()
             self.wfile.write(response.content)
 
-        do_GET = do_POST = do_DELETE = _serve
+        do_GET = do_POST = do_PATCH = do_DELETE = _serve
 
         def log_message(self, *args: object) -> None:  # keep test output quiet
             return

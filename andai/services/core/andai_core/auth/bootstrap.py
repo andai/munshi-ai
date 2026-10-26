@@ -87,5 +87,6 @@ def bootstrap(
         ip=ip,
         guard=_only_on_an_empty_database,
         finish=invite_the_owner,
+        max_concurrent_bots=settings.org_max_concurrent_bots,
     )
     return Bootstrapped(org_id=created.org_id, user_id=created.owner_id)
