@@ -7,6 +7,7 @@
 #   make -C andai db-migrate    # migrate andai-core's database to head (`up` runs it)
 #   make -C andai bootstrap EMAIL=owner@example.com ORG="Example Ltd"   # first org + owner, once
 #   make -C andai principals-sync  # re-apply every org principal's platform settings (idempotent)
+#   make -C andai live-dispatch URL='<test meeting link>' LANGUAGE_CODE=en   # live harness (docs/live-test.md)
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
 #   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/andai
@@ -45,13 +46,14 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync agent-worker images images-check images-push down ps logs health _env-ready _env-file
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync live-dispatch agent-worker images images-check images-push down ps logs health _env-ready _env-file
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
 	@echo "make -C andai db-init | db-migrate                       andai database + roles (idempotent) | migrate to head"
 	@echo "make -C andai bootstrap EMAIL=a@b.c ORG=name [NAME=..]   first org + owner (mails a set-password link)"
 	@echo "make -C andai principals-sync                            re-apply org principals' platform settings (prefix, tapes off, cap)"
+	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file]   real bot into a TEST meeting"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
 	@echo "make -C andai health   HTTP health on 127.0.0.1 + container states"
@@ -129,6 +131,20 @@ bootstrap: _env-file
 ## Idempotent; prints counts only. Needs the andai database at head (db-migrate).
 principals-sync: _env-file
 	$(DC) exec -T andai-core python -m andai_core principals-sync
+
+## live-dispatch — the live harness (andai/docs/live-test.md, andai/scripts/live_dispatch.py): with
+## the operator test principal (tapes off, a key minted for the run and revoked after it), send the
+## real bot to URL (a test meeting only) transcribing LANGUAGE_CODE, and print status changes and
+## transcript lag as redacted JSON lines until Ctrl-C, STOP_AFTER seconds or the meeting ends.
+## LOG=/abs/file also appends the lines there. LANGUAGE_CODE, not LANG (the locale variable). The
+## recipe is not echoed, so the meeting link stays off the terminal.
+URL ?=
+LANGUAGE_CODE ?= en
+STOP_AFTER ?=
+LOG ?=
+live-dispatch: _env-file
+	@test -n "$(URL)" || { echo "usage: make -C andai live-dispatch URL='<test meeting link>' [LANGUAGE_CODE=en|hi] [STOP_AFTER=seconds] [LOG=/abs/file] [ENV_FILE=/abs/env]" >&2; exit 2; }
+	@uv run --directory $(ROOT)/andai python scripts/live_dispatch.py --env-file "$(ENV_FILE)" --url '$(URL)' --language "$(LANGUAGE_CODE)" $(if $(STOP_AFTER),--stop-after "$(STOP_AFTER)") $(if $(LOG),--log "$(LOG)")
 
 ## images — build every catalogue entry in order (bases first), tagged
 ## ghcr.io/andai/munshi-<name>:$(VERSION) and :dev; prints size and build time per image.
