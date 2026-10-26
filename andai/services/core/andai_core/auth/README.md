@@ -16,7 +16,8 @@ Human authentication for andai-core, mounted under `/api/v1`:
 - `stage_gate.py` — middleware: an `mfa_pending` session reaches only `/auth/mfa/verify` and
   logout, an `enroll_required` one only `/me/mfa*` and logout; anything else is 401 with
   `next_step`.
-- `roles.py` — `require_role(...)`: a `full` session whose org role is one of the given ones,
+- `roles.py` — `require_role(...)`: a `full` session whose org role is one of the given ones (or,
+  with `team_lead=True`, who leads the team in the path),
   else 403.
 - `csrf.py` — refuses state-changing requests whose `Origin` is not `ANDAI_PORTAL_ORIGIN`.
 - `clientip.py` — the client address; `X-Forwarded-For` only from `ANDAI_TRUSTED_PROXIES`.

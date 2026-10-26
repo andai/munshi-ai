@@ -562,3 +562,65 @@ def session_count(superuser_engine: Engine, user_id: uuid.UUID) -> int:
         return conn.execute(
             text("SELECT count(*) FROM sessions WHERE user_id = :u"), {"u": user_id}
         ).scalar_one()
+
+
+# ─── orgs with every role ─────────────────────────────────────────────────────────────────────────
+
+
+def new_team(
+    engine: Engine, org_id: uuid.UUID, members: dict[uuid.UUID, str], name: str | None = None
+) -> uuid.UUID:
+    """A team in `org_id` with `members` ({user_id: "lead" | "member"}), inserted directly."""
+    from andai_core.db.models import Team, TeamMembership
+    from andai_core.db.session import transaction
+
+    team_id = uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(Team(id=team_id, org_id=org_id, name=name or f"Team {team_id.hex[:8]}"))
+        tx.flush()
+        tx.add_all(
+            TeamMembership(team_id=team_id, org_id=org_id, user_id=user_id, role=role)
+            for user_id, role in members.items()
+        )
+    return team_id
+
+
+@dataclass(frozen=True)
+class RoleOrg:
+    """An org with an owner, an admin, a member, a lead (org role member) of `team`, and a
+    second team `other_team` led by nobody the roles above know."""
+
+    owner: Member
+    admin: Member
+    member: Member
+    lead: Member
+    team: uuid.UUID
+    other_team: uuid.UUID
+
+    def by_role(self, role: str) -> Member:
+        return getattr(self, role)
+
+
+ROLES = ("owner", "admin", "member", "lead")
+
+
+def role_org(engine: Engine) -> RoleOrg:
+    owner = new_member(engine)
+    admin = new_member(engine, role="admin", org_id=owner.org_id)
+    member = new_member(engine, role="member", org_id=owner.org_id)
+    lead = new_member(engine, role="member", org_id=owner.org_id)
+    team = new_team(engine, owner.org_id, {lead.user_id: "lead", member.user_id: "member"})
+    other_team = new_team(engine, owner.org_id, {member.user_id: "member"})
+    return RoleOrg(owner, admin, member, lead, team, other_team)
+
+
+def served(app) -> set[tuple[str, str]]:
+    """Every (method, path template) `app` serves, included routers flattened (an included router
+    is one entry in `app.routes`)."""
+    from fastapi.routing import iter_route_contexts
+
+    return {
+        (method, context.path)
+        for context in iter_route_contexts(app.routes)
+        for method in context.methods or ()
+    }
