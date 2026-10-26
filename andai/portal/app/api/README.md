@@ -1,3 +1,4 @@
 # andai/portal/app/api
 
-Portal API routes. Phase 1: `health/` only.
+`health/`: the portal's own `GET /api/health`. `[...path]/`: everything else under `/api/` is
+proxied to andai-core.

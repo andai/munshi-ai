@@ -14,7 +14,7 @@
       "license": "MPL-2.0",
       "reason": "Native CSS transform/minification engine used by the Next/Tailwind toolchain. MPL applies to the unmodified dependency files, not to Munshi source or generated CSS.",
       "disposition": "Logged exception; dependency remains an isolated build/runtime package managed by pnpm.",
-      "scope": "frontend build pipeline and Next CSS handling",
+      "scope": "frontend build pipeline and Next CSS handling (pnpm workspace; andai/portal's Tailwind CSS build via npm, build stage only — not in the portal image)",
       "approved": "ADR-0004"
     },
     {
