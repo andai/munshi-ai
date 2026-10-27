@@ -18,13 +18,17 @@ no audio of its own:
   `teamsNameSelectors`, `teamsParticipantIdSelectors`, `teamsMeetingContainerSelectors` (single source;
   the bot's `selectors.ts` re-exports from here).
 - `createTeamsChat` — reads the chat panel (content tier); emits each new message as `{ sender, text }`.
+- `sendTeamsChatMessage` — posts one message in the meeting chat (opens the pane if needed, types in
+  the "Type a message" editor, sends, confirms it appeared; otherwise `bot_name_only` with a reason).
+  The bot's recording notice. jsdom-fixture tested (`teams-chat-send.test.ts`).
 
 **Two hosts, one brick** — the [bot](../../services/) instantiates it in a `page.evaluate` (bundled
 into its browser globals); the [extension](../../../clients/) imports it on Teams hosts to label the
 mixed `tabCapture` track. Selectors are defensive (Teams' `data-tid` DOM shifts across builds).
 
 ## Surface
-`createTeamsSpeakers` · `createTeamsChat` · the shared selector arrays (`teamsParticipantSelectors`,
+`createTeamsSpeakers` · `createTeamsChat` · `sendTeamsChatMessage` (+ `teamsChatSelectors`,
+`domChatInput`) · the shared selector arrays (`teamsParticipantSelectors`,
 `teamsNameSelectors`, `teamsParticipantIdSelectors`, `teamsMeetingContainerSelectors`) (+ types
 `TeamsSpeakers`, `TeamsSpeakersOptions`, `TeamsSpeakerIdentity`, `TeamsChat`, `TeamsChatMessage`).
 Front door: [`src/index.ts`](src/index.ts).

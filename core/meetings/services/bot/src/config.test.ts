@@ -24,7 +24,7 @@ const throws = (fn: () => unknown): Error | null => { try { fn(); return null; }
 
 // ── every committed invocation.v1 golden parses ──
 const goldens = readdirSync(GOLDEN_DIR).filter((n) => n.startsWith('Invocation.') && n.endsWith('.json'));
-check('found all invocation goldens', goldens.length === 3, `got ${goldens.join(', ')}`);
+check('found all invocation goldens', goldens.length === 4, `got ${goldens.join(', ')}`);
 for (const g of goldens) {
   const raw = readFileSync(join(GOLDEN_DIR, g), 'utf8');
   const err = throws(() => parseInvocation(raw));
@@ -40,6 +40,20 @@ for (const g of goldens) {
   check('full: secret token present (not logged)', typeof full.token === 'string' && full.token.length > 0);
   check('full: transcriptionModel threaded (#522)', full.transcriptionModel === 'whisper-large-v3-turbo', String(full.transcriptionModel));
   check('full: captureSignalEnabled threaded (O-TEL-1)', full.captureSignalEnabled === true, String(full.captureSignalEnabled));
+}
+
+// ── the recording notice (BOT-03) threads through; an oversize notice is refused at boot ──
+{
+  const raw = readFileSync(join(GOLDEN_DIR, 'Invocation.disclosure.json'), 'utf8');
+  const inv = parseInvocation(raw);
+  check('disclosure: text + privacy_notice_url threaded',
+    typeof inv.disclosure?.text === 'string' && inv.disclosure?.privacy_notice_url === 'https://example.com/privacy');
+  const tooLong = JSON.parse(raw);
+  tooLong.disclosure.text = 'x'.repeat(501);
+  check('disclosure: text over 500 chars → InvocationError', throws(() => parseInvocation(JSON.stringify(tooLong))) instanceof InvocationError);
+  const badUrl = JSON.parse(raw);
+  badUrl.disclosure.privacy_notice_url = 'javascript:alert(1)';
+  check('disclosure: non-http link → InvocationError', throws(() => parseInvocation(JSON.stringify(badUrl))) instanceof InvocationError);
 }
 
 // ── typed access on the jitsi golden (the platform enum accepts jitsi) ──

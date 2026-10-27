@@ -16,7 +16,8 @@ import { createHttpLifecycleSink } from '../src/adapters/lifecycle-http.js';
 import { createRedisTranscriptSink, redisClientFrom } from '../src/adapters/transcript-redis.js';
 import { createRedisActsSource, redisActsClientFrom } from '../src/adapters/acts-redis.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
-import { getScenario, fakeJoinDriver, fakePipeline, mockSegment } from './scenarios.js';
+import { getScenario, fakeChatSender, fakeJoinDriver, fakePipeline, mockSegment } from './scenarios.js';
+import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource, resolveAloneSilenceWindowMs } from '../src/aloneness.js';
 
 function consoleLifecycleSink(): LifecycleSink {
@@ -101,11 +102,19 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
   let stopRef: (r: 'stopped') => void = () => {};
   const wantRecording = scenario.recording || inv.recordingEnabled;
   const join = fakeJoinDriver(scenario);
-  const pipeline = fakePipeline(scenario, inv, transcript, {
+  const scenarioPipeline = fakePipeline(scenario, inv, transcript, {
     endRun: (r) => stopRef(r as 'stopped'),
     recordChunk: wantRecording ? () => uploadMockChunk(inv, (m) => console.log(`[mock] ${m}`)) : undefined,
     log: (m) => console.log(`[mock] ${m}`),
   });
+  // The recording notice: the real post-admission hook and report, with the scenario's outcome
+  // standing in for the browser's chat sender.
+  const disclosureChannel = scenario.disclosure;
+  const pipeline = inv.disclosure && disclosureChannel
+    ? withPostAdmission(scenarioPipeline, () => {
+        void runDisclosure({ inv, send: fakeChatSender(disclosureChannel), lifecycle, log: (m) => console.log(`[mock] disclosure: ${m}`) });
+      })
+    : scenarioPipeline;
   const acts: ActsSource = teeSpeak(liveActs, transcript, inv);
 
   const activity = createRemoteAudioActivityTap();

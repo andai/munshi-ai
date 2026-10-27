@@ -19,7 +19,9 @@ backend therefore sees prod-identical lifecycle.v1 emission, and the mock **cann
 
 **Scenarios:** `normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
 emit-n-segments · slow-join · recording` — one per backend behaviour (lifecycle FSM · join-retry ·
-attributable failure · max-bots-adjacent · recording receiver · acts round-trip).
+attributable failure · max-bots-adjacent · recording receiver · acts round-trip). `normal` also
+reports a `chat` disclosure outcome when the invocation carries a `disclosure` (the real
+`../src/disclosure.ts` hook and report, with a fake sender).
 
 **Depends on:** `../src/{orchestrator,contracts,config,ports,adapters/*}` (the real bot, reused). It is
 **not** a published library (no consumers import it) — it is a test/validation worker.

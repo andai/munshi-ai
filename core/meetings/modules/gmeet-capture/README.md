@@ -15,11 +15,16 @@ model + wire codec is [`@munshi/capture-codec`](../capture-codec/) (the SSOT).
 
 ## Surface
 `createGmeetCaptureV1` (the producer) · `createGmeetCapture` · `createGmeetSpeakers` ·
-`createPcmCaptureNode` · `GmeetChannelBinder` · `pickBoundName`. Front door: [`src/index.ts`](src/index.ts).
+`createPcmCaptureNode` · `GmeetChannelBinder` · `pickBoundName` · `sendGmeetChatMessage` (posts one
+message in "Chat with everyone": opens the panel if needed, types, sends, confirms it appeared, and
+otherwise reports `bot_name_only` with a reason; the bot's recording notice). Front door:
+[`src/index.ts`](src/index.ts).
 
 ## Verify
 `pnpm --filter @munshi/gmeet-capture test` — `gmeet-capture.test.ts` pins the **pure cores** (no DOM):
 `pickBoundName` (a name only when exactly one tile is lit) + `GmeetChannelBinder` (energy↔glow
 correlation). The DOM capture itself (`pcm`/`audio`/`glow` scraping) is validated **live** in a real
 Meet (extension/bot) — consistent with how the lane has always been tested. `tsconfig` adds the `DOM`
-lib. Covered by `gate:node`, `gate:isolation`, `gate:exports`, `gate:readme`.
+lib. `gmeet-chat-send.test.ts` drives the chat sender against jsdom fixtures (panel open/closed, no chat,
+no composer, disabled composer, Send-button fallback, never-posted). Covered by `gate:node`,
+`gate:isolation`, `gate:exports`, `gate:readme`.

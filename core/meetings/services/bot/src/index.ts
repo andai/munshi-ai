@@ -14,6 +14,7 @@
  * │    • Pipeline       → capture bridge → @munshi/{gmeet,mixed}-pipeline → @munshi/transcribe-whisper ✅ WIRED (L4 capture · L2/L3 lane)
  * │    • RecordingSink  → per-chunk upload to inv.recordingUploadUrl (master assembled server-side) ✅ WIRED (L4 upload · L3 sink)
  * │    • Speak          → acts.v1 `speak`/`speak_stop` → meeting-UI mic + VM TTS chain          ✅ WIRED (L4)
+ * │    • Disclosure     → after admission, the recording notice in chat → lifecycle.v1 `disclosure` (disclosure.ts)
  * └─ The browser/capture/recording-upload/speak legs are BROWSER- or VM-resident → L4-gated
  *    (proven by the O6 VM run, not unit tests). The lane + assembler cores are L2/L3-proven.
  *
@@ -38,6 +39,7 @@ import { createSttFaultReporter } from './stt-faults.js';
 import { launchBrowser, startCaptureBridge, startRecording, restartMixedCapture, createSpeakController, type BrowserSession, type SpeakController } from './capture-bridge.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource, resolveAloneSilenceWindowMs } from './aloneness.js';
 import { installSignalHandlers } from './signals.js';
+import { browserChatSender, runDisclosure, withPostAdmission } from './disclosure.js';
 import type {
   JoinDriver,
   Pipeline,
@@ -294,6 +296,13 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
         console.error(`[bot] live-pipeline: ${stage} failed (non-fatal, bot stays seated): ${serr(e)}`);
       },
     });
+    // BOT-03: the recording notice in meeting chat, once, in the background after admission
+    // (pipeline.start runs after the orchestrator reported `active`). Never blocks or fails the join.
+    if (inv.disclosure) {
+      pipeline = withPostAdmission(pipeline, () => {
+        void runDisclosure({ inv, send: browserChatSender(sess.page, inv.platform), lifecycle });
+      });
+    }
     // Voice: tee acts so `speak`/`speak_stop` reach the SpeakController (gated on voiceAgentEnabled).
     const speak = createSpeakController(session.page, inv);
     acts = teeActs(liveActs, voiceHandler(speak));

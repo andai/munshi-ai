@@ -14,6 +14,9 @@ no audio of its own:
   The downstream [`@munshi/mixed-pipeline`](../mixed-pipeline/) namer window-matches these hints against
   segmentation turns. `getState()` surfaces matched selectors + a tile survey for live selector tuning.
 - `createZoomChat` — reads the chat panel (content tier); emits each new message as `{ sender, text }`.
+- `sendZoomChatMessage` — posts one message in the meeting chat (opens the panel from the footer if
+  needed, types, sends, confirms it appeared; otherwise `bot_name_only` with a reason). The bot's
+  recording notice. jsdom-fixture tested (`zoom-chat-send.test.ts`).
 - `createTrackNameResolver` — the **per-track** lane's channel↔name correlator. Zoom in fact delivers
   one WebRTC track per participant (witnessed live: 5 streams / 5 speakers, 0 remaps), so the bot can
   capture each participant on their own channel and skip the mix entirely. That makes the audio
@@ -29,7 +32,8 @@ its browser globals); the [extension](../../../clients/) imports it to label the
 track. Selectors mirror the bot's Zoom `selectors.ts` and are defensive (Zoom's DOM shifts across builds).
 
 ## Surface
-`createZoomSpeakers` · `createZoomChat` · `createTrackNameResolver` · `speakerLabel` ·
+`createZoomSpeakers` · `createZoomChat` · `sendZoomChatMessage` (+ `zoomChatSelectors`,
+`domChatInput`) · `createTrackNameResolver` · `speakerLabel` ·
 `TRACK_NAME_DEFAULTS` (+ types `ZoomSpeakers`, `ZoomChat`, `ZoomChatMessage`, `TrackNameResolver`,
 `TrackNameResolverOptions`). Front door: [`src/index.ts`](src/index.ts).
 

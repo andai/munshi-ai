@@ -34,6 +34,13 @@ export type CompletionReason =
 
 export type FailureStage = 'requested' | 'joining' | 'awaiting_admission' | 'active';
 
+/** How the bot told the meeting it is recording (`#/$defs/DisclosureOutcome`): the notice was
+ *  posted in chat (`posted_at` = when the sent message was seen), or only the bot's display name
+ *  carries it (`detail` = why chat was not possible). */
+export type DisclosureOutcome =
+  | { channel: 'chat'; posted_at: string; detail?: string }
+  | { channel: 'bot_name_only'; posted_at?: string; detail?: string };
+
 /** One lifecycle.v1 status report. `connection_id` + `status` always; the rest are
  *  state-dependent terminal forensics. Mirrors `#/$defs/LifecycleEvent`. */
 export interface LifecycleEvent {
@@ -72,6 +79,9 @@ export interface LifecycleEvent {
     timings?: { time_to_lobby_ms?: number; time_in_lobby_ms?: number; total_ms?: number };
     lobby_budget_ms?: number;
   };
+  /** Post-admission, once: the outcome of the chat disclosure, on a repeated `active` event.
+   *  meeting-api stores it at `meeting.data.disclosure` (first report wins). */
+  disclosure?: DisclosureOutcome;
 }
 
 /** The legal transitions — the machine the bot MUST obey (lifecycle.v1/README.md). */

@@ -18,7 +18,8 @@ import { createOrchestrator } from '../src/orchestrator.js';
 import { canTransition, type Act, type BotStatus, type CompletionReason, type LifecycleEvent, type TranscriptSegment } from '../src/contracts.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
 import type { Invocation } from '../src/config.js';
-import { SCENARIOS, type Scenario, type ScenarioName, fakeJoinDriver, fakePipeline, mockSegment } from './scenarios.js';
+import { SCENARIOS, type Scenario, type ScenarioName, fakeChatSender, fakeJoinDriver, fakePipeline, mockSegment } from './scenarios.js';
+import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource } from '../src/aloneness.js';
 
 let failed = 0;
@@ -43,6 +44,7 @@ const validateSegment = schemaOf('transcript', 'TranscriptSegment');
 const INV: Invocation = {
   platform: 'google_meet', meetingUrl: 'https://meet.google.com/abc-defg-hij', botName: 'mock-bot',
   redisUrl: 'redis://r:6379', connectionId: 'sess-mock', container_name: 'mtg-mock-bot', nativeMeetingId: 'abc-defg-hij',
+  disclosure: { text: 'munshi.ai is transcribing this meeting.', privacy_notice_url: 'https://example.com/privacy' },
 };
 
 const seq = (e: LifecycleEvent[]) => e.map((x) => x.status);
@@ -73,12 +75,17 @@ async function drive(sc: Scenario, exp: Expect) {
   let stopRef: (r: CompletionReason) => void = () => {};
   const acts: ActsSource = { subscribe() { return () => {}; } };
   const join = fakeJoinDriver(sc, { joinDelayMs: sc.joinDelayMs ? 20 : undefined });
-  const pipeline = fakePipeline(sc, INV, transcript, {
+  const scenarioPipeline = fakePipeline(sc, INV, transcript, {
     endRun: (r) => stopRef(r),
     recordChunk: async () => { recorded++; },
     segGapMs: 1,
     endAfterMs: sc.endAfterMs != null ? 15 : undefined,   // fast self-end; immediate-stop keeps undefined → backend drives it
   });
+  // The recording notice, wired as mock/main.ts wires it.
+  const channel = sc.disclosure;
+  const pipeline = channel
+    ? withPostAdmission(scenarioPipeline, () => { void runDisclosure({ inv: INV, send: fakeChatSender(channel), lifecycle, log: () => {} }); })
+    : scenarioPipeline;
   const activity = createRemoteAudioActivityTap();
   const aloneness = sc.silenceAlone
     ? createSilenceAlonenessSource({ activity, windowMs: 15, pollMs: 1, log: () => {} })
@@ -114,6 +121,13 @@ async function main(): Promise<void> {
     if (exp.minSegs != null) check(`${tag} published ≥${exp.minSegs} segments`, segments.length >= exp.minSegs, `got ${segments.length}`);
     if (exp.recorded != null) check(`${tag} recording leg fired ×${exp.recorded}`, recorded === exp.recorded, `got ${recorded}`);
     if (exp.recorded == null && !exp.speakAfter) check(`${tag} no recording when not requested`, recorded === 0);
+    const reported = events.filter((e) => e.disclosure);
+    if (sc.disclosure) {
+      check(`${tag} disclosure reported once as ${sc.disclosure} on an active event`,
+        reported.length === 1 && reported[0].status === 'active' && reported[0].disclosure?.channel === sc.disclosure, JSON.stringify(reported));
+    } else {
+      check(`${tag} no disclosure report`, reported.length === 0, JSON.stringify(reported));
+    }
   }
 
   if (failed) { console.error(`\n❌ mock fidelity (L2): ${failed} check(s) FAILED.`); process.exit(1); }
