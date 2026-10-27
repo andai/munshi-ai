@@ -6,7 +6,8 @@ client-supplied identity header first — anti-spoofing). The route maps the spa
 HTTP status the gateway forwards verbatim:
 
   * 201 + ``api.v1`` MeetingResponse on success,
-  * 409 when the user already has an active meeting for (platform, native_id),
+  * 409 when the user already has an active meeting for (platform, native_id) — the body names
+    that meeting (``code: duplicate_meeting``, ``meeting_id``, ``platform``, ``native_meeting_id``),
   * 429 when the runtime kernel rejects the spawn for owner quota,
   * 502 when the kernel could not start the workload.
 """
@@ -194,6 +195,85 @@ def _validate_meeting_url(url: object) -> str:
             detail="meeting_url cannot be an IP literal — use the deployment's hostname",
         )
     return raw
+
+
+#: Bounds of the optional ``disclosure`` body field (api.v1 / invocation.v1 ``Disclosure``).
+DISCLOSURE_TEXT_MAX_LEN = 500
+DISCLOSURE_URL_MAX_LEN = 2048
+
+
+def _validate_disclosure(value: object) -> Optional[dict]:
+    """The optional recording notice (BOT-03): ``{text, privacy_notice_url}`` or absent/null.
+
+    ``text`` is 1..500 characters with no control characters other than newline and tab;
+    ``privacy_notice_url`` is an absolute http(s) URL with a host. Any other key, type or bound is
+    a 422 here, before any DB or runtime work. Absent or null → ``None`` (no notice, the spawn
+    behaves exactly as before the field existed)."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="disclosure must be an object or null")
+    extra = sorted(set(value) - {"text", "privacy_notice_url"})
+    if extra:
+        raise HTTPException(
+            status_code=422,
+            detail=f"disclosure has unknown field(s): {', '.join(extra)}",
+        )
+    text = value.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=422, detail="disclosure.text must be a non-empty string")
+    if len(text) > DISCLOSURE_TEXT_MAX_LEN:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"disclosure.text is {len(text)} characters; the maximum is "
+                f"{DISCLOSURE_TEXT_MAX_LEN}"
+            ),
+        )
+    if any((ch < " " and ch not in "\n\t") or ch == "\x7f" for ch in text):
+        raise HTTPException(status_code=422, detail="disclosure.text contains control characters")
+    url = value.get("privacy_notice_url")
+    if not isinstance(url, str) or not url.strip():
+        raise HTTPException(
+            status_code=422, detail="disclosure.privacy_notice_url must be a non-empty string"
+        )
+    url = url.strip()
+    if len(url) > DISCLOSURE_URL_MAX_LEN:
+        raise HTTPException(
+            status_code=422,
+            detail=f"disclosure.privacy_notice_url is longer than {DISCLOSURE_URL_MAX_LEN} characters",
+        )
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+    except ValueError:
+        parsed, host = None, None
+    if (
+        parsed is None
+        or parsed.scheme not in ("http", "https")
+        or not host
+        or any(ch.isspace() or ch < " " for ch in url)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="disclosure.privacy_notice_url must be an absolute http:// or https:// URL",
+        )
+    return {"text": text, "privacy_notice_url": url}
+
+
+def _duplicate_response(e: DuplicateMeeting) -> JSONResponse:
+    """409 for a duplicate active meeting, naming the meeting the caller collided with.
+
+    ``detail`` is the same string as every other 409, so a client that reads only ``detail`` is
+    unaffected; ``code`` and the existing meeting's ids are additive (api.v1 409 schema)."""
+    content: dict = {"detail": str(e), "code": "duplicate_meeting"}
+    if e.meeting_id is not None:
+        content["meeting_id"] = e.meeting_id
+    if e.platform is not None:
+        content["platform"] = e.platform
+    if e.native_meeting_id is not None:
+        content["native_meeting_id"] = e.native_meeting_id
+    return JSONResponse(status_code=409, content=content)
 
 
 def _resolve_user_id(x_user_id: Optional[str]) -> int:
@@ -451,6 +531,7 @@ def build_router(
         # decision, bot name), and the deployment default underneath that. A FAILED LOOKUP NEVER
         # STOPS THE SPAWN: a name is a nicety, joining the call is the product.
         bot_name = body.get("bot_name")
+        disclosure = _validate_disclosure(body.get("disclosure"))
 
         try:
             meeting = await request_bot(
@@ -478,6 +559,7 @@ def build_router(
                 webhook_url=x_user_webhook_url,
                 webhook_secret=x_user_webhook_secret,
                 webhook_events=webhook_events,
+                disclosure=disclosure,
             )
         except TranscriptionNotConfigured as e:
             raise HTTPException(status_code=503, detail=str(e))
@@ -522,7 +604,7 @@ def build_router(
             # is broken, and the detail names the request that works.
             raise HTTPException(status_code=409, detail=str(e))
         except DuplicateMeeting as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            return _duplicate_response(e)
         except (MaxBotsExceeded, QuotaExceeded) as e:
             raise HTTPException(status_code=429, detail=str(e) or "Bot concurrency limit reached")
         except SpawnFailed as e:

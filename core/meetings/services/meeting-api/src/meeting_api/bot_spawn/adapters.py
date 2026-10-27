@@ -192,7 +192,12 @@ class SqlAlchemyMeetingRepo:
                 if isinstance(r, dict)
             )
             if m.status not in ("completed", "failed") or deletion_pending:
-                raise DuplicateMeeting("Terminal meeting is no longer reusable")
+                raise DuplicateMeeting(
+                    "Terminal meeting is no longer reusable",
+                    meeting_id=m.id,
+                    platform=m.platform,
+                    native_meeting_id=m.platform_specific_id,
+                )
             m.status = "requested"
             m.end_time = None
             m.bot_container_id = None
@@ -342,6 +347,32 @@ class SqlAlchemyMeetingRepo:
             # Return the updated row so the lifecycle callback can deliver the per-user webhook from
             # meeting.data (and the stop route gets a clean dict) without a second query.
             return _row_to_dict(m)
+
+    async def record_disclosure(self, *, session_uid, disclosure) -> bool:
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from ..sessions.models import Meeting, MeetingSession
+
+        async with self._session_factory() as db:
+            sess = (
+                await db.execute(select(MeetingSession).where(MeetingSession.session_uid == session_uid))
+            ).scalars().first()
+            if sess is None:
+                return False
+            m = (
+                await db.execute(select(Meeting).where(Meeting.id == sess.meeting_id).with_for_update())
+            ).scalars().first()
+            if m is None:
+                return False
+            data = dict(m.data) if isinstance(m.data, dict) else {}
+            if data.get("disclosure") is not None:
+                return False
+            data["disclosure"] = dict(disclosure)
+            m.data = data
+            flag_modified(m, "data")
+            await db.commit()
+            return True
 
     async def count_active_bots(self, *, user_id, exclude_meeting_id=None) -> int:
         from sqlalchemy import func, select
@@ -502,7 +533,10 @@ class SqlAlchemyMeetingRepo:
             ).scalars().first()
             if dup is not None:
                 raise DuplicateMeeting(
-                    f"An active meeting already exists for {platform}/{native_meeting_id}"
+                    f"An active meeting already exists for {platform}/{native_meeting_id}",
+                    meeting_id=dup,
+                    platform=platform,
+                    native_meeting_id=native_meeting_id,
                 )
             # 2. cap — count the user's active bots (browser_session excluded); reject the N+1th.
             #    (cap <= 0 was already rejected as depleted above.)
@@ -566,8 +600,27 @@ class SqlAlchemyMeetingRepo:
                 # The unique partial index backstop fired — a concurrent duplicate active row won the
                 # race (e.g. a spawn in another process the advisory lock didn't cover). Treat as dedup.
                 await db.rollback()
+                # Name the row that won, read after the rollback. Best-effort: the 409 stands
+                # without an id when the read fails.
+                winner = None
+                try:
+                    winner = (
+                        await db.execute(
+                            select(Meeting.id).where(
+                                Meeting.user_id == user_id,
+                                Meeting.platform == platform,
+                                Meeting.platform_specific_id == native_meeting_id,
+                                Meeting.status.in_(active),
+                            ).order_by(Meeting.created_at.desc()).limit(1)
+                        )
+                    ).scalars().first()
+                except Exception:  # noqa: BLE001 — the duplicate is the answer; the id is a nicety
+                    winner = None
                 raise DuplicateMeeting(
-                    f"An active meeting already exists for {platform}/{native_meeting_id}"
+                    f"An active meeting already exists for {platform}/{native_meeting_id}",
+                    meeting_id=winner,
+                    platform=platform,
+                    native_meeting_id=native_meeting_id,
                 ) from e
             await db.refresh(m)
             return _row_to_dict(m)

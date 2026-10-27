@@ -36,6 +36,24 @@ ownership remains unresolved for downstream billing. An admitted mixed-version s
 lifecycle event lacks a producer timestamp is likewise unresolved: receiver time remains useful
 for operations, but retry latency makes it invalid for rating.
 
+## `disclosure` — how the meeting was told it is recorded
+
+An optional `DisclosureOutcome` on an `active` event, sent once after admission by a bot whose
+invocation carried a `disclosure`. The bot posts the notice in meeting chat after it reports
+`active` and then sends a second `active` event carrying only the outcome:
+
+```jsonc
+"disclosure": {
+  "channel":   "chat",                       // chat · bot_name_only
+  "posted_at": "2026-07-28T10:05:08.412Z",   // required for chat: when the sent message was seen
+  "detail":    "composer_disabled"           // bot_name_only: why chat was not possible
+}
+```
+
+meeting-api treats the repeated `active` as an idempotent replay for the state machine and stores
+the outcome at `meeting.data.disclosure`. The first report wins; later ones are ignored. Posting the
+notice never fails or delays the join: a sender error becomes `bot_name_only` with a `detail`.
+
 ## `join_evidence` — typed join-failure evidence (#1059, #1058)
 
 An **additive** field on a terminal `failed` event, riding this contract's liberal ingestion

@@ -1,0 +1,6 @@
+{
+  "connection_id": "sess-uid",
+  "status": "active",
+  "timestamp": "2026-07-28T10:05:21.000Z",
+  "disclosure": { "channel": "bot_name_only", "detail": "composer_disabled" }
+}
