@@ -278,10 +278,18 @@ PASSWORD = "correct horse battery staple"
 
 
 def make_settings(**overrides: str):
-    """Settings for a test app: dev posture, a fixed portal origin; `overrides` use env names."""
+    """Settings for a test app: dev posture, a fixed portal origin, no background reconciler;
+    `overrides` use env names."""
     from andai_core.settings import Settings
 
-    return Settings(**{"ANDAI_ENV": "dev", "ANDAI_PORTAL_ORIGIN": PORTAL_ORIGIN, **overrides})
+    return Settings(
+        **{
+            "ANDAI_ENV": "dev",
+            "ANDAI_PORTAL_ORIGIN": PORTAL_ORIGIN,
+            "ANDAI_RECONCILER": "off",
+            **overrides,
+        }
+    )
 
 
 class Clock:
@@ -388,12 +396,193 @@ class FakeAdminApi:
         )
 
 
+class FakeGateway:
+    """The meeting platform's gateway, in memory, behind an `httpx.MockTransport`: the calls
+    `HttpPlatformGateway` makes, answered like the real one. Keys are the tokens `FakeAdminApi`
+    minted, so each org's principal sees only its own meetings. `POST /bots` parses the link the
+    way the platform does for the three families, refuses a second live bot for the same
+    (principal, platform, native id) with the structured 409, and answers 201 with status
+    `requested`. Tests move a meeting on with `set` / `set_data`. `fail` maps a call ("dispatch",
+    "list bots", "get meeting", "stop") to a status to answer; `dispatch_delay` stalls dispatch."""
+
+    LIVE = ("requested", "joining", "awaiting_admission", "active", "needs_human_help", "stopping")
+
+    def __init__(self, admin_api: FakeAdminApi) -> None:
+        self.admin_api = admin_api
+        self.meetings: dict[int, dict] = {}
+        self.owners: dict[int, int] = {}  # platform meeting id -> platform user id
+        self.dispatches: list[dict] = []  # request bodies, in order
+        self.stops: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str]] = []
+        self.fail: dict[str, int] = {}
+        self.dispatch_delay = 0.0
+        self._ids = iter(range(5000, 10**9))
+        import threading
+
+        self._lock = threading.Lock()
+
+    def _user(self, request) -> int | None:
+        key = request.headers.get("x-api-key")
+        for token in self.admin_api.tokens.values():
+            if token["token"] == key:
+                return token["user_id"]
+        return None
+
+    @staticmethod
+    def parse(url: str) -> tuple[str, str] | None:
+        import re
+        from urllib.parse import unquote, urlsplit
+
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        if host == "meet.google.com":
+            code = parts.path.strip("/").lower()
+            return ("google_meet", code) if re.fullmatch(r"[a-z]{3}-[a-z]{4}-[a-z]{3}", code) else None
+        if "zoom" in host:
+            m = re.search(r"\d{9,11}", parts.path)
+            return ("zoom", m.group(0)) if m else None
+        if host.endswith("teams.microsoft.com") or host.endswith("teams.live.com"):
+            thread = re.search(r"19:meeting_[^/@]+@thread\.v2", unquote(url))
+            if thread:
+                return ("teams", thread.group(0))
+            short = re.search(r"/meet/(\d+)", parts.path)
+            return ("teams", short.group(1)) if short else None
+        return None
+
+    def set(self, meeting_id: int, **fields) -> None:
+        from datetime import UTC, datetime
+
+        with self._lock:
+            self.meetings[meeting_id].update(fields)
+            self.meetings[meeting_id]["updated_at"] = datetime.now(UTC).isoformat()
+
+    def set_data(self, meeting_id: int, **data) -> None:
+        with self._lock:
+            self.meetings[meeting_id]["data"].update(data)
+
+    def by_native(self, native: str) -> dict:
+        [found] = [m for m in self.meetings.values() if m["native_meeting_id"] == native]
+        return found
+
+    def handler(self, request):
+        import json
+        import re
+        import time
+        from datetime import UTC, datetime
+        from urllib.parse import unquote
+
+        import httpx
+
+        path = request.url.path
+        self.calls.append((request.method, path))
+        user = self._user(request)
+        if user is None:
+            return httpx.Response(401, json={"detail": "Invalid API key"})
+        if request.method == "POST" and path == "/bots":
+            if "dispatch" in self.fail:
+                return httpx.Response(self.fail["dispatch"], json={"detail": "refused"})
+            body = json.loads(request.content)
+            if self.dispatch_delay:
+                time.sleep(self.dispatch_delay)
+            parsed = self.parse(body.get("meeting_url") or "")
+            if parsed is None:
+                return httpx.Response(422, json={"detail": "unrecognized meeting link"})
+            platform, native = parsed
+            with self._lock:
+                self.dispatches.append(body)
+                for mid, m in self.meetings.items():
+                    if (
+                        self.owners[mid] == user
+                        and m["platform"] == platform
+                        and m["native_meeting_id"] == native
+                        and m["status"] in self.LIVE
+                    ):
+                        return httpx.Response(
+                            409,
+                            json={
+                                "detail": "An active or requested meeting already exists",
+                                "code": "duplicate_meeting",
+                                "meeting_id": mid,
+                                "platform": platform,
+                                "native_meeting_id": native,
+                            },
+                        )
+                mid = next(self._ids)
+                now = datetime.now(UTC).isoformat()
+                self.meetings[mid] = {
+                    "id": mid,
+                    "user_id": user,
+                    "platform": platform,
+                    "native_meeting_id": native,
+                    "constructed_meeting_url": body.get("meeting_url"),
+                    "status": "requested",
+                    "bot_container_id": None,
+                    "start_time": None,
+                    "end_time": None,
+                    "completion_reason": None,
+                    "failure_stage": None,
+                    "data": {},
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                self.owners[mid] = user
+                return httpx.Response(201, json=self.meetings[mid])
+        if request.method == "GET" and path == "/bots":
+            if "list bots" in self.fail:
+                return httpx.Response(self.fail["list bots"], json={"detail": "boom"})
+            limit = int(request.url.params.get("limit", 50))
+            with self._lock:
+                mine = [m for mid, m in self.meetings.items() if self.owners[mid] == user]
+            mine.sort(key=lambda m: (m["status"] in self.LIVE, m["id"]), reverse=True)
+            return httpx.Response(
+                200, json={"meetings": mine[:limit], "has_more": len(mine) > limit}
+            )
+        if request.method == "GET" and re.fullmatch(r"/meetings/\d+", path):
+            if "get meeting" in self.fail:
+                return httpx.Response(self.fail["get meeting"], json={"detail": "boom"})
+            mid = int(path.rsplit("/", 1)[1])
+            if self.owners.get(mid) != user:
+                return httpx.Response(404, json={"detail": "Meeting not found"})
+            return httpx.Response(200, json=self.meetings[mid])
+        if request.method == "DELETE" and path.startswith("/bots/"):
+            if "stop" in self.fail:
+                return httpx.Response(self.fail["stop"], json={"detail": "boom"})
+            _, _, platform, native = path.split("/", 3)
+            native = unquote(native)
+            with self._lock:
+                live = [
+                    m for mid, m in self.meetings.items()
+                    if self.owners[mid] == user and m["platform"] == platform
+                    and m["native_meeting_id"] == native and m["status"] in self.LIVE
+                ]
+                if not live:
+                    return httpx.Response(404, json={"detail": "No active meeting for this bot"})
+                self.stops.append((platform, native))
+                for m in live:
+                    if m["status"] == "active":
+                        m["status"] = "stopping"
+                    else:
+                        m["status"], m["completion_reason"] = "completed", "stopped_before_admission"
+            return httpx.Response(202, json={"message": "Stop requested"})
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    def client(self):
+        import httpx
+
+        from andai_core.platform.gateway_client import HttpPlatformGateway
+
+        return HttpPlatformGateway(
+            "http://gateway.test", transport=httpx.MockTransport(self.handler)
+        )
+
+
 @dataclass
 class Harness:
     services: object
     mailer: object
     clock: Clock
     admin_api: FakeAdminApi
+    gateway: FakeGateway
 
     def client(self, ip: str = CLIENT_IP, origin: str | None = PORTAL_ORIGIN):
         from fastapi.testclient import TestClient
@@ -415,6 +604,7 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
     clock = Clock()
     mailer = MemoryMailer()
     admin_api = FakeAdminApi()
+    gateway = FakeGateway(admin_api)
     config = make_settings(**settings)
     services = Services(
         settings=config,
@@ -427,8 +617,31 @@ def make_harness(engine: Engine, **settings: str) -> Harness:
         keyring=Keyring(os.urandom(KEY_BYTES)),
         platform_admin=admin_api.client(),
         clock=clock,
+        gateway=gateway.client(),
     )
-    return Harness(services=services, mailer=mailer, clock=clock, admin_api=admin_api)
+    return Harness(
+        services=services, mailer=mailer, clock=clock, admin_api=admin_api, gateway=gateway
+    )
+
+
+def give_principal(harness: Harness, engine: Engine, org_id: uuid.UUID) -> str:
+    """Provision and store the org's platform principal through the fake admin-api; returns the
+    key in clear (tests only)."""
+    from andai_core.db.session import transaction
+    from andai_core.platform import principals
+
+    minted = principals.provision(harness.services.platform_admin, org_id)
+    with transaction(engine, org_id=org_id) as tx:
+        principals.store(tx, harness.services.keyring, org_id, minted, harness.clock())
+    return minted.key
+
+
+def zoom_link(scenario: str | None = None, *, host: str = "zoom.us", passcode: str = "s3cretPwd") -> str:
+    """A Zoom-shaped link with a meeting number unique to this call (uuid-derived), so dedup and
+    the removal window never couple two tests or two runs; `scenario` rides `mock=` only."""
+    number = str(uuid.uuid4().int)[-11:].lstrip("0").rjust(11, "1")
+    query = f"pwd={passcode}" + (f"&mock={scenario}" if scenario else "")
+    return f"https://{host}/j/{number}?{query}"
 
 
 @pytest.fixture

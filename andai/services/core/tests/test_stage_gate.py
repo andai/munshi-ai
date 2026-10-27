@@ -53,6 +53,9 @@ KNOWN = {
     ("POST", "/api/v1/auth/mfa/verify"),
     ("POST", "/api/v1/me/mfa"),
     ("POST", "/api/v1/bootstrap"),
+    ("POST", "/api/v1/meetings/join"),
+    ("GET", "/api/v1/meetings/{meeting_id}"),
+    ("POST", "/api/v1/meetings/{meeting_id}/stop"),
 }
 
 

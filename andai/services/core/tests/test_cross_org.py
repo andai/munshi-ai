@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import Engine, select, text, update
 
 from andai_core.auth.passwords import hash_password
-from andai_core.db.models import Invite, User
+from andai_core.db.models import ConsentRecord, Invite, User
 from andai_core.db.session import transaction
 from andai_core.main import create_app
 from andai_core.org.service import create_org
@@ -40,6 +40,7 @@ from conftest import (
     new_team,
     served,
     sign_in,
+    zoom_link,
 )
 
 ROLES = ("owner", "admin", "member", "lead")
@@ -59,6 +60,8 @@ class SeededOrg:
     invite_token: str
     principal_key: str
     member_totp: object
+    meeting_id: uuid.UUID
+    meeting_link: str
     values: set[str] = field(default_factory=set)
 
     @property
@@ -122,6 +125,29 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
         for t in harness.admin_api.tokens.values()
         if t["user_id"] == created.platform_user_id
     ]
+    # A live meeting the bot was admitted to, sent by the lead for the team, with its consent row.
+    meeting_link = zoom_link(passcode=f"pw{tag}")
+    sent = sign_in(harness, members["lead"]).post(
+        "/api/v1/meetings/join", json={"join_url": meeting_link, "team_id": str(team)}
+    )
+    assert sent.status_code == 201, sent.text
+    meeting_id = uuid.UUID(sent.json()["id"])
+    native_meeting_id = sent.json()["native_meeting_id"]
+    with transaction(engine, org_id=org_id) as tx:
+        tx.execute(
+            text("UPDATE meetings SET status = 'recording' WHERE id = :m"), {"m": meeting_id}
+        )
+        tx.add(
+            ConsentRecord(
+                meeting_id=meeting_id,
+                org_id=org_id,
+                bot_display_name="munshi.ai (recording)",
+                disclosure_text=f"{label} notice {tag}",
+                privacy_notice_url="http://portal.test/privacy",
+                disclosure_channel="chat",
+                admitted_at=harness.clock(),
+            )
+        )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -137,8 +163,15 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
         invite_token=invite_token,
         principal_key=principal_key,
         member_totp=member_totp,
+        meeting_id=meeting_id,
+        meeting_link=meeting_link,
     )
     seeded.values = {
+        str(meeting_id),
+        meeting_link,
+        f"pw{tag}",
+        native_meeting_id,
+        f"{label} notice {tag}",
         str(org_id),
         name,
         str(team),
@@ -192,6 +225,14 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "user_totp": "SELECT user_id, confirmed_at FROM user_totp WHERE user_id = ANY(:u)",
         "recovery_codes": "SELECT count(*) FROM recovery_codes WHERE user_id = ANY(:u)",
         "sessions": "SELECT count(*) FROM sessions WHERE user_id = ANY(:u)",
+        "meetings": (
+            "SELECT id, status, failure_reason, platform_meeting_id, join_url, updated_at"
+            " FROM meetings WHERE org_id = :o"
+        ),
+        "consent_records": (
+            "SELECT meeting_id, disclosure_channel, removed_at, updated_at"
+            " FROM consent_records WHERE org_id = :o"
+        ),
     }
     params = {"o": b.org_id, "u": b.users}
     with superuser_engine.connect() as conn:
@@ -227,6 +268,12 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
         ("disable B admin", {"user_id": b.members["admin"].user_id}, {"status": "disabled"}),
         ("take B ownership", {"user_id": b.members["owner"].user_id}, {"role": "member"}),
     ],
+    ("GET", "/api/v1/meetings/{meeting_id}"): lambda b: [
+        ("read B meeting", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("POST", "/api/v1/meetings/{meeting_id}/stop"): lambda b: [
+        ("stop B meeting", {"meeting_id": b.meeting_id}, None),
+    ],
     ("PUT", "/api/v1/teams/{team_id}/members"): lambda b: [
         ("empty B team", {"team_id": b.team}, {"members": []}),
         (
@@ -255,6 +302,7 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("POST", "/api/v1/org/users"): (ADMINS, "invite"),
     ("GET", "/api/v1/teams"): (ALL, None),
     ("POST", "/api/v1/teams"): (ADMINS, "team"),
+    ("POST", "/api/v1/meetings/join"): (ALL, "join"),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────
@@ -340,6 +388,7 @@ def test_id_routes_refuse_org_b_ids(
 INVITE_OR_TEAM = {
     "invite": lambda: {"email": f"fresh-{uuid.uuid4().hex[:8]}@example.test", "role": "member"},
     "team": lambda: {"name": f"Fresh {uuid.uuid4().hex[:8]}"},
+    "join": lambda: {"join_url": zoom_link()},
 }
 
 ID_LESS_CASES = [
@@ -458,3 +507,34 @@ def test_a_session_of_org_b_sees_org_b_and_not_org_a(world: World) -> None:
         assert response.status_code == 200
         assert leaked(response.text, world.a) == [], path
     assert str(world.b.org_id) in owner.get("/api/v1/me").text
+
+
+def test_org_b_meeting_link_and_team_reach_nothing_of_org_b(
+    world: World, superuser_engine: Engine
+) -> None:
+    """A pastes B's live link (A gets its own meeting, nothing of B's), and names B's team (404)."""
+    before = b_state(superuser_engine, world.b)
+    dispatched = len(world.harness.gateway.dispatches)
+    admin = world.client(world.a, "admin")
+
+    own = admin.post("/api/v1/meetings/join", json={"join_url": world.b.meeting_link})
+    team = admin.post(
+        "/api/v1/meetings/join", json={"join_url": zoom_link(), "team_id": str(world.b.team)}
+    )
+
+    assert own.status_code == 201, own.text
+    assert own.json()["id"] != str(world.b.meeting_id)
+    # The only B values in A's answer are parts of the link A typed.
+    assert all(value in world.b.meeting_link for value in leaked(own.text, world.b))
+    assert (team.status_code, team.json()["code"]) == (404, "no_such_team")
+    assert b_state(superuser_engine, world.b) == before
+    # A's bot went out under A's own principal.
+    assert len(world.harness.gateway.dispatches) == dispatched + 1
+    a_platform = world.harness.gateway.meetings[
+        max(world.harness.gateway.meetings)
+    ]
+    b_user = next(
+        t["user_id"] for t in world.harness.admin_api.tokens.values()
+        if t["token"] == world.b.principal_key
+    )
+    assert a_platform["user_id"] != b_user
