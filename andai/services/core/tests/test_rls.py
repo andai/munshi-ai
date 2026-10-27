@@ -20,7 +20,9 @@ from andai_core.db.models import (
     GLOBAL_TABLES,
     ORG_SCOPED_TABLES,
     AuditEvent,
+    ConsentRecord,
     Invite,
+    Meeting,
     Org,
     OrgMembership,
     PlatformPrincipal,
@@ -40,6 +42,8 @@ READABLE = {
     "team_memberships": "org_id",
     "invites": "org_id",
     "platform_principals": "org_id",
+    "meetings": "org_id",
+    "consent_records": "org_id",
 }
 
 
@@ -54,6 +58,7 @@ class SeededOrg:
     team_id: uuid.UUID
     invite_id: uuid.UUID
     invite_token_hash: str
+    meeting_id: uuid.UUID
 
 
 def _seed(engine: Engine) -> SeededOrg:
@@ -86,7 +91,49 @@ def _seed(engine: Engine) -> SeededOrg:
                 target=f"org:{org_id}",
             )
         )
-    return SeededOrg(org_id, owner_id, team_id, invite_id, token_hash)
+    meeting_id = _seed_meeting(engine, org_id, owner_id, status="recording", team_id=team_id)
+    return SeededOrg(org_id, owner_id, team_id, invite_id, token_hash, meeting_id)
+
+
+def _seed_meeting(
+    engine: Engine,
+    org_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    *,
+    status: str,
+    team_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    meeting_id = uuid.uuid4()
+    with transaction(engine, org_id=org_id, user_id=owner_id) as tx:
+        tx.add(
+            Meeting(
+                id=meeting_id,
+                org_id=org_id,
+                team_id=team_id,
+                requested_by=owner_id,
+                platform="zoom",
+                native_meeting_id=f"{meeting_id.int % 10**11:011d}",
+                join_url=f"https://zoom.us/j/{meeting_id.hex}?pwd=secret",
+                join_url_key=f"zoom.us/j/{meeting_id.hex}",
+                platform_meeting_id=meeting_id.int % 10**9,
+                status=status,
+                failure_reason="internal_error" if status == "failed" else None,
+                settings_snapshot={"bot_name": "munshi.ai (recording)"},
+            )
+        )
+        tx.flush()
+        tx.add(
+            ConsentRecord(
+                meeting_id=meeting_id,
+                org_id=org_id,
+                bot_display_name="munshi.ai (recording)",
+                disclosure_text="recording",
+                privacy_notice_url="https://example.test/privacy",
+                disclosure_channel="chat",
+                admitted_at=datetime.now(UTC),
+            )
+        )
+    return meeting_id
 
 
 def _count(tx, table: str, column: str, org_id: uuid.UUID) -> int:
@@ -160,6 +207,8 @@ def test_other_org_rows_are_invisible(
         ("team_memberships", "role = 'member'"),
         ("invites", "role = 'admin'"),
         ("platform_principals", "key_id = 'hijacked'"),
+        ("meetings", "status = 'cancelled'"),
+        ("consent_records", "disclosure_detail = 'hijacked'"),
     ],
 )
 def test_other_org_rows_cannot_be_updated_or_deleted(
@@ -427,3 +476,120 @@ def test_app_role_cannot_call_the_scan_role_directly(app_engine: Engine) -> None
     with pytest.raises(ProgrammingError):
         with transaction(app_engine) as tx:
             tx.execute(text("SET ROLE andai_scan"))
+
+
+# ─── cross-org listing of orgs with open meetings (migration 0004) ────────────────────────────────
+
+
+def test_open_meeting_orgs_lists_open_meetings_while_the_table_stays_hidden(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    done_only = _seed(app_engine)
+    with transaction(app_engine, org_id=done_only.org_id) as tx:
+        tx.execute(
+            text("UPDATE meetings SET status = 'done' WHERE org_id = :o"), {"o": done_only.org_id}
+        )
+
+    with transaction(app_engine) as tx:  # andai_app, no app.org_id
+        listed = list(tx.scalars(text("SELECT andai_open_meeting_orgs()")))
+        direct = tx.execute(text("SELECT count(*) FROM meetings")).scalar_one()
+        consent = tx.execute(text("SELECT count(*) FROM consent_records")).scalar_one()
+
+    assert {org_a.org_id, org_b.org_id} <= set(listed)
+    assert done_only.org_id not in listed
+    assert len(listed) == len(set(listed))  # one row per org, not per meeting
+    assert (direct, consent) == (0, 0)
+
+
+def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> None:
+    with superuser_engine.connect() as conn:
+        fn = conn.execute(
+            text(
+                "SELECT p.prosecdef, r.rolname, p.proconfig, pg_get_function_result(p.oid),"
+                " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                " FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner"
+                " WHERE p.proname = 'andai_open_meeting_orgs'"
+            )
+        ).one()
+        meeting_columns = [
+            name
+            for (name,) in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'meetings'"
+                )
+            )
+        ]
+        readable = {
+            column
+            for column in meeting_columns
+            if conn.execute(
+                text("SELECT has_column_privilege('andai_scan', 'meetings', :c, 'SELECT')"),
+                {"c": column},
+            ).scalar_one()
+        }
+        consent_columns = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.column_privileges"
+                " WHERE grantee = 'andai_scan' AND table_name = 'consent_records'"
+            )
+        ).scalar_one()
+        can_create = conn.execute(
+            text("SELECT has_schema_privilege('andai_scan', 'public', 'CREATE')")
+        ).scalar_one()
+    assert fn[0] is True and fn[1] == "andai_scan"
+    assert fn[2] == ["search_path=public, pg_temp"]
+    assert fn[3] == "SETOF uuid"
+    assert (fn[4], fn[5]) == (False, True)
+    assert readable == {"org_id", "status"}
+    assert consent_columns == 0
+    assert can_create is False
+
+
+def test_a_failed_meeting_needs_a_reason_and_only_a_failed_one_has_one(
+    app_engine: Engine, org_a: SeededOrg
+) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError, match="failed_has_reason"):
+        with transaction(app_engine, org_id=org_a.org_id) as tx:
+            tx.execute(
+                text("UPDATE meetings SET status = 'failed' WHERE id = :m"),
+                {"m": org_a.meeting_id},
+            )
+    with pytest.raises(IntegrityError, match="failed_has_reason"):
+        with transaction(app_engine, org_id=org_a.org_id) as tx:
+            tx.execute(
+                text("UPDATE meetings SET failure_reason = 'internal_error' WHERE id = :m"),
+                {"m": org_a.meeting_id},
+            )
+
+
+def test_one_live_meeting_per_link_and_per_native_id_in_an_org(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    with transaction(app_engine, org_id=org_a.org_id) as tx:
+        key, native = tx.execute(
+            text("SELECT join_url_key, native_meeting_id FROM meetings WHERE id = :m"),
+            {"m": org_a.meeting_id},
+        ).one()
+
+    def insert_like(org: SeededOrg, **overrides: object) -> None:
+        values = {
+            "id": uuid.uuid4(), "org_id": org.org_id, "requested_by": org.owner_id,
+            "platform": "zoom", "join_url": "https://zoom.us/j/1", "join_url_key": key,
+            "native_meeting_id": None, "status": "dispatching", **overrides,
+        }
+        with transaction(app_engine, org_id=org.org_id) as tx:
+            tx.execute(insert(Meeting.__table__).values(**values))
+
+    with pytest.raises(IntegrityError, match="uq_meetings_live_join_url_key"):
+        insert_like(org_a)
+    with pytest.raises(IntegrityError, match="uq_meetings_live_native_id"):
+        insert_like(org_a, join_url_key="zoom.us/j/other", native_meeting_id=native)
+    # A terminal row of the same link, and the same link in another org, are allowed.
+    insert_like(org_a, status="done")
+    insert_like(org_b, native_meeting_id=native)

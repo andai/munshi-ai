@@ -10,5 +10,9 @@ Each org's principal on the meeting platform:
   one row per org), `open_key`, and `sync` (re-applies `configure` to every existing principal;
   `python -m andai_core principals-sync`). The key is never returned by a route or logged.
 
+- `gateway_client.py` — `HttpPlatformGateway`, the gateway client (`PLATFORM_GATEWAY_URL`), called
+  with one org's key per call: `dispatch` (`POST /bots`), `list_bots`, `get_meeting`, `stop`.
+  Errors carry the call and status only; a structured duplicate 409 is `DuplicateMeeting`.
+
 `andai_core.org.service.create_org` provisions and configures the principal before it inserts the
 org, so an org never exists without a configured one.
