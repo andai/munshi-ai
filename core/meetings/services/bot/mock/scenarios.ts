@@ -14,7 +14,7 @@
  * emit-n-segments · slow-join · recording · silence-left-alone. Selected by env `MOCK_SCENARIO`.
  */
 import type { JoinDriver, JoinOutcome, Pipeline, TranscriptSink } from '../src/ports.js';
-import type { CompletionReason, TranscriptSegment } from '../src/contracts.js';
+import type { CompletionReason, DisclosureOutcome, TranscriptSegment } from '../src/contracts.js';
 import type { Invocation } from '../src/config.js';
 
 export type ScenarioName =
@@ -39,11 +39,14 @@ export interface Scenario {
   endAfterMs?: number;
   /** Use the real silence AlonenessSource instead of a no-op source. */
   silenceAlone?: boolean;
+  /** The chat-disclosure outcome reported after admission when the invocation carries a
+   *  `disclosure` (the real reporting path, disclosure.ts, with a fake sender). */
+  disclosure?: DisclosureOutcome['channel'];
 }
 
 /** The scenario registry. Live timings; the fidelity test overrides them to run in milliseconds. */
 export const SCENARIOS: Record<ScenarioName, Scenario> = {
-  'normal':          { name: 'normal',          join: 'admitted', segments: 3, recording: true, endAfterMs: 1500 },
+  'normal':          { name: 'normal',          join: 'admitted', segments: 3, recording: true, endAfterMs: 1500, disclosure: 'chat' },
   'emit-n-segments': { name: 'emit-n-segments', join: 'admitted', segments: 12,                 endAfterMs: 1500 },
   'slow-join':       { name: 'slow-join',       join: 'admitted', segments: 1, joinDelayMs: 1500, endAfterMs: 1000 },
   'recording':       { name: 'recording',       join: 'admitted', segments: 1, recording: true, endAfterMs: 1000 },
@@ -128,4 +131,11 @@ export function fakePipeline(sc: Scenario, inv: Invocation, transcript: Transcri
     },
     async stop() { cancelled = true; },
   };
+}
+
+/** FakeChatSender — the scenario's chat outcome, at once (no browser). */
+export function fakeChatSender(channel: DisclosureOutcome['channel']): (message: string, timeoutMs: number) => Promise<DisclosureOutcome> {
+  return async () => (channel === 'chat'
+    ? { channel: 'chat', posted_at: new Date().toISOString() }
+    : { channel: 'bot_name_only', detail: 'mock_scenario' });
 }

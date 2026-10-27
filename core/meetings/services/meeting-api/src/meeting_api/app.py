@@ -371,6 +371,7 @@ def _mount_lifecycle(
     """
     import jsonschema
 
+    from .lifecycle.disclosure import disclosure_outcome
     from .lifecycle.machine import IllegalTransition, TransitionSource
     from .lifecycle.provenance import build_service_provenance
     from .lifecycle.receiver import conforms
@@ -520,6 +521,25 @@ def _mount_lifecycle(
                     },
                 )
         rec = change.record
+        # The bot's post-admission disclosure report (BOT-03) rides an `active` event — usually a
+        # replay of the status the FSM already holds, so it is stored on its own, outside the
+        # no_op-gated persist below, and without touching `status` (the row may be `stopping`).
+        # The repo keeps the first report. Best-effort: a store fault never fails the callback.
+        disclosure = disclosure_outcome(body)
+        if disclosure is not None and connection_id:
+            try:
+                stored = await meeting_repo.record_disclosure(
+                    session_uid=connection_id, disclosure=disclosure
+                )
+                log_event(
+                    "meeting_disclosure_reported", audience="system",
+                    span="lifecycle.callback",
+                    fields={"channel": disclosure["channel"], "stored": bool(stored),
+                            "detail": disclosure.get("detail")},
+                )
+            except Exception as e:  # noqa: BLE001 — persistence is best-effort
+                log_event("disclosure_persist_failed", audience="system", level="warning",
+                          span="lifecycle.callback", fields={"error": str(e)})
         # Build + record the status_change envelope only on a REAL advance — an idempotent replay
         # (change.no_op, e.g. the bot's 3x terminal retry) must NOT double-count it. The persist, the
         # webhook deliver, and the ws publish below are already no_op-gated (they hang off meeting_row,

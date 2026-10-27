@@ -20,6 +20,7 @@
  *   • createGmeetSpeakers({ log })                — gmeet lane glow → litNames()
  *   • createMixedAudioCapture(stream, onPcm)      — mixed lane (zoom/teams)
  *   • createCsrcPoll({ onTransition, … })         — mixed lane transport sensor (CSRC transitions)
+ *   • send{Gmeet,Teams,Zoom}ChatMessage(text, …)  — the recording notice in chat (disclosure.ts)
  * We additionally expose the rest of the gmeet capture surface
  * (GmeetChannelBinder, createPcmCaptureNode, createGmeetCaptureV1, pickBoundName,
  * installRemoteAudioHook) so the global mirrors production's shape and the same
@@ -68,6 +69,7 @@ import {
   pickBoundName,
   GmeetChannelBinder,
   createPcmCaptureNode,
+  sendGmeetChatMessage,
 } from ${JSON.stringify(GMEET)};
 import {
   createMixedAudioCapture,
@@ -87,10 +89,12 @@ import {
 import {
   createTeamsSpeakers,
   createTeamsCaptions,
+  sendTeamsChatMessage,
 } from ${JSON.stringify(TEAMS)};
 import {
   createZoomSpeakers,
   createTrackNameResolver,
+  sendZoomChatMessage,
 } from ${JSON.stringify(ZOOM)};
 
 const MunshiBrowserUtils = {
@@ -119,6 +123,10 @@ const MunshiBrowserUtils = {
   // ── zoom lane (active-speaker DOM watcher → 'dom-active' naming hints) ──
   createZoomSpeakers,        // capture-bridge.ts: w.MunshiBrowserUtils.createZoomSpeakers
   createTrackNameResolver,   // capture-bridge.ts setupPerTrack: the pure channel↔name correlator
+  // ── recording notice (BOT-03): post one chat message after admission (disclosure.ts) ──
+  sendGmeetChatMessage,
+  sendTeamsChatMessage,
+  sendZoomChatMessage,
 };
 
 (globalThis).MunshiBrowserUtils = MunshiBrowserUtils;
@@ -165,4 +173,5 @@ console.log('  - GmeetChannelBinder / createPcmCaptureNode');
 console.log('  - createMixedAudioCapture / installRemoteAudioHook / selectTeamsMixStreams / createCsrcPoll');
 console.log('  - createJitsiSpeakers / createJitsiChat / sendJitsiChatMessage');
 console.log('  - createTeamsSpeakers / createTeamsCaptions / createZoomSpeakers / createTrackNameResolver');
+console.log('  - sendGmeetChatMessage / sendTeamsChatMessage / sendZoomChatMessage');
 console.log('  - window.performLeaveAction');

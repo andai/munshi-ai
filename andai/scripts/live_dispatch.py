@@ -5,11 +5,12 @@ The operator's live harness (andai/docs/live-test.md). Against a running stack o
 
 1. ensures the operator test principal `live-test@principals.munshi.invalid` on admin-api (diagnostic
    signal tapes off), mints a `bot,tx` key for this run and revokes it on exit;
-2. dispatches the bot through the gateway (`POST /bots` with `meeting_url`, `language` and the
-   recorder bot name);
+2. dispatches the bot through the gateway (`POST /bots` with `meeting_url`, `language`, the
+   recorder bot name and, with `--disclosure`, the recording notice the bot posts in meeting chat);
 3. watches the meeting on the gateway's `/ws` feed (status frames and live transcript frames) and by
-   polling `GET /meetings/{id}`, printing every status change with a UTC timestamp and every
-   transcript segment with its lag (arrival time minus the segment's `absolute_end_time`);
+   polling `GET /meetings/{id}`, printing every status change with a UTC timestamp, every
+   transcript segment with its lag (arrival time minus the segment's `absolute_end_time`) and the
+   bot's reported chat-disclosure outcome (`meeting.data.disclosure`);
 4. on Ctrl-C, `--stop-after` or a terminal status, stops the bot (`DELETE /bots/...`), waits for the
    meeting to end and prints a summary with the lag statistics.
 
@@ -48,6 +49,11 @@ from websockets.asyncio.client import connect as ws_connect
 PRINCIPAL_EMAIL = "live-test@principals.munshi.invalid"
 SCOPES = ("bot", "tx")
 DEFAULT_BOT_NAME = "munshi.ai (recording)"
+# The recording notice `--disclosure` posts when given no text (the privacy link is appended).
+DEFAULT_DISCLOSURE = (
+    "munshi.ai is recording and transcribing this meeting for the organiser. "
+    "To stop it, remove the munshi.ai bot from the call. Privacy notice:"
+)
 HOST = "127.0.0.1"
 TERMINAL = frozenset({"completed", "failed"})
 # The env keys this harness reads; nothing else in the env file is kept in memory.
@@ -240,6 +246,7 @@ class Watch:
     lags: list[float] = field(default_factory=list)
     first_segment_after_active: float | None = None
     detail: dict[str, object] = field(default_factory=dict)
+    disclosure: dict[str, object] | None = None
     changed_at: datetime | None = None
     _confirmed: set[str] = field(default_factory=set)
     _drafts: set[str] = field(default_factory=set)
@@ -303,14 +310,27 @@ class Watch:
         data = body.get("data") if isinstance(body.get("data"), dict) else {}
         detail = {k: data.get(k) for k in ("completion_reason", "failure_stage") if data.get(k)}
         self.detail.update(detail)
+        self.on_disclosure(data.get("disclosure"), at)
         if asked is not None and self.changed_at is not None and asked < self.changed_at:
             return
         self.on_status(str(body.get("status") or ""), source, at, **detail)
+
+    def on_disclosure(self, outcome: object, at: datetime) -> None:
+        """The bot's chat-disclosure outcome, printed once when it first appears on the meeting."""
+        if self.disclosure is not None or not isinstance(outcome, dict) or not outcome.get("channel"):
+            return
+        self.disclosure = {k: outcome.get(k) for k in ("channel", "posted_at", "detail")
+                           if outcome.get(k) is not None}
+        posted = parse_ts(outcome.get("posted_at"))
+        after = (round((posted - self.active_at).total_seconds(), 2)
+                 if posted is not None and self.active_at is not None else None)
+        self.emitter.emit("disclosure", at, **self.disclosure, posted_after_active_s=after)
 
     def summary(self) -> dict[str, object]:
         return {
             "final_status": self.status,
             **self.detail,
+            "disclosure": self.disclosure,
             "reached_active": self.reached_active,
             "segments": len(self._confirmed),
             "drafts": len(self._drafts),
@@ -500,6 +520,8 @@ async def dispatch_and_watch(args: argparse.Namespace, emitter: Emitter, gateway
         }
         if args.language:
             body["language"] = args.language
+        if args.disclosure:
+            body["disclosure"] = {"text": args.disclosure, "privacy_notice_url": args.privacy_url}
         try:
             response = await gateway.post("/bots", json=body)
         except httpx.HTTPError as exc:
@@ -578,8 +600,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "the meeting ends)")
     parser.add_argument("--bot-name", default=DEFAULT_BOT_NAME,
                         help=f"the bot's display name (default {DEFAULT_BOT_NAME!r})")
+    parser.add_argument("--disclosure", nargs="?", const=DEFAULT_DISCLOSURE, metavar="TEXT",
+                        help="ask the bot to post this recording notice in meeting chat once admitted "
+                             "(no TEXT: the default notice); needs --privacy-url")
+    parser.add_argument("--privacy-url", metavar="URL",
+                        help="the privacy-notice link appended to the --disclosure message (http/https)")
     parser.add_argument("--log", help="also append the output lines to this file (absolute path)")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.disclosure and not args.privacy_url:
+        parser.error("--disclosure needs --privacy-url")
+    if args.privacy_url and not args.disclosure:
+        parser.error("--privacy-url is only used with --disclosure")
+    if args.privacy_url and urlsplit(args.privacy_url).scheme not in ("http", "https"):
+        parser.error("--privacy-url must be an http:// or https:// URL")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

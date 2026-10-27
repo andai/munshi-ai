@@ -55,7 +55,7 @@ help:
 	@echo "make -C andai db-init | db-migrate                       andai database + roles (idempotent) | migrate to head"
 	@echo "make -C andai bootstrap EMAIL=a@b.c ORG=name [NAME=..]   first org + owner (mails a set-password link)"
 	@echo "make -C andai principals-sync                            re-apply org principals' platform settings (prefix, tapes off, cap)"
-	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file]   real bot into a TEST meeting"
+	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file] [PRIVACY_URL=url]   real bot into a TEST meeting (PRIVACY_URL: + chat notice)"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
 	@echo "make -C andai env-check | env-example                    root .env.example is complete | regenerate its used-by lines"
@@ -146,8 +146,8 @@ LANGUAGE_CODE ?= en
 STOP_AFTER ?=
 LOG ?=
 live-dispatch: _env-file
-	@test -n "$(URL)" || { echo "usage: make -C andai live-dispatch URL='<test meeting link>' [LANGUAGE_CODE=en|hi] [STOP_AFTER=seconds] [LOG=/abs/file] [ENV_FILE=/abs/env]" >&2; exit 2; }
-	@uv run --directory $(ROOT)/andai python scripts/live_dispatch.py --env-file "$(ENV_FILE)" --url '$(URL)' --language "$(LANGUAGE_CODE)" $(if $(STOP_AFTER),--stop-after "$(STOP_AFTER)") $(if $(LOG),--log "$(LOG)")
+	@test -n "$(URL)" || { echo "usage: make -C andai live-dispatch URL='<test meeting link>' [LANGUAGE_CODE=en|hi] [STOP_AFTER=seconds] [LOG=/abs/file] [ENV_FILE=/abs/env] [PRIVACY_URL=https://… (posts the default recording notice in chat)]" >&2; exit 2; }
+	@uv run --directory $(ROOT)/andai python scripts/live_dispatch.py --env-file "$(ENV_FILE)" --url '$(URL)' --language "$(LANGUAGE_CODE)" $(if $(STOP_AFTER),--stop-after "$(STOP_AFTER)") $(if $(LOG),--log "$(LOG)") $(if $(PRIVACY_URL),--disclosure --privacy-url '$(PRIVACY_URL)')
 
 ## images — build every catalogue entry in order (bases first), tagged
 ## ghcr.io/andai/munshi-<name>:$(VERSION) and :dev; prints size and build time per image.

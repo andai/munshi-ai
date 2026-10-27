@@ -92,6 +92,7 @@ make -C andai live-dispatch ENV_FILE=$PWD/.work/.local/env.live LANGUAGE_CODE=en
 | `LANGUAGE_CODE` | the language spoken, e.g. `en` or `hi` (default `en`; not `LANG`, which is the shell locale) |
 | `STOP_AFTER` | stop the bot after this many seconds (default: until Ctrl-C or the meeting ends) |
 | `LOG` | an absolute path; the output lines are appended there too |
+| `PRIVACY_URL` | an http(s) privacy-notice link; with it the bot posts the default recording notice and this link in the meeting chat once admitted (`--disclosure`; the script also takes `--disclosure "<text>"`) |
 
 What happens:
 
@@ -101,7 +102,9 @@ What happens:
 2. It sends the bot (`POST /bots` on the local gateway) with the link and the language.
 3. Admit **munshi.ai (recording)** (on Teams, **munshi.ai - recording**) from the meeting's lobby,
    then speak.
-4. It follows the meeting over the gateway's `/ws` feed and by polling the meeting every 5 s.
+4. It follows the meeting over the gateway's `/ws` feed and by polling the meeting every 5 s. With
+   `PRIVACY_URL`, check the meeting chat: the notice and the link should appear within about 20 s of
+   admission, and the harness prints the bot's reported outcome (`disclosure` line).
 5. Ctrl-C (or `STOP_AFTER`) stops the bot and waits up to 90 s for the meeting to end; a second
    Ctrl-C leaves without waiting. If the meeting ends first (the bot is removed, the host ends the
    call, a join fails), the harness ends with it.
@@ -118,8 +121,9 @@ One JSON object per line, each with a UTC `ts` and an `event`:
 | `status` | `status` (`requested`, `joining`, `awaiting_admission`, `active`, `needs_help`, `stopping`, `completed`, `failed`), `source` (`dispatch`, `ws`, `poll`), and on a terminal status `completion_reason` / `failure_stage` |
 | `draft` | the first sight of a segment still being spoken, with its lag so far |
 | `segment` | a finished segment: `lag_s`, `language`, `speaker`, `text` (first 120 characters) |
+| `disclosure` | the bot's chat-notice outcome from `meeting.data.disclosure`: `channel` (`chat` or `bot_name_only`), `posted_at` / `detail`, and `posted_after_active_s` |
 | `stop_sent` | why the harness stopped the bot, and the gateway's HTTP status |
-| `summary` | `final_status`, `reached_active`, segment counts, `first_segment_after_active_s`, and `lag_s` (`count`, `first`, `median`, `p95`, `max`) |
+| `summary` | `final_status`, `disclosure`, `reached_active`, segment counts, `first_segment_after_active_s`, and `lag_s` (`count`, `first`, `median`, `p95`, `max`) |
 | `ws_subscribed`, `ws_dropped`, `ws_error`, `poll_error`, `key_revoked`, `setup_error` | plumbing |
 
 **Lag** is the time the segment reached the harness minus the end of its speech

@@ -243,6 +243,14 @@ class MeetingRepo(Protocol):
         in-process ``MeetingStore``."""
         ...
 
+    async def record_disclosure(self, *, session_uid: str, disclosure: dict) -> bool:
+        """Store the bot's reported disclosure outcome at ``meeting.data.disclosure`` for the meeting
+        that owns ``session_uid``. The first report wins: when the row already carries one, nothing
+        changes and ``False`` is returned. Never touches ``status`` (a disclosure report rides an
+        ``active`` event that may arrive while the row is ``stopping``). ``False`` for an unknown
+        session."""
+        ...
+
 
 @runtime_checkable
 class RuntimeClient(Protocol):
@@ -404,7 +412,25 @@ class DuplicateMeeting(Exception):
 
     Raised by ``MeetingRepo.create_meeting_guarded`` (the atomic dedup) — either because the in-txn
     dedup query found an active row, or because the unique partial index on active rows rejected the
-    concurrent insert (the DB-level backstop). Re-exported from ``service`` for the router's mapping."""
+    concurrent insert (the DB-level backstop) — and by ``reopen_meeting`` when the row to reopen is
+    live again. Re-exported from ``service`` for the router's mapping.
+
+    Carries the existing meeting's ``meeting_id``, ``platform`` and ``native_meeting_id`` so the 409
+    names the meeting the caller collided with (``code: duplicate_meeting``). ``meeting_id`` is
+    ``None`` only when the backstop fired and the winning row could not be read back."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        meeting_id: Optional[int] = None,
+        platform: Optional[str] = None,
+        native_meeting_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.meeting_id = meeting_id
+        self.platform = platform
+        self.native_meeting_id = native_meeting_id
 
 
 # Statuses in which the bot has NOT yet reached the meeting. Their row goes quiet by DESIGN — a bot

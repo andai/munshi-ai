@@ -1,0 +1,10 @@
+{
+  "platform": "google_meet",
+  "meetingUrl": "https://meet.google.com/xxx-xxxx-xxx",
+  "botName": "munshi.ai (recording)",
+  "redisUrl": "redis://redis:6379",
+  "disclosure": {
+    "text": "munshi.ai is transcribing this meeting for its organiser. Remove the bot to stop it.",
+    "privacy_notice_url": "https://example.com/privacy"
+  }
+}

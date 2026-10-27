@@ -157,6 +157,7 @@ def build_invocation(
     s3_bucket: Optional[str] = None,
     s3_access_key: Optional[str] = None,
     s3_secret_key: Optional[str] = None,
+    disclosure: Optional[dict] = None,
 ) -> dict:
     """Assemble the bot's ``invocation.v1`` Invocation (the parent's ``BOT_CONFIG``).
 
@@ -202,6 +203,9 @@ def build_invocation(
         "s3Bucket": s3_bucket,
         "s3AccessKey": s3_access_key,
         "s3SecretKey": s3_secret_key,
+        # The recording notice the bot posts in meeting chat once admitted (BOT-03). Absent → the
+        # bot posts nothing, exactly as before the field existed.
+        "disclosure": dict(disclosure) if disclosure else None,
     }
     invocation = {k: v for k, v in invocation.items() if v is not None}
     conforms_invocation(invocation)

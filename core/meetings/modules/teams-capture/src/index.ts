@@ -54,6 +54,8 @@ export type {
 } from './producer-dom-trace.js';
 export { createTeamsChat } from './teams-chat.js';
 export type { TeamsChat, TeamsChatMessage } from './teams-chat.js';
+export { sendTeamsChatMessage, teamsChatSelectors, domChatInput } from './teams-chat-send.js';
+export type { ChatSendInput, ChatSendOptions, ChatSendResult, ChatSendFailure, ChatSelectors } from './teams-chat-send.js';
 export { createTeamsCaptions, teamsCaptionSelectors } from './msteams-captions.js';
 export type {
   TeamsCaptions,

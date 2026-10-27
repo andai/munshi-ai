@@ -15,6 +15,19 @@
       "description": "Furthest stage reached, for `failed` attribution.",
       "enum": ["requested", "joining", "awaiting_admission", "active"]
     },
+    "DisclosureOutcome": {
+      "description": "How the bot told the meeting it is recording: `chat` when the invocation's disclosure was posted in meeting chat (posted_at = when the sent message was seen), `bot_name_only` when it could not be posted and only the bot's display name carries the notice (detail = why).",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["channel"],
+      "properties": {
+        "channel": { "enum": ["chat", "bot_name_only"] },
+        "posted_at": { "type": "string", "format": "date-time" },
+        "detail": { "type": "string", "maxLength": 500 }
+      },
+      "if": { "properties": { "channel": { "const": "chat" } } },
+      "then": { "required": ["posted_at"] }
+    },
     "LifecycleEvent": {
       "description": "One status report. connection_id + status always present; the rest are state-dependent (forensics on terminal states). LIBERAL ingestion (additionalProperties:true): the control plane validates the core shape but TOLERATES extra fields the real bot emits, matching main's pydantic ignore-extras — the carve's earlier additionalProperties:false rejected the bot's real callbacks.",
       "type": "object",
@@ -39,7 +52,8 @@
         },
         "speaker_events": { "type": "array" },
         "timestamp": { "type": "string", "description": "ISO8601 emit time — the real bot sends it on every callback" },
-        "error_details": { "type": "string", "description": "terminal: free-text error context from the bot" }
+        "error_details": { "type": "string", "description": "terminal: free-text error context from the bot" },
+        "disclosure": { "$ref": "#/$defs/DisclosureOutcome", "description": "post-admission: the outcome of the chat disclosure, reported once on an `active` event; persisted at meeting.data.disclosure (first report wins)" }
       }
     }
   }

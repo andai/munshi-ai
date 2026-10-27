@@ -452,6 +452,9 @@ async def request_bot(
     webhook_url: Optional[str] = None,
     webhook_secret: Optional[str] = None,
     webhook_events: Optional[dict] = None,
+    # The recording notice the bot posts in meeting chat once admitted (``{text,
+    # privacy_notice_url}``, validated by the router). Rides the invocation only.
+    disclosure: Optional[dict] = None,
 ) -> dict:
     """Run the spawn flow and return a MeetingResponse-shaped dict.
 
@@ -804,6 +807,7 @@ async def request_bot(
         # silence-window module default applies (the lobby window stays forgiving for
         # human-in-the-loop dashboard joins).
         automatic_leave=automatic_leave or {"waitingRoomTimeout": lobby_budget_ms()},
+        disclosure=disclosure,
     )
 
     # 4b. THE SPAWN FENCE (F2, stage rev 193 row 26313). Re-read this row's user-stop flag from the

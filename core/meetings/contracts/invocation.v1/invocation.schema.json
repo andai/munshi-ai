@@ -14,6 +14,16 @@
         "everyoneLeftTimeout": { "type": "integer", "default": 120000 }
       }
     },
+    "Disclosure": {
+      "description": "The recording notice the bot posts in meeting chat once it is admitted. Optional: an invocation without it posts nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "privacy_notice_url"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 500, "description": "the notice, posted as one chat message followed by the privacy-notice link" },
+        "privacy_notice_url": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048, "description": "http(s) link to the privacy notice" }
+      }
+    },
     "Invocation": {
       "type": "object",
       "additionalProperties": false,
@@ -54,7 +64,8 @@
         "s3Endpoint": { "type": "string" },
         "s3Bucket": { "type": "string" },
         "s3AccessKey": { "type": "string", "description": "SECRET; placeholder in goldens" },
-        "s3SecretKey": { "type": "string", "description": "SECRET; placeholder in goldens" }
+        "s3SecretKey": { "type": "string", "description": "SECRET; placeholder in goldens" },
+        "disclosure": { "$ref": "#/$defs/Disclosure" }
       }
     }
   }

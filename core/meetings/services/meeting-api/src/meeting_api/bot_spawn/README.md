@@ -42,6 +42,17 @@ still active) is still rejected (409).
 > field — a typed `sessions` field is likewise a `vN+1`. `gate:contract-version` stays green (no
 > sealed schema touched).
 
+### Recording notice (`disclosure`) and the duplicate 409
+`POST /bots` accepts an optional `disclosure: {text (1..500 chars), privacy_notice_url (http/https)}`,
+validated by the router (422 before any write) and passed to the bot as invocation.v1 `disclosure`.
+The bot posts it in meeting chat after admission and reports the outcome on lifecycle.v1; the
+lifecycle callback stores it at `meeting.data.disclosure` through `MeetingRepo.record_disclosure`
+(first report wins, `status` untouched). Without the field nothing changes.
+
+A duplicate active meeting answers 409 with the usual `detail` plus `code: "duplicate_meeting"`,
+`meeting_id`, `platform` and `native_meeting_id` of the existing meeting (`DuplicateMeeting`
+carries them from every raise: the dedup query, the unique-index backstop and `reopen_meeting`).
+
 ### P3e — max-bots (per-user concurrency)
 A pre-check BEFORE the runtime call: count the user's ACTIVE bots (status in
 `{requested, joining, awaiting_admission, active}`, **excluding** infra `browser_session` —
@@ -50,7 +61,8 @@ the gateway's `X-User-Limits` header (resolved upstream from `/internal/validate
 The runtime kernel's own `owner_quota` → `QuotaExceeded` (→ 429) is the defense-in-depth BACKSTOP.
 Join-retry re-spawns and `continue_meeting` sessions count against the same cap.
 
-Tests: `../../../tests/test_bot_spawn.py` · `test_continue_meeting.py` · `test_max_bots.py`.
+Tests: `../../../tests/test_bot_spawn.py` · `test_continue_meeting.py` · `test_max_bots.py` ·
+`test_disclosure.py` · `test_duplicate_detail.py`.
 Join-retry (P3d) lives in the `lifecycle` brick: `lifecycle/retry.py` + `test_join_retry.py`.
 
 ### Optional external service authority

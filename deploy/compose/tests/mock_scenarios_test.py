@@ -8,7 +8,8 @@ on the real stack with no browser/STT/GPU. SoC: backend ⊥ worker (the worker's
 Each scenario is selected per-spawn via `bot_name='mock:<scenario>'` (no contract change — botName is in
 invocation.v1) and drives the REAL meeting-api → runtime → bot path. Gated MOCK_BOT=1.
 
-Proves:  normal → completed + transcript + recording  ·  reject/crash/timeout → failed + attributable
+Proves:  normal → completed + transcript + recording + chat disclosure on meeting.data  ·  duplicate
+spawn → 409 naming the existing meeting (SQL adapter)  ·  reject/crash/timeout → failed + attributable
 reason (P18)  ·  emit-n → transcript dataflow under volume  ·  immediate-stop → leave → terminal  ·
 live max-bots 429 + freed-slot (P7)  ·  speak-ack → acts.v1 round-trip  ·  continue → session reuse  ·
 canAccess deny (P20).
@@ -37,7 +38,7 @@ TERMINAL = {"completed", "failed"}
 
 # ── helpers ──────────────────────────────────────────────────────────────────────────────────────
 
-def _spawn(stack, user_id, scenario, *, native_id=None, max_bots=5):
+def _spawn(stack, user_id, scenario, *, native_id=None, max_bots=5, extra=None):
     # transcribe_enabled=false — this lane is explicitly "no browser/STT/GPU": the CI stack has no
     # STT creds, so a default (transcription-on) spawn is 503'd by meeting-api's CC4 fail-loud guard
     # before any FSM runs. The mock fakes the pipeline and emits its transcript segments regardless,
@@ -49,6 +50,7 @@ def _spawn(stack, user_id, scenario, *, native_id=None, max_bots=5):
     }
     if scenario == "silence-left-alone":
         payload["automatic_leave"] = {"max_time_left_alone": 250}
+    payload.update(extra or {})
     code, body = post_json(
         f"{stack.meeting_api}/bots",
         payload,
@@ -115,10 +117,16 @@ def _stop_bot(stack, user_id, native_id):
 
 # ── normal: the full happy lifecycle ──────────────────────────────────────────────────────────────
 
+DISCLOSURE = {
+    "text": "munshi.ai is transcribing this meeting for its organiser. Remove the bot to stop it.",
+    "privacy_notice_url": "https://example.com/privacy",
+}
+
+
 @mock_only
 def test_mock_normal_full_lifecycle(stack):
     user_id = _create_user(stack, max_bots=5)
-    native_id, _ = _spawn(stack, user_id, "normal")
+    native_id, _ = _spawn(stack, user_id, "normal", extra={"disclosure": DISCLOSURE})
     m = _wait_meeting(stack, user_id, native_id, statuses={"completed"})
     if not m or m["status"] != "completed":
         _diag(stack, native_id, m)
@@ -143,7 +151,45 @@ def test_mock_normal_full_lifecycle(stack):
             break
         time.sleep(2)
     assert keys, f"normal recording chunk not in storage for user {user_id}"
-    print(f"\n[mock/normal] completed · {segs} transcript seg(s) · recording in storage ({len(keys)} obj)")
+
+    # BOT-03: the disclosure rode the invocation, the bot reported `chat` after admission, and the
+    # outcome is on the meeting row (the mock's sender stands in for the browser's).
+    disclosure = stack.psql(
+        "SELECT COALESCE(data->'disclosure'->>'channel','') || '|' || COALESCE(data->'disclosure'->>'posted_at','') "
+        f"FROM meetings WHERE id={m['id']};"
+    )
+    channel, _, posted_at = disclosure.partition("|")
+    assert channel == "chat", f"normal: data.disclosure.channel={channel!r} (want 'chat') for meeting {m['id']}"
+    assert posted_at, f"normal: data.disclosure.posted_at missing for meeting {m['id']}"
+    print(f"\n[mock/normal] completed · {segs} transcript seg(s) · recording in storage ({len(keys)} obj)"
+          f" · disclosure chat at {posted_at}")
+
+
+# ── duplicate spawn: the SQL adapter's 409 names the meeting already running ────────────────────────
+
+@mock_only
+def test_mock_duplicate_spawn_names_existing_meeting(stack):
+    user_id = _create_user(stack, max_bots=5)
+    native_id, first = _spawn(stack, user_id, "immediate-stop")
+    try:
+        code, body = post_json(
+            f"{stack.meeting_api}/bots",
+            {"platform": "google_meet", "native_meeting_id": native_id, "bot_name": "mock:immediate-stop",
+             "transcribe_enabled": False},
+            headers={"x-user-id": str(user_id), "x-user-limits": "5"},
+        )
+        assert code == 409, f"duplicate spawn should be 409, got {code} {body}"
+        assert body == {
+            "detail": f"An active meeting already exists for google_meet/{native_id}",
+            "code": "duplicate_meeting",
+            "meeting_id": first["id"],
+            "platform": "google_meet",
+            "native_meeting_id": native_id,
+        }, f"duplicate 409 body: {body}"
+        print(f"\n[mock/duplicate] 409 names meeting {first['id']}")
+    finally:
+        _stop_bot(stack, user_id, native_id)
+        _wait_meeting(stack, user_id, native_id, statuses=TERMINAL, timeout=60)
 
 
 # ── silence-left-alone: automatic_leave → invocation → real monitor → lifecycle terminal ─────────

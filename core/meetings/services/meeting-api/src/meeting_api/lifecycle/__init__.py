@@ -30,11 +30,14 @@ rejects illegal transitions.
 * ``Disposition`` / ``disposition`` / ``may_dispatch_again`` — what a TERMINAL row leaves owed to
   its calendar occurrence (served · user-stopped · retry). The one table deciding whether a bot may
   go back into a meeting it has already been in; ``calendar_sync`` asks it before recreating a row.
+* ``disclosure_outcome`` — the bot's post-admission disclosure report (``chat`` or
+  ``bot_name_only``) normalised for ``meeting.data.disclosure``; the repo keeps the first one.
 * ``JoinFailureReason`` / ``JoinFailureAttribution`` (#1059/#1058) — the two evidence axes a
   ``failed`` pre-active meeting carries in ``data.join_evidence``: WHAT happened and WHO it belongs
   to. ``classify_join_failure`` / ``attribute_join_failure`` derive them; ``build_join_evidence``
   assembles the persisted block.
 """
+from .disclosure import DISCLOSURE_CHANNELS, disclosure_outcome
 from .join_evidence import (
     JoinFailureAttribution,
     JoinFailureReason,
@@ -113,4 +116,6 @@ __all__ = [
     "Disposition",
     "disposition",
     "may_dispatch_again",
+    "DISCLOSURE_CHANNELS",
+    "disclosure_outcome",
 ]

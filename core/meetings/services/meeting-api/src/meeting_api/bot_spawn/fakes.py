@@ -127,7 +127,10 @@ class InMemoryMeetingRepo:
                 and m["status"] in _ACTIVE_STATUSES
             ):
                 raise DuplicateMeeting(
-                    f"An active meeting already exists for {platform}/{native_meeting_id}"
+                    f"An active meeting already exists for {platform}/{native_meeting_id}",
+                    meeting_id=m["id"],
+                    platform=platform,
+                    native_meeting_id=native_meeting_id,
                 )
         # 2. cap — count the user's ACTIVE bots (browser_session excluded); reject the N+1th (429).
         if max_concurrent is not None:
@@ -230,7 +233,12 @@ class InMemoryMeetingRepo:
             if isinstance(r, dict)
         )
         if row.get("status") not in ("completed", "failed") or deletion_pending:
-            raise DuplicateMeeting("Terminal meeting is no longer reusable")
+            raise DuplicateMeeting(
+                "Terminal meeting is no longer reusable",
+                meeting_id=row["id"],
+                platform=row.get("platform"),
+                native_meeting_id=row.get("native_meeting_id"),
+            )
         row["status"] = "requested"
         row["end_time"] = None
         row["bot_container_id"] = None
@@ -325,6 +333,16 @@ class InMemoryMeetingRepo:
         for k, v in (data or {}).items():
             row["data"][k] = v
         return dict(row)
+
+    async def record_disclosure(self, *, session_uid, disclosure) -> bool:
+        sess = next((s for s in self.sessions if s["session_uid"] == session_uid), None)
+        if sess is None:
+            return False
+        row = self._meetings.get(sess["meeting_id"])
+        if row is None or row["data"].get("disclosure") is not None:
+            return False
+        row["data"]["disclosure"] = dict(disclosure)
+        return True
 
     async def count_active_bots(self, *, user_id, exclude_meeting_id=None) -> int:
         return sum(

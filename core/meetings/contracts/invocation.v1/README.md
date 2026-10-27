@@ -16,4 +16,8 @@ at boot — is deferred; for now the raw fields are faithful to today's wire.
 `Invocation` (`$defs`): required `platform · meetingUrl · botName · redisUrl`; everything else optional.
 `automaticLeave` defaults the three timeouts. No tenancy fields (deferred, ADR-0003).
 
+`disclosure` (optional, `$defs/Disclosure`): `{text ≤ 500 chars, privacy_notice_url (http/https)}`.
+When present, the bot posts `text` followed by the link in meeting chat once it is admitted and
+reports the outcome on lifecycle.v1 (`disclosure`). When absent, the bot posts nothing.
+
 Goldens (`Invocation.<case>.json`) validated by `gate:schema`.

@@ -17,5 +17,7 @@ export { createZoomSpeakers } from './zoom-speakers.js';
 export type { ZoomSpeakers } from './zoom-speakers.js';
 export { createZoomChat } from './zoom-chat.js';
 export type { ZoomChat, ZoomChatMessage } from './zoom-chat.js';
+export { sendZoomChatMessage, zoomChatSelectors, domChatInput } from './zoom-chat-send.js';
+export type { ChatSendInput, ChatSendOptions, ChatSendResult, ChatSendFailure, ChatSelectors } from './zoom-chat-send.js';
 export { createTrackNameResolver, speakerLabel, TRACK_NAME_DEFAULTS } from './track-name-resolver.js';
 export type { TrackNameResolver, TrackNameResolverOptions } from './track-name-resolver.js';
