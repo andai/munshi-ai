@@ -224,6 +224,44 @@ def test_watch_truncates_long_text_and_reports_ws_errors() -> None:
     assert watch.summary()["reached_active"] is False
 
 
+def test_watch_prints_the_disclosure_outcome_once_with_its_delay_after_admission() -> None:
+    emitter, out, _ = _emitter()
+    watch = ld.Watch(emitter)
+    watch.on_frame({"type": "meeting.status", "payload": {"status": "active"}}, T0)
+    outcome = {"channel": "chat", "posted_at": "2026-10-26T12:00:06.500Z"}
+    for _ in range(2):  # every later poll carries it again
+        watch.on_meeting({"status": "active", "data": {"disclosure": outcome}}, T0 + timedelta(seconds=10))
+
+    records = [r for r in _records(out) if r["event"] == "disclosure"]
+    assert records == [{"ts": records[0]["ts"], "event": "disclosure", "channel": "chat",
+                        "posted_at": "2026-10-26T12:00:06.500Z", "posted_after_active_s": 6.5}]
+    assert '"channel": "chat"' in out.getvalue()
+    assert watch.summary()["disclosure"] == outcome
+
+
+def test_watch_reports_a_name_only_outcome_with_its_reason() -> None:
+    emitter, out, _ = _emitter()
+    watch = ld.Watch(emitter)
+    watch.on_meeting({"status": "active", "data": {"disclosure": {
+        "channel": "bot_name_only", "detail": "composer_disabled"}}}, T0)
+    record = [r for r in _records(out) if r["event"] == "disclosure"][0]
+    assert record["channel"] == "bot_name_only" and record["detail"] == "composer_disabled"
+    assert record["posted_after_active_s"] is None
+
+
+def test_disclosure_flag_defaults_the_text_and_needs_a_privacy_link() -> None:
+    args = ld.parse_args(["--url", MEET, "--disclosure", "--privacy-url", "https://example.com/p"])
+    assert args.disclosure == ld.DEFAULT_DISCLOSURE and args.privacy_url == "https://example.com/p"
+    assert len(ld.DEFAULT_DISCLOSURE) + len(" https://example.com/p") <= 300
+    custom = ld.parse_args(["--url", MEET, "--disclosure", "Recording.", "--privacy-url", "http://x.example/p"])
+    assert custom.disclosure == "Recording."
+    assert ld.parse_args(["--url", MEET]).disclosure is None
+    for bad in (["--disclosure"], ["--privacy-url", "https://example.com/p"],
+                ["--disclosure", "--privacy-url", "ftp://example.com/p"]):
+        with pytest.raises(SystemExit):
+            ld.parse_args(["--url", MEET, *bad])
+
+
 # ── entry point ──────────────────────────────────────────────────────────────
 
 
