@@ -42,9 +42,17 @@ HttpGet = Callable[[str, dict], tuple[int, str]]
 TranscribeProbe = Callable[[str, str], tuple[int, str]]
 
 
+def _probe_headers() -> dict:
+    """The User-Agent the boot preflight sends, so the Test button and the boot ask identically."""
+    from control_plane.config_preflight import PROBE_USER_AGENT
+
+    return {"User-Agent": PROBE_USER_AGENT}
+
+
 def _post(url: str, payload: dict, headers: dict) -> tuple[int, str]:
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json", **headers},
+                                 headers={**_probe_headers(), "Content-Type": "application/json",
+                                          **headers},
                                  method="POST")
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
@@ -54,7 +62,7 @@ def _post(url: str, payload: dict, headers: dict) -> tuple[int, str]:
 
 
 def _get(url: str, headers: dict) -> tuple[int, str]:
-    req = urllib.request.Request(url, headers=headers, method="GET")
+    req = urllib.request.Request(url, headers={**_probe_headers(), **headers}, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
             return r.status, r.read().decode("utf-8", "replace")
@@ -164,7 +172,8 @@ def _transcribe_probe(endpoint: str, token: str) -> tuple:
     content_type, body = audio_probe_body()
     req = urllib.request.Request(
         endpoint, data=body, method="POST",
-        headers={"Content-Type": content_type, "Authorization": f"Bearer {token}"})
+        headers={**_probe_headers(), "Content-Type": content_type,
+                 "Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=_STT_PROBE_TIMEOUT) as r:
             return r.status, r.read().decode("utf-8", "replace")

@@ -204,10 +204,12 @@ class _ProbeServer:
     """A local HTTP server that answers a scripted status per request path, and records the paths
     it was asked for (so a double-pathed URL is visible, not merely inferred from a 404)."""
 
-    def __init__(self, routes: dict, default_status: int = 404):
+    def __init__(self, routes: dict, default_status: int = 404, refuse_agent: str = ""):
         self.routes = routes
         self.default_status = default_status
+        self.refuse_agent = refuse_agent  # an edge proxy's User-Agent block: answer 403 to it
         self.paths: list = []
+        self.agents: list = []
         self._server = None
         self._thread = None
 
@@ -220,7 +222,12 @@ class _ProbeServer:
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802 — BaseHTTPRequestHandler's interface
                 outer.paths.append(self.path)
-                self.send_response(outer.routes.get(self.path, outer.default_status))
+                agent = self.headers.get("User-Agent", "")
+                outer.agents.append(agent)
+                if outer.refuse_agent and agent.startswith(outer.refuse_agent):
+                    self.send_response(403)
+                else:
+                    self.send_response(outer.routes.get(self.path, outer.default_status))
                 self.end_headers()
 
             def log_message(self, *a):  # keep the test output clean
@@ -291,6 +298,16 @@ def test_probe_400_and_401_verdicts_unchanged():
         rejected = cp._http_probe(_stt_probe_spec()["http"], env, timeout=5)
     assert rejected["ok"] is False and rejected["status"] == 401
     assert "REJECTED" in rejected["reason"]
+
+
+def test_probe_is_not_refused_by_an_edge_blocking_the_default_user_agent():
+    """An edge proxy that refuses urllib's default User-Agent (Cloudflare's 403 "error code: 1010")
+    serves the bot's own client, so the probe must not read that block as a rejected token."""
+    with _ProbeServer(routes={_STT_PATH: 200}, refuse_agent="Python-urllib") as srv:
+        env = {"TRANSCRIPTION_SERVICE_URL": srv.base, "TRANSCRIPTION_SERVICE_TOKEN": "tok"}
+        result = cp._http_probe(_stt_probe_spec()["http"], env, timeout=5)
+    assert srv.agents == [cp.PROBE_USER_AGENT]
+    assert result["ok"] is True and result["status"] == 200
 
 
 def test_probe_accepts_a_full_path_url_without_double_pathing():
