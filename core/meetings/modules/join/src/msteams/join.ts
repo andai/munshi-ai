@@ -21,6 +21,7 @@ import {
   meetingOriginHost,
   redactUrl,
 } from "./auth-redirect";
+import { TeamsJoinDisabledError, teamsGuestName } from "./display-name";
 
 // NOTE vs the monolith: the WebRTC remote-audio hook and the voice-agent
 // virtual-camera flow are RECORDING/HOST concerns and stay outside this brick.
@@ -158,6 +159,29 @@ async function waitForTeamsPreJoinReadiness(
   return false;
 }
 
+/**
+ * A visible pre-join "Join now" that stays disabled means Teams rejected the form (for example
+ * the guest name). Clicking would only time out, and the button left on screen would later read
+ * as a lobby, so this ends the join with the reason instead.
+ */
+async function assertJoinNowEnabled(page: Page, graceMs = 5000): Promise<void> {
+  const joinNow = page.locator('button:has-text("Join now")').first();
+  if (!(await joinNow.isVisible().catch(() => false))) return;
+  const start = Date.now();
+  while (Date.now() - start < graceMs) {
+    if (await joinNow.isEnabled().catch(() => true)) return;
+    await page.waitForTimeout(250);
+  }
+  const teamsMessage = await page
+    .locator('text=/can only include/i')
+    .first()
+    .textContent({ timeout: 1000 })
+    .then((t) => t?.trim() || null)
+    .catch(() => null);
+  log(`❌ Teams kept 'Join now' disabled${teamsMessage ? `: ${teamsMessage}` : ""}`);
+  throw new TeamsJoinDisabledError(teamsMessage);
+}
+
 export async function joinMicrosoftTeams(
   page: Page,
   meetingUrl: string,
@@ -216,8 +240,9 @@ export async function joinMicrosoftTeams(
   try {
     const nameInput = page.locator(teamsNameInputSelectors.join(', ')).first();
     await nameInput.waitFor({ timeout: 5000 });
-    await nameInput.fill(botName);
-    log(`✅ Display name set to "${botName}"`);
+    const guestName = teamsGuestName(botName);
+    await nameInput.fill(guestName);
+    log(`✅ Display name set to "${guestName}"`);
   } catch (error) {
     log("ℹ️ Display name input not found, continuing...");
   }
@@ -280,6 +305,7 @@ export async function joinMicrosoftTeams(
   }
 
   log("Step 6: Clicking 'Join now' to enter the meeting...");
+  await assertJoinNowEnabled(page);
   try {
     // Use the more specific "Join now" selector first to avoid ambiguity
     const joinNowButton = page.locator('button:has-text("Join now")').first();

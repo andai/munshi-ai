@@ -72,6 +72,18 @@ export function isTeamsMeetingUrl(url: string): boolean {
   return TEAMS_HOST_SUFFIXES.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
+/** True iff `url` is the Teams web client's own sign-in route (`/v2/authv2`), where Teams
+ *  sends a browser it will not let join as a guest. Only a final verdict uses this: the route
+ *  is not a meeting, but it is on a Teams host, so the pre-join wait does not stop at it. */
+export function isTeamsSignInUrl(url: string): boolean {
+  if (!isTeamsMeetingUrl(url)) return false;
+  try {
+    return /^\/v2\/authv2(\/|$)/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** The hostname of the meeting link the join was asked to open (null when unparseable). */
 export function meetingOriginHost(meetingUrl: string): string | null {
   return hostOf(meetingUrl);
@@ -136,7 +148,7 @@ export function classifyNonMeetingUrl(
   currentUrl: string,
   requestedHost: string | null,
 ): TeamsJoinRedirectError | null {
-  if (isMicrosoftLoginUrl(currentUrl)) return authRedirectError(currentUrl);
+  if (isMicrosoftLoginUrl(currentUrl) || isTeamsSignInUrl(currentUrl)) return authRedirectError(currentUrl);
   if (isTeamsMeetingUrl(currentUrl)) return null;
   const host = hostOf(currentUrl);
   if (host && requestedHost && host === requestedHost) return null;
