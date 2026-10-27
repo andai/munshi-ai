@@ -18,7 +18,7 @@ import { createOrchestrator } from '../src/orchestrator.js';
 import { canTransition, type Act, type BotStatus, type CompletionReason, type LifecycleEvent, type TranscriptSegment } from '../src/contracts.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
 import type { Invocation } from '../src/config.js';
-import { SCENARIOS, type Scenario, type ScenarioName, fakeChatSender, fakeJoinDriver, fakePipeline, mockSegment } from './scenarios.js';
+import { SCENARIOS, type Scenario, type ScenarioName, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, getScenario, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
 import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource } from '../src/aloneness.js';
 
@@ -64,6 +64,8 @@ const EXPECT: Record<ScenarioName, Expect> = {
   'reject':          { status: 'failed', reason: 'awaiting_admission_rejected', stage: 'awaiting_admission' },
   'crash':           { status: 'failed', reason: 'join_failure', stage: 'active' },
   'silence-left-alone': { status: 'completed', reason: 'left_alone' },
+  'left-alone':      { status: 'completed', reason: 'left_alone' },
+  'evicted':         { status: 'completed', reason: 'evicted' },
 };
 
 async function drive(sc: Scenario, exp: Expect) {
@@ -74,7 +76,7 @@ async function drive(sc: Scenario, exp: Expect) {
   let recorded = 0;
   let stopRef: (r: CompletionReason) => void = () => {};
   const acts: ActsSource = { subscribe() { return () => {}; } };
-  const join = fakeJoinDriver(sc, { joinDelayMs: sc.joinDelayMs ? 20 : undefined });
+  const join = fakeJoinDriver(sc, { joinDelayMs: sc.joinDelayMs ? 20 : undefined, evictAfterMs: sc.evictAfterMs != null ? 15 : undefined });
   const scenarioPipeline = fakePipeline(sc, INV, transcript, {
     endRun: (r) => stopRef(r),
     recordChunk: async () => { recorded++; },
@@ -89,7 +91,7 @@ async function drive(sc: Scenario, exp: Expect) {
   const activity = createRemoteAudioActivityTap();
   const aloneness = sc.silenceAlone
     ? createSilenceAlonenessSource({ activity, windowMs: 15, pollMs: 1, log: () => {} })
-    : { onAlone() { return () => {}; } };
+    : fakeAloneness(sc, sc.aloneAfterMs != null ? 15 : undefined);
   if (sc.silenceAlone) activity.ready();
   const o = createOrchestrator(INV, { lifecycle, join, pipeline, acts, aloneness });
   stopRef = o.stop;
@@ -101,7 +103,23 @@ async function drive(sc: Scenario, exp: Expect) {
   return { events, segments, recorded, res };
 }
 
+function scenarioSelection(): void {
+  console.log('[scenario selection]');
+  const pick = (url: string | null) => scenarioFromMeetingUrl(url);
+  check('mock= on a Zoom link selects the scenario', pick('https://zoom.us/j/12345678901?pwd=abc&mock=evicted') === 'evicted');
+  check('mock= on a vanity Zoom link selects the scenario', pick('https://acme.zoom.us/j/12345678901?mock=left-alone&pwd=x') === 'left-alone');
+  check('a link without mock= selects nothing', pick('https://meet.google.com/abc-defg-hij') === undefined);
+  check('an empty mock= selects nothing', pick('https://zoom.us/j/12345678901?mock=') === undefined);
+  check('no URL selects nothing', pick(null) === undefined);
+  check('a non-URL selects nothing', pick('not a url') === undefined);
+  check('the URL-selected names are registered', ['normal', 'reject', 'join-timeout', 'left-alone', 'evicted'].every((n) => getScenario(n).name === n));
+  let threw = false;
+  try { getScenario('no-such-scenario'); } catch { threw = true; }
+  check('an unknown scenario name is refused', threw);
+}
+
 async function main(): Promise<void> {
+  scenarioSelection();
   for (const name of Object.keys(SCENARIOS) as ScenarioName[]) {
     const sc = SCENARIOS[name];
     const exp = EXPECT[name];

@@ -11,16 +11,18 @@
  * Because the orchestrator + adapters are the real ones, the backend sees prod-identical lifecycle.v1
  * emission, and the mock CANNOT emit off-contract (P5/P16, ARCH §5). A scenario drives one backend
  * behaviour: normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
- * emit-n-segments · slow-join · recording · silence-left-alone. Selected by env `MOCK_SCENARIO`.
+ * emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted. Selected by env
+ * `MOCK_SCENARIO`, a bot name `mock:<scenario>`, or a `mock=<scenario>` query parameter on the meeting
+ * URL (`scenarioFromMeetingUrl`), so a caller that sets neither env nor bot name can still pick one.
  */
-import type { JoinDriver, JoinOutcome, Pipeline, TranscriptSink } from '../src/ports.js';
+import type { AlonenessSource, JoinDriver, JoinOutcome, Pipeline, TranscriptSink } from '../src/ports.js';
 import type { CompletionReason, DisclosureOutcome, TranscriptSegment } from '../src/contracts.js';
 import type { Invocation } from '../src/config.js';
 
 export type ScenarioName =
   | 'normal' | 'join-timeout' | 'reject' | 'crash' | 'immediate-stop'
   | 'continue' | 'speak-ack' | 'emit-n-segments' | 'slow-join' | 'recording'
-  | 'silence-left-alone';
+  | 'silence-left-alone' | 'left-alone' | 'evicted';
 
 export interface Scenario {
   name: ScenarioName;
@@ -39,6 +41,10 @@ export interface Scenario {
   endAfterMs?: number;
   /** Use the real silence AlonenessSource instead of a no-op source. */
   silenceAlone?: boolean;
+  /** Report the bot alone N ms into the active phase → completed(left_alone). */
+  aloneAfterMs?: number;
+  /** A participant removes the bot N ms into the active phase → completed(evicted). */
+  evictAfterMs?: number;
   /** The chat-disclosure outcome reported after admission when the invocation carries a
    *  `disclosure` (the real reporting path, disclosure.ts, with a fake sender). */
   disclosure?: DisclosureOutcome['channel'];
@@ -57,12 +63,26 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'reject':          { name: 'reject',          join: 'rejected' },
   'crash':           { name: 'crash',           join: 'admitted', crashOnStart: true },
   'silence-left-alone': { name: 'silence-left-alone', join: 'admitted', silenceAlone: true },
+  'left-alone':      { name: 'left-alone',      join: 'admitted', segments: 1, aloneAfterMs: 1500, disclosure: 'chat' },
+  'evicted':         { name: 'evicted',         join: 'admitted', segments: 1, evictAfterMs: 1500, disclosure: 'chat' },
 };
 
 export function getScenario(name: string | undefined): Scenario {
   const s = SCENARIOS[(name ?? 'normal') as ScenarioName];
   if (!s) throw new Error(`mock: unknown MOCK_SCENARIO "${name}" — one of: ${Object.keys(SCENARIOS).join(', ')}`);
   return s;
+}
+
+/** The scenario a meeting URL names in its `mock` query parameter, or `undefined` (no URL, no
+ *  parameter, or not a URL). Only the name is read; the rest of the URL is never logged. */
+export function scenarioFromMeetingUrl(meetingUrl: string | null | undefined): string | undefined {
+  if (!meetingUrl) return undefined;
+  try {
+    const value = new URL(meetingUrl).searchParams.get('mock');
+    return value ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -80,7 +100,7 @@ export function mockSegment(inv: Invocation, i: number, text?: string): Transcri
   };
 }
 
-export interface JoinOpts { onRemovalRef?: (fire: () => void) => void; joinDelayMs?: number; }
+export interface JoinOpts { onRemovalRef?: (fire: () => void) => void; joinDelayMs?: number; evictAfterMs?: number; }
 
 /** FakeJoinDriver — reports awaiting_admission, optionally stalls, then returns the scenario verdict
  *  (admitted → also reports active). The real orchestrator turns this into the lifecycle.v1 sequence. */
@@ -93,8 +113,24 @@ export function fakeJoinDriver(sc: Scenario, opts: JoinOpts = {}): JoinDriver {
       if (sc.join === 'admitted') { await report('active'); return 'admitted'; }
       return sc.join;
     },
-    onRemoval(cb) { opts.onRemovalRef?.(cb); return () => { /* */ }; },
+    onRemoval(cb) {
+      opts.onRemovalRef?.(cb);
+      const after = opts.evictAfterMs ?? sc.evictAfterMs;
+      const timer = after != null ? setTimeout(cb, after) : null;
+      return () => { if (timer) clearTimeout(timer); };
+    },
     async leave() { /* best-effort no-op */ },
+  };
+}
+
+/** FakeAloneness — reports the bot alone `aloneAfterMs` into the active phase (left-alone), or never. */
+export function fakeAloneness(sc: Scenario, aloneAfterMs?: number): AlonenessSource {
+  const after = aloneAfterMs ?? sc.aloneAfterMs;
+  return {
+    onAlone(cb) {
+      const timer = after != null ? setTimeout(cb, after) : null;
+      return () => { if (timer) clearTimeout(timer); };
+    },
   };
 }
 

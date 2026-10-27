@@ -18,8 +18,11 @@ backend therefore sees prod-identical lifecycle.v1 emission, and the mock **cann
 - `mock.test.ts` — the L2 fidelity test (offline; `npx tsx mock/mock.test.ts`).
 
 **Scenarios:** `normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
-emit-n-segments · slow-join · recording` — one per backend behaviour (lifecycle FSM · join-retry ·
-attributable failure · max-bots-adjacent · recording receiver · acts round-trip). `normal` also
+emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted` — one per
+backend behaviour (lifecycle FSM · join-retry · attributable failure · max-bots-adjacent · recording
+receiver · acts round-trip · leave-when-alone · removal by a participant). Selection, first match
+wins: env `MOCK_SCENARIO`, a bot name `mock:<scenario>`, a `mock=<scenario>` query parameter on the
+meeting URL. `normal` also
 reports a `chat` disclosure outcome when the invocation carries a `disclosure` (the real
 `../src/disclosure.ts` hook and report, with a fake sender).
 
