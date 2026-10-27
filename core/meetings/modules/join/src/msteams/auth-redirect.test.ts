@@ -24,7 +24,9 @@ import {
   TeamsJoinRedirectError,
   TEAMS_AUTH_REDIRECT,
   TEAMS_OFF_MEETING_ORIGIN,
+  classifyNonMeetingUrl,
   isMicrosoftLoginUrl,
+  isTeamsSignInUrl,
   isTeamsMeetingUrl,
   redactUrl,
 } from './auth-redirect';
@@ -59,6 +61,7 @@ function mockPage(url: string | string[], visible: string[] = []): any {
   const node = (sel: string): any => ({
     first: () => node(sel),
     isVisible: async () => visible.some((v) => sel.includes(v)),
+    isEnabled: async () => true,
     waitFor: async () => { throw new Error(`timeout waiting for ${sel}`); },
     click: async () => { throw new Error(`no element for ${sel}`); },
     fill: async () => { throw new Error(`no element for ${sel}`); },
@@ -230,6 +233,28 @@ const PANTOMIME = ['Step 3:', 'Step 4:', 'Step 5:', 'Step 6:', 'Step 6b:'];
     const page = mockPage(vanity);
     const { error } = await driveJoin(page, vanity);
     check('still on the requested host → no throw', error === null, true);
+  }
+
+  // ── 8. Teams' own sign-in route (/v2/authv2) on a Teams host ──────────────
+  //     Teams can send an anonymous browser there instead of the guest pre-join. The pre-join
+  //     wait keeps going on a Teams host, but the final verdict names it as a sign-in redirect.
+  {
+    const AUTHV2 = 'https://teams.microsoft.com/v2/authv2?state=REDACTED';
+    check('/v2/authv2 → isTeamsSignInUrl', isTeamsSignInUrl(AUTHV2), true);
+    check('/v2/ (client boot) is NOT the sign-in route', isTeamsSignInUrl('https://teams.microsoft.com/v2/'), false);
+    check('/light-meetings/launch is NOT the sign-in route', isTeamsSignInUrl('https://teams.microsoft.com/light-meetings/launch'), false);
+    check('/v2/authv2x is NOT the sign-in route', isTeamsSignInUrl('https://teams.microsoft.com/v2/authv2x'), false);
+    check('authv2 path on a non-Teams host is NOT the Teams sign-in route', isTeamsSignInUrl('https://evil.example/v2/authv2'), false);
+    const verdict = classifyNonMeetingUrl(AUTHV2, 'teams.microsoft.com');
+    check('final verdict on /v2/authv2 → teams_auth_redirect', verdict?.reasonCode === TEAMS_AUTH_REDIRECT, true);
+    check('the verdict drops the query', verdict?.observedUrl === 'https://teams.microsoft.com/v2/authv2', true);
+
+    const { error, logs } = await driveJoin(mockPage(AUTHV2), MEETUP_JOIN_URL);
+    check(
+      'a join that ends on /v2/authv2 → typed teams_auth_redirect',
+      error instanceof TeamsJoinRedirectError && error.reasonCode === TEAMS_AUTH_REDIRECT, true,
+    );
+    check('no pantomime after the authv2 verdict: Step 6:', logs.some((l) => l.startsWith('Step 6:')), false);
   }
 
   (Date as any).now = realDateNow;

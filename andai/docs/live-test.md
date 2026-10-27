@@ -12,8 +12,9 @@ Until the backends behind the OLLM speech-to-text and chat routes are verified A
 - **Test meetings only.** Meetings you host for the test, never a real customer or internal meeting.
 - **Synthetic or consenting speech only.** Read a script yourself, play generated audio, or have
   colleagues who agreed to it speak. Nobody joins who has not agreed.
-- The bot joins as **munshi.ai (recording)**: it always says it records. Admit it only into a test
-  meeting.
+- The bot joins as **munshi.ai (recording)**: it always says it records. Teams only accepts letters,
+  numbers, spaces and `- ' . _ @` in a guest name, so on Teams it joins as **munshi.ai - recording**.
+  Admit it only into a test meeting.
 
 ## 1. Docker Desktop
 
@@ -98,7 +99,8 @@ What happens:
    exists on the platform with diagnostic signal tapes off, and mints an API key (`bot,tx`) for
    this run. The key is revoked when the run ends.
 2. It sends the bot (`POST /bots` on the local gateway) with the link and the language.
-3. Admit **munshi.ai (recording)** from the meeting's lobby, then speak.
+3. Admit **munshi.ai (recording)** (on Teams, **munshi.ai - recording**) from the meeting's lobby,
+   then speak.
 4. It follows the meeting over the gateway's `/ws` feed and by polling the meeting every 5 s.
 5. Ctrl-C (or `STOP_AFTER`) stops the bot and waits up to 90 s for the meeting to end; a second
    Ctrl-C leaves without waiting. If the meeting ends first (the bot is removed, the host ends the
