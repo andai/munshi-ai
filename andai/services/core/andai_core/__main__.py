@@ -17,6 +17,14 @@ andai-core container:
 `org/<org_id>`, diagnostic tapes off, `ANDAI_ORG_MAX_CONCURRENT_BOTS`) through the admin-api. It is
 idempotent, needs no KEK (no key is opened), and prints counts only. `make -C andai principals-sync`
 runs it in the stack.
+
+    python -m andai_core canary-setup
+
+`canary-setup` creates the canary org once: an org flagged `is_canary` with its own platform
+principal (a cap of 3 bots, one per platform) and an owner that cannot sign in (no password, never
+mailed). andai-worker sends every canary bot as this org, never as a customer org. It needs the KEK
+(the principal's key is sealed under it); run again, it changes nothing. `make -C andai
+canary-setup` runs it in the stack.
 """
 
 from __future__ import annotations
@@ -27,14 +35,17 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text, update
 from sqlalchemy.exc import DBAPIError
 
 from andai_core.auth.bootstrap import AlreadyBootstrapped, bootstrap
 from andai_core.auth.links import InvalidEmail, canonical_email
 from andai_core.crypto import Keyring, KeyUnavailable, load_keyring
+from andai_core.db.models import Org
 from andai_core.db.session import create_app_engine
 from andai_core.mail import Mailer, MailError, SmtpMailer
+from andai_core.meetings.service import canary_org_id
+from andai_core.org.service import CreatedOrg, create_org
 from andai_core.platform import principals
 from andai_core.platform.admin_client import (
     HttpPlatformAdmin,
@@ -42,6 +53,12 @@ from andai_core.platform.admin_client import (
     PlatformAdminError,
 )
 from andai_core.settings import Settings, get_settings
+
+CANARY_ORG_NAME = "munshi.ai canary"
+# The canary org's owner: a placeholder identity that never signs in and is never mailed.
+CANARY_OWNER_EMAIL = "canary-bot@canary.munshi.test"
+# One canary bot per platform at a time.
+CANARY_MAX_CONCURRENT_BOTS = 3
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -55,7 +72,77 @@ def _parser() -> argparse.ArgumentParser:
         "principals-sync",
         help="re-apply every org principal's platform settings (storage prefix, tapes off, cap)",
     )
+    commands.add_parser(
+        "canary-setup", help="create the canary org and its platform principal (once)"
+    )
     return parser
+
+
+class _CanaryExists(Exception):
+    pass
+
+
+def _canary_setup(
+    settings: Settings,
+    engine: Engine | None,
+    admin: PlatformAdmin | None,
+    keyring: Keyring | None,
+) -> int:
+    try:
+        keyring = keyring or load_keyring(settings)
+    except KeyUnavailable as exc:
+        print(f"canary-setup: {exc}", file=sys.stderr)
+        return 2
+    if keyring.ephemeral:
+        print("canary-setup: ANDAI_KEK or ANDAI_KEK_FILE is required; nothing was created",
+              file=sys.stderr)
+        return 2
+    admin = admin or HttpPlatformAdmin.from_settings(settings)
+    own_engine = engine is None
+    engine = engine or create_app_engine(settings=settings)
+
+    def guard(tx) -> None:
+        if tx.scalar(text("SELECT andai_canary_org_id()")) is not None:
+            raise _CanaryExists
+
+    def finish(tx, created: CreatedOrg) -> None:
+        tx.execute(update(Org).where(Org.id == created.org_id).values(is_canary=True))
+
+    try:
+        existing = canary_org_id(engine)
+        if existing is not None:
+            print(f"canary-setup: the canary org exists ({existing}); nothing was changed")
+            return 0
+        created = create_org(
+            engine,
+            name=CANARY_ORG_NAME,
+            owner_email=CANARY_OWNER_EMAIL,
+            owner_display_name="munshi.ai canary",
+            admin=admin,
+            keyring=keyring,
+            now=datetime.now(UTC),
+            guard=guard,
+            finish=finish,
+            max_concurrent_bots=CANARY_MAX_CONCURRENT_BOTS,
+        )
+    except _CanaryExists:
+        print("canary-setup: the canary org exists; nothing was changed")
+        return 0
+    except PlatformAdminError as exc:
+        print(f"canary-setup: {exc}; nothing was created", file=sys.stderr)
+        return 1
+    except DBAPIError as exc:
+        print(
+            f"canary-setup: database error ({type(exc.orig).__name__}); is the andai database"
+            " migrated to head (make -C andai db-migrate)?",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        if own_engine:
+            engine.dispose()
+    print(f"canary-setup: created the canary org ({created.org_id}) with its platform principal")
+    return 0
 
 
 def _principals_sync(settings: Settings, engine: Engine | None, admin: PlatformAdmin | None) -> int:
@@ -95,6 +182,8 @@ def main(
     settings = get_settings()
     if args.command == "principals-sync":
         return _principals_sync(settings, engine, admin)
+    if args.command == "canary-setup":
+        return _canary_setup(settings, engine, admin, keyring)
     try:
         keyring = keyring or load_keyring(settings)
     except KeyUnavailable as exc:

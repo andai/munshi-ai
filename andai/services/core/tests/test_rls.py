@@ -19,6 +19,7 @@ from sqlalchemy.exc import ProgrammingError
 from andai_core.db.models import (
     GLOBAL_TABLES,
     ORG_SCOPED_TABLES,
+    SYSTEM_TABLES,
     AuditEvent,
     ConsentRecord,
     Invite,
@@ -182,7 +183,7 @@ def test_rls_enabled_and_forced_exactly_on_org_scoped_tables(superuser_engine: E
         }
     for table in ORG_SCOPED_TABLES:
         assert flags[table] == (True, True), table
-    for table in GLOBAL_TABLES:
+    for table in (*GLOBAL_TABLES, *SYSTEM_TABLES):
         assert flags[table] == (False, False), table
 
 
@@ -542,7 +543,11 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "SETOF uuid"
     assert (fn[4], fn[5]) == (False, True)
-    assert readable == {"org_id", "status"}
+    # 0004 (open meetings) and 0005 (join statistics) together; never the link, ids or people.
+    assert readable == {
+        "org_id", "status", "platform", "source", "failure_reason", "end_reason", "started_at",
+        "created_at",
+    }
     assert consent_columns == 0
     assert can_create is False
 
@@ -593,3 +598,78 @@ def test_one_live_meeting_per_link_and_per_native_id_in_an_org(
     # A terminal row of the same link, and the same link in another org, are allowed.
     insert_like(org_a, status="done")
     insert_like(org_b, native_meeting_id=native)
+
+
+# ─── canary org id, join statistics and system tables (migration 0005) ────────────────────────────
+
+
+def test_canary_org_id_and_join_stats_are_scan_owned_definer_functions(
+    superuser_engine: Engine,
+) -> None:
+    with superuser_engine.connect() as conn:
+        rows = {
+            name: tuple(rest)
+            for name, *rest in conn.execute(
+                text(
+                    "SELECT p.proname, p.prosecdef, r.rolname, p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner"
+                    " WHERE p.proname IN ('andai_canary_org_id', 'andai_join_stats')"
+                )
+            ).all()
+        }
+        org_columns = {
+            column
+            for (column,) in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'orgs'"
+                )
+            )
+            if conn.execute(
+                text("SELECT has_column_privilege('andai_scan', 'orgs', :c, 'SELECT')"),
+                {"c": column},
+            ).scalar_one()
+        }
+    path = ["search_path=public, pg_temp"]
+    assert rows["andai_canary_org_id"] == (True, "andai_scan", path, "uuid", False, True)
+    assert rows["andai_join_stats"] == (
+        True, "andai_scan", path,
+        "TABLE(platform text, source text, outcome text, reason text, count bigint)", False, True,
+    )
+    assert org_columns == {"id", "is_canary"}
+
+
+def test_join_stats_counts_every_org_while_meetings_stay_hidden(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    since = datetime.now(UTC) - timedelta(hours=1)
+    with transaction(app_engine) as tx:  # andai_app, no app.org_id
+        rows = tx.execute(text("SELECT * FROM andai_join_stats(:s)"), {"s": since}).all()
+        direct = tx.execute(text("SELECT count(*) FROM meetings")).scalar_one()
+    assert sum(row.count for row in rows) >= 2  # org A's and org B's seeded meetings
+    assert all(set(row._fields) == {"platform", "source", "outcome", "reason", "count"}
+               for row in rows)
+    assert direct == 0
+
+
+def test_system_tables_hold_no_org_data_and_the_scan_role_cannot_read_them(
+    superuser_engine: Engine,
+) -> None:
+    with superuser_engine.connect() as conn:
+        for table in SYSTEM_TABLES:
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public' AND table_name = :t"
+                    ),
+                    {"t": table},
+                ).scalars()
+            )
+            assert columns and not {"org_id", "user_id", "join_url", "email"} & columns, table
+            assert conn.execute(
+                text("SELECT has_table_privilege('andai_scan', :t, 'SELECT')"), {"t": table}
+            ).scalar_one() is False

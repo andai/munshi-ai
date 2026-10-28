@@ -549,3 +549,100 @@ def test_org_b_meeting_link_and_team_reach_nothing_of_org_b(
         if t["token"] == world.b.principal_key
     )
     assert a_platform["user_id"] != b_user
+
+
+# ─── the canary org (migration 0005): its rows never reach a customer org ─────────────────────────
+
+
+@dataclass
+class CanaryOrg:
+    org_id: uuid.UUID
+    owner_id: uuid.UUID
+    meeting_id: uuid.UUID
+    values: set[str]
+
+
+@pytest.fixture(scope="module")
+def canary(world: World, app_engine: Engine) -> CanaryOrg:
+    """The canary org (`canary-setup`) with one canary meeting sent through the product path."""
+    import asyncio
+
+    from andai_core.__main__ import main
+    from andai_core.meetings.service import Meetings, canary_actor
+
+    services = world.harness.services
+    if canary_actor(app_engine) is None:
+        assert main(
+            ["canary-setup"],
+            engine=app_engine,
+            admin=services.platform_admin,
+            keyring=services.keyring,
+        ) == 0
+    actor = canary_actor(app_engine)
+    assert actor is not None
+    link = zoom_link("normal", passcode="canarypw")
+    meetings = Meetings(
+        app_engine, services.keyring, services.gateway, services.settings, services.clock
+    )
+    sent = asyncio.run(
+        meetings.join(actor, join_url=link, language=None, team_id=None, source="canary")
+    )
+    meeting_id = uuid.UUID(sent.meeting["id"])
+    with transaction(app_engine, org_id=actor.org_id) as tx:
+        name, slug = tx.execute(
+            text("SELECT name, slug FROM orgs WHERE id = :o"), {"o": actor.org_id}
+        ).one()
+        email = tx.scalar(select(User.email).where(User.id == actor.user_id))
+    values = {
+        str(actor.org_id), str(actor.user_id), str(meeting_id), link, "canarypw",
+        sent.meeting["native_meeting_id"], name, slug, email,
+    }
+    return CanaryOrg(actor.org_id, actor.user_id, meeting_id, values)
+
+
+def _canary_leaks(body: str, canary: CanaryOrg) -> list[str]:
+    lowered = body.lower()
+    return sorted(v for v in canary.values if v and v.lower() in lowered)
+
+
+def test_the_canary_meeting_exists_with_source_canary(
+    canary: CanaryOrg, superuser_engine: Engine
+) -> None:
+    with superuser_engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT org_id, source FROM meetings WHERE id = :m"), {"m": canary.meeting_id}
+        ).one()
+    assert tuple(row) == (canary.org_id, "canary")
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_canary_rows_never_reach_a_customer_org(
+    world: World, canary: CanaryOrg, superuser_engine: Engine, role: str
+) -> None:
+    def canary_state() -> list:
+        with superuser_engine.connect() as conn:
+            return list(
+                conn.execute(
+                    text("SELECT id, status, updated_at FROM meetings WHERE org_id = :o"),
+                    {"o": canary.org_id},
+                ).all()
+            )
+
+    before = canary_state()
+    client = world.client(world.a, role)
+    by_id = [
+        ("GET", f"/api/v1/meetings/{canary.meeting_id}", None),
+        ("POST", f"/api/v1/meetings/{canary.meeting_id}/stop", None),
+        ("GET", f"/api/v1/meetings/{canary.meeting_id}/transcript", None),
+        ("GET", f"/api/v1/meetings/{canary.meeting_id}/live", None),
+        ("PATCH", f"/api/v1/org/users/{canary.owner_id}", {"role": "member"}),
+        ("DELETE", f"/api/v1/org/users/{canary.owner_id}/mfa", None),
+    ]
+    for method, path, body in by_id:
+        response = _call(client, method, path, body)
+        assert response.status_code in (403, 404), (path, response.status_code)
+        assert _canary_leaks(response.text, canary) == [], path
+    for path in ("/api/v1/me", "/api/v1/org/users", "/api/v1/teams", "/api/v1/org/security"):
+        response = client.get(path)
+        assert _canary_leaks(response.text, canary) == [], path
+    assert canary_state() == before

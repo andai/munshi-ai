@@ -92,8 +92,40 @@ services:
       dockerfile: services/worker/Dockerfile
     image: ghcr.io/andai/munshi-andai-worker:${IMAGE_TAG:-dev}
     pull_policy: never
+    # Canary joins, join metrics (/metrics) and operator alert mail (BOT-04, D-34). The worker runs
+    # andai-core's own code with andai-core's settings: the RLS-bound app role (cross-org reads only
+    # through andai_join_stats), the KEK (to unseal the canary org's platform key), the gateway, the
+    # bot defaults canaries are sent with, and the SMTP relay.
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+      - ANDAI_ENV=${ANDAI_ENV:-dev}
+      - ANDAI_DB_URL_APP=postgresql+psycopg://andai_app:${ANDAI_DB_PASSWORD_APP?ANDAI_DB_PASSWORD_APP must be in the env file (gen-secrets.sh mints it)}@postgres:5432/andai
+      - ANDAI_KEK=${ANDAI_KEK?ANDAI_KEK must be in the env file (gen-secrets.sh mints it)}
+      - PLATFORM_GATEWAY_URL=http://gateway:8000
+      - ANDAI_BOT_NAME=${ANDAI_BOT_NAME:-}
+      - ANDAI_DEFAULT_LANGUAGE=${ANDAI_DEFAULT_LANGUAGE:-en}
+      - ANDAI_LOBBY_TIMEOUT_S=${ANDAI_LOBBY_TIMEOUT_S:-600}
+      - ANDAI_ALONE_TIMEOUT_S=${ANDAI_ALONE_TIMEOUT_S:-300}
+      - ANDAI_DISCLOSURE_TEXT=${ANDAI_DISCLOSURE_TEXT:-}
+      - ANDAI_PRIVACY_NOTICE_URL=${ANDAI_PRIVACY_NOTICE_URL:-}
+      - ANDAI_PORTAL_ORIGIN=${ANDAI_PORTAL_ORIGIN:-http://127.0.0.1:13100}
+      # Standing test meetings that admit guests without a human (andai/docs/runbooks/canaries.md);
+      # empty turns a platform's canary off. At most every 14400 s (4 h).
+      - ANDAI_CANARY_MEET_URL=${ANDAI_CANARY_MEET_URL:-}
+      - ANDAI_CANARY_TEAMS_URL=${ANDAI_CANARY_TEAMS_URL:-}
+      - ANDAI_CANARY_ZOOM_URL=${ANDAI_CANARY_ZOOM_URL:-}
+      - ANDAI_CANARY_INTERVAL_S=${ANDAI_CANARY_INTERVAL_S:-14400}
+      # The operator address alert mail goes to; empty turns alert mail off.
+      - ANDAI_ALERT_EMAIL=${ANDAI_ALERT_EMAIL:-}
+      - SMTP_HOST=${SMTP_HOST:-mailpit}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-munshi.ai <no-reply@munshi.invalid>}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports: !override
       - "127.0.0.1:${ANDAI_WORKER_PORT:-18301}:8000"
     healthcheck:

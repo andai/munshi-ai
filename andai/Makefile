@@ -7,6 +7,7 @@
 #   make -C andai db-migrate    # migrate andai-core's database to head (`up` runs it)
 #   make -C andai bootstrap EMAIL=owner@example.com ORG="Example Ltd"   # first org + owner, once
 #   make -C andai principals-sync  # re-apply every org principal's platform settings (idempotent)
+#   make -C andai canary-setup     # create the canary org andai-worker sends canary bots as (once)
 #   make -C andai live-dispatch URL='<test meeting link>' LANGUAGE_CODE=en   # live harness (docs/live-test.md)
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
@@ -48,13 +49,14 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync live-dispatch agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup live-dispatch agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
 	@echo "make -C andai db-init | db-migrate                       andai database + roles (idempotent) | migrate to head"
 	@echo "make -C andai bootstrap EMAIL=a@b.c ORG=name [NAME=..]   first org + owner (mails a set-password link)"
 	@echo "make -C andai principals-sync                            re-apply org principals' platform settings (prefix, tapes off, cap)"
+	@echo "make -C andai canary-setup                               create the canary org + principal andai-worker uses (once)"
 	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file] [PRIVACY_URL=url]   real bot into a TEST meeting (PRIVACY_URL: + chat notice)"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
@@ -134,6 +136,12 @@ bootstrap: _env-file
 ## Idempotent; prints counts only. Needs the andai database at head (db-migrate).
 principals-sync: _env-file
 	$(DC) exec -T andai-core python -m andai_core principals-sync
+
+## canary-setup — create the canary org (flag is_canary) and its platform principal in the running
+## andai-core, once; andai-worker sends every canary bot as this org (andai/docs/runbooks/canaries.md).
+## Idempotent. Needs the andai database at head (db-migrate) and the KEK.
+canary-setup: _env-file
+	$(DC) exec -T andai-core python -m andai_core canary-setup
 
 ## live-dispatch — the live harness (andai/docs/live-test.md, andai/scripts/live_dispatch.py): with
 ## the operator test principal (tapes off, a key minted for the run and revoked after it), send the

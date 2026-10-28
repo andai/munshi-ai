@@ -376,24 +376,56 @@ def test_a_removed_bot_is_refused_for_12_hours(world: World) -> None:
     assert allowed.status_code == 201
 
 
-def test_canary_meetings_are_exempt_from_the_removal_window(world: World) -> None:
+def test_canary_meetings_are_exempt_from_the_removal_window(fresh_app_engine: Engine) -> None:
+    """The canary org (its own database: one per deployment) re-sends a link whose bot
+    participants removed an hour ago; a customer org would get 409 `removed_by_participant`."""
     import asyncio
 
-    from andai_core.meetings.service import Actor, Meetings
+    from andai_core.__main__ import main
+    from andai_core.meetings.service import Meetings, canary_actor
 
-    link = zoom_link()
-    meeting_id = world.client("member").post(JOIN, json={"join_url": link}).json()["id"]
-    remove_bot(world, meeting_id, hours_ago=1)
-    services = world.harness.services
+    harness = make_harness(fresh_app_engine)
+    services = harness.services
+    assert main(
+        ["canary-setup"], engine=fresh_app_engine, admin=services.platform_admin,
+        keyring=services.keyring,
+    ) == 0
+    actor = canary_actor(fresh_app_engine)
+    assert actor is not None
     meetings = Meetings(
-        services.engine, services.keyring, services.gateway, services.settings, services.clock
+        fresh_app_engine, services.keyring, services.gateway, services.settings, services.clock
     )
-    actor = Actor(world.org.owner.org_id, world.org.owner.user_id, "owner")
+    link = zoom_link()
 
-    result = asyncio.run(meetings.join(actor, join_url=link, language=None, team_id=None,
-                                       source="canary"))
+    def send():
+        return asyncio.run(
+            meetings.join(actor, join_url=link, language=None, team_id=None, source="canary")
+        )
 
-    assert result.created and result.meeting["source"] == "canary"
+    first = send()
+    removed_at = harness.clock() - timedelta(hours=1)
+    with transaction(fresh_app_engine, org_id=actor.org_id) as tx:
+        tx.execute(
+            text("UPDATE meetings SET status = 'done', end_reason = 'evicted' WHERE id = :m"),
+            {"m": first.meeting["id"]},
+        )
+        tx.add(
+            ConsentRecord(
+                meeting_id=uuid.UUID(first.meeting["id"]),
+                org_id=actor.org_id,
+                bot_display_name="munshi.ai (recording)",
+                disclosure_text="notice",
+                privacy_notice_url="http://portal.test/privacy",
+                disclosure_channel="chat",
+                admitted_at=removed_at - timedelta(minutes=5),
+                removed_at=removed_at,
+            )
+        )
+
+    again = send()
+
+    assert again.created and again.meeting["source"] == "canary"
+    assert again.meeting["id"] != first.meeting["id"]
 
 
 # ─── reading ──────────────────────────────────────────────────────────────────────────────────────

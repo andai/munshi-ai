@@ -8,11 +8,13 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /src
-# The whole uv workspace definition is needed to resolve the lock; only andai-worker is installed.
+# The whole uv workspace definition is needed to resolve the lock. andai-worker is installed with
+# its workspace dependency andai-core (the worker dispatches canaries through andai-core's own code).
 COPY pyproject.toml uv.lock ./
 COPY services/core/pyproject.toml services/core/pyproject.toml
 COPY services/worker/pyproject.toml services/worker/pyproject.toml
 COPY services/intake/pyproject.toml services/intake/pyproject.toml
+COPY services/core/andai_core services/core/andai_core
 COPY services/worker/andai_worker services/worker/andai_worker
 RUN uv sync --frozen --no-dev --no-editable --package andai-worker
 
