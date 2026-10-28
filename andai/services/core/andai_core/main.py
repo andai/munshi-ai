@@ -1,8 +1,9 @@
 """andai-core: the FastAPI application.
 
 `create_app()` builds the app; its services (database engine, login limiter, mailer, client-address
-resolver, keyring, the meeting platform's admin-api client) are created at startup from the
-environment unless a caller passes them in (tests).
+resolver, keyring, the meeting platform's admin-api and gateway clients) are created at startup from
+the environment unless a caller passes them in (tests). The lifespan also runs the meeting status
+reconciler (`meetings.reconciler`) unless `ANDAI_RECONCILER=off`.
 Startup refuses to complete outside `ANDAI_ENV=dev` without a key-encryption key
 (`crypto.load_keyring` raises `KeyUnavailable`), so a production service never runs without one.
 A session in a two-factor stage reaches only its own routes (`auth.stage_gate`).
@@ -10,6 +11,8 @@ A session in a two-factor stage reaches only its own routes (`auth.stage_gate`).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,10 +31,14 @@ from andai_core.auth.ratelimit import LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, ValkeyL
 from andai_core.auth.stage_gate import StageGate
 from andai_core.crypto import load_keyring
 from andai_core.db.session import create_app_engine
+from andai_core.meetings import routes as meeting_routes
+from andai_core.meetings.reconciler import Reconciler
+from andai_core.meetings.service import MeetingError
 from andai_core.org import routes as org_routes
 from andai_core.org import security as org_security
 from andai_core.mail import SmtpMailer
 from andai_core.platform.admin_client import HttpPlatformAdmin
+from andai_core.platform.gateway_client import HttpPlatformGateway
 from andai_core.settings import Settings, get_settings
 
 SERVICE_NAME = "andai-core"
@@ -51,6 +58,7 @@ def build_services(settings: Settings) -> Services:
         ip_resolver=ClientIpResolver(settings.trusted_proxies),
         keyring=keyring,
         platform_admin=HttpPlatformAdmin.from_settings(settings),
+        gateway=HttpPlatformGateway(settings.platform_gateway_url),
     )
 
 
@@ -72,9 +80,17 @@ def create_app(services: Services | None = None) -> FastAPI:
         built = app.state.services is None
         if built:
             app.state.services = build_services(settings)
+        services = app.state.services
+        task = None
+        if settings.reconciler == "on" and services.gateway is not None:
+            task = asyncio.create_task(Reconciler(services).run())
         try:
             yield
         finally:
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             if built:
                 app.state.services.engine.dispose()
                 app.state.services = None
@@ -89,9 +105,11 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.add_middleware(OriginCheck, allowed_origin=settings.portal_origin)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(redis.RedisError, _store_unavailable)
+    app.add_exception_handler(MeetingError, meeting_routes.meeting_error)
     app.include_router(auth_routes.router)
     app.include_router(org_security.router)
     app.include_router(org_routes.router)
+    app.include_router(meeting_routes.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

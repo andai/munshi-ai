@@ -16,7 +16,7 @@ import { createHttpLifecycleSink } from '../src/adapters/lifecycle-http.js';
 import { createRedisTranscriptSink, redisClientFrom } from '../src/adapters/transcript-redis.js';
 import { createRedisActsSource, redisActsClientFrom } from '../src/adapters/acts-redis.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
-import { getScenario, fakeChatSender, fakeJoinDriver, fakePipeline, mockSegment } from './scenarios.js';
+import { getScenario, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
 import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource, resolveAloneSilenceWindowMs } from '../src/aloneness.js';
 
@@ -85,9 +85,11 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
     throw e;
   }
   // Scenario seam (NO contract change): env MOCK_SCENARIO wins; else decode botName "mock:<scenario>"
-  // (botName is already in invocation.v1, so the compose test selects a behaviour via bot_name).
+  // (botName is already in invocation.v1, so the compose test selects a behaviour via bot_name);
+  // else a `mock=<scenario>` query parameter on the meeting URL (a caller that sends its own bot
+  // name, like andai-core, selects a behaviour through the link it dispatches).
   const fromName = inv.botName?.startsWith('mock:') ? inv.botName.slice('mock:'.length) : undefined;
-  const scenario = getScenario(env.MOCK_SCENARIO ?? fromName);
+  const scenario = getScenario(env.MOCK_SCENARIO ?? fromName ?? scenarioFromMeetingUrl(inv.meetingUrl));
   console.log(`[mock] scenario=${scenario.name} meeting_id=${inv.meeting_id ?? '?'} conn=${inv.connectionId ?? '?'}`);
 
   const meetingId = meetingChannelId(inv);
@@ -124,7 +126,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
         windowMs: resolveAloneSilenceWindowMs(inv.automaticLeave?.everyoneLeftTimeout, env),
         log: (message) => console.log(`[mock] ${message}`),
       })
-    : { onAlone() { return () => {}; } };
+    : fakeAloneness(scenario);
   if (scenario.silenceAlone) activity.ready();
   const orchestrator = createOrchestrator(inv, { lifecycle, join, pipeline, acts, aloneness });
   stopRef = orchestrator.stop;

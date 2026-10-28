@@ -28,13 +28,17 @@ INVITE_TOKEN_HASH = "app.invite_token_hash"
 
 
 def create_app_engine(url: str | None = None, *, settings: Settings | None = None) -> Engine:
-    """Engine for the app role. Without `url`, reads `ANDAI_DB_URL_APP`."""
+    """Engine for the app role. Without `url`, reads `ANDAI_DB_URL_APP`.
+
+    Statement parameters are kept out of error messages and logs (`hide_parameters`): they carry
+    meeting links with passcodes, token hashes and sealed keys, and a database error that reaches a
+    log line must not repeat them."""
     if url is None:
         secret = (settings or get_settings()).db_url_app
         if secret is None:
             raise RuntimeError("ANDAI_DB_URL_APP is not set")
         url = secret.get_secret_value()
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(url, pool_pre_ping=True, hide_parameters=True)
 
 
 def set_context(

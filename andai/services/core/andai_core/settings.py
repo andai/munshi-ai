@@ -8,9 +8,17 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_BOT_NAME = "munshi.ai (recording)"
+DEFAULT_DISCLOSURE_TEXT = (
+    "munshi.ai is recording and transcribing this meeting for the organiser. "
+    "To stop it, remove the munshi.ai bot from the call. Privacy notice:"
+)
 
 
 class Settings(BaseSettings):
@@ -39,6 +47,30 @@ class Settings(BaseSettings):
     org_max_concurrent_bots: int = Field(
         default=3, ge=0, validation_alias="ANDAI_ORG_MAX_CONCURRENT_BOTS"
     )
+
+    # The meeting platform's gateway (bots, meetings, transcripts), called with each org's own key.
+    platform_gateway_url: str = Field(
+        default="http://gateway:8000", validation_alias="PLATFORM_GATEWAY_URL"
+    )
+
+    # Fixed org defaults for every bot andai-core dispatches (a settings UI arrives later). The
+    # timeouts are seconds; the platform takes milliseconds.
+    # Empty means the default: "munshi.ai (recording)".
+    bot_name_raw: str = Field(default="", max_length=100, validation_alias="ANDAI_BOT_NAME")
+    default_language: Literal["en", "hi", "hinglish"] = Field(
+        default="en", validation_alias="ANDAI_DEFAULT_LANGUAGE"
+    )
+    lobby_timeout_s: int = Field(default=600, gt=0, validation_alias="ANDAI_LOBBY_TIMEOUT_S")
+    alone_timeout_s: int = Field(default=300, gt=0, validation_alias="ANDAI_ALONE_TIMEOUT_S")
+    # The recording notice the bot posts in meeting chat once admitted; the privacy link follows it.
+    # Empty means `DEFAULT_DISCLOSURE_TEXT`.
+    disclosure_text_raw: str = Field(
+        default="", max_length=500, validation_alias="ANDAI_DISCLOSURE_TEXT"
+    )
+    # Empty means the portal's own `/privacy` page.
+    privacy_notice_url_raw: str = Field(default="", validation_alias="ANDAI_PRIVACY_NOTICE_URL")
+    # `off` keeps the meeting status reconciler from starting (tests, one-off CLI runs).
+    reconciler: Literal["on", "off"] = Field(default="on", validation_alias="ANDAI_RECONCILER")
 
     # Outgoing mail (settings-only SMTP; Mailpit in development).
     smtp_host: str = Field(default="mailpit", validation_alias="SMTP_HOST")
@@ -77,6 +109,18 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.andai_env.strip().lower() == "dev"
+
+    @property
+    def bot_name(self) -> str:
+        return self.bot_name_raw.strip() or DEFAULT_BOT_NAME
+
+    @property
+    def disclosure_text(self) -> str:
+        return self.disclosure_text_raw.strip() or DEFAULT_DISCLOSURE_TEXT
+
+    @property
+    def privacy_notice_url(self) -> str:
+        return self.privacy_notice_url_raw.strip() or f"{self.portal_origin.rstrip('/')}/privacy"
 
     @property
     def trusted_proxies(self) -> list[str]:

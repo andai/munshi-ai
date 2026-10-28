@@ -24,6 +24,7 @@ from andai_core.crypto import Keyring
 from andai_core.db.session import transaction
 from andai_core.mail import Mailer
 from andai_core.platform.admin_client import PlatformAdmin
+from andai_core.platform.gateway_client import PlatformGateway
 from andai_core.settings import Settings
 
 
@@ -43,6 +44,8 @@ class Services:
     keyring: Keyring
     platform_admin: PlatformAdmin
     clock: Callable[[], datetime] = utcnow
+    # The meeting platform's gateway (dispatch, status); None where meetings are not served.
+    gateway: PlatformGateway | None = None
 
     @property
     def lifetimes(self) -> sessions.Lifetimes:
