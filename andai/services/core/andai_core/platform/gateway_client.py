@@ -8,6 +8,10 @@ andai-core for that call only; this module never stores, logs or repeats it.
 * `list_bots(key)` — `GET /bots`; the principal's meetings, newest and still-running first.
 * `get_meeting(key, id)` — `GET /meetings/{id}`.
 * `stop(key, platform, native_meeting_id)` — `DELETE /bots/{platform}/{native_meeting_id}`.
+* `get_transcript(key, id)` — `GET /transcripts/by-id/{id}`; the platform's TranscriptionResponse.
+
+`live_url(base_url)` is the gateway's live WebSocket (`/ws`) for the same base URL; andai-core's
+live relay (`meetings/live.py`) connects to it with the same per-call key.
 
 Errors carry the call and the platform's status code only — never the key, a request body or a
 response body. A duplicate dispatch is `DuplicateMeeting`, carrying the ids of the meeting the
@@ -17,7 +21,7 @@ platform already runs for that link (its structured 409, `code: duplicate_meetin
 from __future__ import annotations
 
 from typing import Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 
@@ -60,6 +64,15 @@ class PlatformGateway(Protocol):
     async def get_meeting(self, key: str, meeting_id: int) -> dict: ...
 
     async def stop(self, key: str, platform: str, native_meeting_id: str) -> None: ...
+
+    async def get_transcript(self, key: str, meeting_id: int) -> dict: ...
+
+
+def live_url(base_url: str) -> str:
+    """The gateway's live WebSocket URL: `http(s)://host[:port][/prefix]` → `ws(s)://…/ws`."""
+    parts = urlsplit(base_url.rstrip("/"))
+    scheme = "wss" if parts.scheme == "https" else "ws"
+    return urlunsplit((scheme, parts.netloc, f"{parts.path}/ws", "", ""))
 
 
 def _object(what: str, response: httpx.Response) -> dict:
@@ -153,3 +166,11 @@ class HttpPlatformGateway:
         response = await self._call("stop", key, "DELETE", path)
         if response.status_code >= 400:
             raise GatewayError("stop", response.status_code)
+
+    async def get_transcript(self, key: str, meeting_id: int) -> dict:
+        response = await self._call(
+            "get transcript", key, "GET", f"/transcripts/by-id/{int(meeting_id)}"
+        )
+        if response.status_code >= 400:
+            raise GatewayError("get transcript", response.status_code)
+        return _object("get transcript", response)

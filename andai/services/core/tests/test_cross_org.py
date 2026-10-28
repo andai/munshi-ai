@@ -133,6 +133,11 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
     assert sent.status_code == 201, sent.text
     meeting_id = uuid.UUID(sent.json()["id"])
     native_meeting_id = sent.json()["native_meeting_id"]
+    # What the bot has heard so far; its text carries the org's tag, so any leak shows.
+    harness.gateway.transcripts[max(harness.gateway.meetings)] = [
+        {"segment_id": f"{label}-seg-{tag}", "speaker": f"{label} Speaker {tag}",
+         "text": f"{label} said {tag}", "start": 0.0, "end": 1.0, "completed": True}
+    ]
     with transaction(engine, org_id=org_id) as tx:
         tx.execute(
             text("UPDATE meetings SET status = 'recording' WHERE id = :m"), {"m": meeting_id}
@@ -273,6 +278,12 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ],
     ("POST", "/api/v1/meetings/{meeting_id}/stop"): lambda b: [
         ("stop B meeting", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("GET", "/api/v1/meetings/{meeting_id}/transcript"): lambda b: [
+        ("read B transcript", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("GET", "/api/v1/meetings/{meeting_id}/live"): lambda b: [
+        ("watch B meeting", {"meeting_id": b.meeting_id}, None),
     ],
     ("PUT", "/api/v1/teams/{team_id}/members"): lambda b: [
         ("empty B team", {"team_id": b.team}, {"members": []}),

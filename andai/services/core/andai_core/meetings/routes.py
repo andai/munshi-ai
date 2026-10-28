@@ -9,6 +9,10 @@
   consent summary. Requester, a lead of the meeting's team, admins and owners; 404 for anyone else.
 * `POST /meetings/{id}/stop` — take the bot out. Same access as reading. Before admission the
   meeting ends `cancelled`; after it, the platform's own end moves it to `done`.
+* `GET /meetings/{id}/transcript` — the transcript so far in andai's segment shape
+  (`transcript.py`); the polling source when the live stream drops. Same access as reading.
+* `GET /meetings/{id}/live` — server-sent events with the meeting's status and transcript as they
+  change (`live.py`). Same access as reading; the browser never reaches the platform.
 
 Refusals answer `{"detail", "code"}`.
 """
@@ -19,12 +23,14 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from andai_core.auth.deps import Services, get_services
 from andai_core.auth.roles import Caller, require_role
+from andai_core.meetings.live import open_stream
 from andai_core.meetings.service import Actor, MeetingError, Meetings
+from andai_core.meetings.transcript import read_transcript
 
 router = APIRouter(prefix="/api/v1")
 
@@ -83,3 +89,23 @@ async def stop(
     services: Services = Depends(get_services),
 ) -> dict:
     return await meetings(services).stop(actor(caller), meeting_id)
+
+
+@router.get("/meetings/{meeting_id}/transcript")
+async def transcript(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> dict:
+    return await read_transcript(
+        services.engine, services.keyring, meetings(services).gateway, actor(caller), meeting_id
+    )
+
+
+@router.get("/meetings/{meeting_id}/live")
+async def live(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> StreamingResponse:
+    return await open_stream(services, meetings(services).gateway, actor(caller), meeting_id)

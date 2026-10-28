@@ -52,6 +52,7 @@ dependencies = [
     { name = "segno" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -70,6 +71,7 @@ requires-dist = [
     { name = "segno", specifier = "==1.6.6" },
     { name = "sqlalchemy", specifier = "==2.1.6" },
     { name = "uvicorn", specifier = "==0.54.0" },
+    { name = "websockets", specifier = "==16.0" },
 ]
 
 [[package]]

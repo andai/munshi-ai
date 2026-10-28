@@ -13,6 +13,7 @@ from andai_core.platform.gateway_client import (
     DuplicateMeeting,
     GatewayError,
     HttpPlatformGateway,
+    live_url,
 )
 
 KEY = "tok_bot_" + "k" * 32
@@ -144,3 +145,33 @@ def test_a_non_object_answer_is_an_error() -> None:
 
     with pytest.raises(GatewayError, match="unexpected body"):
         run(gateway(handler).get_meeting(KEY, 1))
+
+
+def test_get_transcript_reads_by_platform_meeting_id_with_the_org_key() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/transcripts/by-id/404":
+            return httpx.Response(404, json={"detail": "Meeting 404 not found"})
+        return httpx.Response(200, json={"id": 42, "segments": []})
+
+    assert run(gateway(handler).get_transcript(KEY, 42)) == {"id": 42, "segments": []}
+    with pytest.raises(GatewayError) as caught:
+        run(gateway(handler).get_transcript(KEY, 404))
+
+    assert (seen[0].method, seen[0].url.path) == ("GET", "/transcripts/by-id/42")
+    assert seen[0].headers[API_KEY_HEADER] == KEY
+    assert caught.value.status == 404 and KEY not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("base", "url"),
+    [
+        ("http://gateway:8000", "ws://gateway:8000/ws"),
+        ("http://gateway:8000/", "ws://gateway:8000/ws"),
+        ("https://gw.example.test/platform", "wss://gw.example.test/platform/ws"),
+    ],
+)
+def test_live_url_is_the_gateway_websocket(base: str, url: str) -> None:
+    assert live_url(base) == url
