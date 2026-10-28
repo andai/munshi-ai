@@ -7,6 +7,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,9 @@ from conftest import (
 JOIN = "/api/v1/meetings/join"
 STARTED = "2026-10-28T10:00:00Z"
 ENDED = "2026-10-28T10:30:00Z"
+#: The harness clock at the start of each test: just after STARTED, inside the 60 s grace for the
+#: bot's disclosure report, so the tests read the same whatever day they run.
+NOW = datetime(2026, 10, 28, 10, 0, 30, tzinfo=UTC)
 
 
 @dataclass
@@ -71,6 +75,7 @@ class World:
 def world(fresh_app_engine: Engine) -> World:
     """A fresh database, so the open-meeting org list holds these two orgs only."""
     harness = make_harness(fresh_app_engine)
+    harness.clock.now = NOW
     a, b = role_org(fresh_app_engine), role_org(fresh_app_engine)
     for org in (a, b):
         give_principal(harness, fresh_app_engine, org.owner.org_id)
@@ -147,8 +152,6 @@ def test_a_jump_from_the_lobby_to_evicted_still_writes_consent_and_blocks_the_li
 
     # D-38: the same link is refused while the removal is recent (the clock is "now", the removal
     # time is the platform's end time; move the clock next to it).
-    from datetime import UTC, datetime
-
     world.harness.clock.now = datetime(2026, 10, 28, 11, 0, tzinfo=UTC)
     again = sign_in(world.harness, world.a.member).post(JOIN, json={"join_url": link})
     assert (again.status_code, again.json()["code"]) == (409, "removed_by_participant")
