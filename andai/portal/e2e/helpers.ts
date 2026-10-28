@@ -1,6 +1,7 @@
 // Shared e2e helpers: the Mailpit reader, a TOTP generator that never reuses a time step, unique
-// test addresses, account setup through the API, and a `test` whose pages are watched for
-// unexpected console errors and requests that leave the portal's origin.
+// test addresses, account setup through the API (a second organisation too), mock-bot meeting
+// links, status timing, and a `test` whose pages are watched for unexpected console errors and
+// requests that leave the portal's origin.
 
 import {
   expect,
@@ -12,12 +13,13 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
-import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as OTPAuth from "otpauth";
 
-import { settings } from "./env";
+import { PROJECT, settings } from "./env";
 import { Mailpit } from "./mailpit";
 
 export const { portalOrigin, mailpit: mailpitUrl } = settings();
@@ -117,9 +119,153 @@ export async function enrollByApi(api: APIRequestContext): Promise<{ secret: str
   return { secret, codes: (await confirmed.json()).recovery_codes };
 }
 
+/**
+ * A second organisation, made inside the stack's andai-core the way bootstrap makes the first (with
+ * its platform principal and an owner invite by mail), and its owner signed up through the invite.
+ * Bootstrap itself refuses once anyone exists, so the suite reaches past it here.
+ */
+export async function createOtherOrg(testInfo: TestInfo): Promise<Account & { org: string }> {
+  const email = uniqueEmail("other-owner", testInfo);
+  const org = `Other Org ${testInfo.project.name} ${Date.now() % 100000}`;
+  const container = execFileSync(
+    "docker",
+    ["ps", "-q", "--filter", `label=com.docker.compose.project=${PROJECT}`, "--filter", "label=com.docker.compose.service=andai-core"],
+    { encoding: "utf8" },
+  ).trim();
+  if (!container) throw new Error(`no andai-core container in compose project ${PROJECT}`);
+  execFileSync("docker", ["exec", "-i", container, "python", "-", email, org], {
+    input: OTHER_ORG_SCRIPT,
+    stdio: ["pipe", "ignore", "inherit"],
+  });
+  const link = await mailpit.link(email, "invite", portalOrigin);
+  const anonymous = await apiAs();
+  const accepted = await anonymous.post("/api/v1/auth/invite/accept", {
+    data: { token: new URL(link).searchParams.get("token"), password: PASSWORD, display_name: "Oda Other" },
+  });
+  expect(accepted.status(), await accepted.text()).toBe(200);
+  await anonymous.dispose();
+  return { email, password: PASSWORD, name: "Oda Other", org };
+}
+
+const OTHER_ORG_SCRIPT = `
+import asyncio, sys
+from datetime import UTC, datetime
+from andai_core.auth.invites import create_invite, invite_mail
+from andai_core.crypto import load_keyring
+from andai_core.db.session import create_app_engine
+from andai_core.mail import SmtpMailer
+from andai_core.org.service import create_org
+from andai_core.platform.admin_client import HttpPlatformAdmin
+from andai_core.settings import get_settings
+
+email, org = sys.argv[1], sys.argv[2]
+settings = get_settings()
+now = datetime.now(UTC)
+mailer = SmtpMailer(settings)
+
+def invite_the_owner(tx, created):
+    token = create_invite(tx, org_id=created.org_id, email=email, role="owner", invited_by=None, settings=settings, now=now)
+    asyncio.run(mailer.send(invite_mail(settings, email=email, org_name=org, token=token, owner=True)))
+
+engine = create_app_engine(settings=settings)
+try:
+    create_org(
+        engine, name=org, owner_email=email, owner_display_name="Oda Other",
+        admin=HttpPlatformAdmin.from_settings(settings), keyring=load_keyring(settings), now=now,
+        finish=invite_the_owner, max_concurrent_bots=settings.org_max_concurrent_bots,
+    )
+finally:
+    engine.dispose()
+`;
+
+// ─── meetings ───────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A Zoom-shaped link with a meeting number unique to this call (uuid-derived), so the one-bot-per-
+ * link rule never couples two tests or two runs; the scenario rides only the `mock=` query, which
+ * the e2e stack's mock bot plays (core/meetings/services/bot/mock/scenarios.ts).
+ */
+export function meetingLink(scenario: string): string {
+  const number = BigInt(`0x${randomUUID().replace(/-/g, "")}`).toString().slice(-11).replace(/^0+/, "").padStart(11, "1");
+  return `https://zoom.us/j/${number}?pwd=${MEETING_PASSCODE}&mock=${scenario}`;
+}
+
+/** The passcode every e2e meeting link carries; it must never appear on a page. */
+export const MEETING_PASSCODE = "e2eSecretPwd";
+
+export type StatusSeen = { status: string; at: number };
+
+/**
+ * Record, in the page, each status the meeting badge shows and when, and when the first transcript
+ * line appeared (the browser's clock, which is this machine's). Call before the page loads; read
+ * with `badgeStatuses` and `firstLineAt`.
+ */
+export async function recordBadgeStatuses(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const seen: { status: string; at: number; lines: number }[] = [];
+    const state = window as unknown as { __badge: typeof seen; __firstLine: number | null };
+    state.__badge = seen;
+    state.__firstLine = null;
+    const check = () => {
+      const badge = document.querySelector("[data-testid=meeting-status]");
+      const status = badge?.getAttribute("data-status");
+      const lines = document.querySelectorAll("[data-testid=transcript-line]").length;
+      if (status && seen[seen.length - 1]?.status !== status) seen.push({ status, at: Date.now(), lines });
+      if (lines > 0 && state.__firstLine === null) state.__firstLine = Date.now();
+    };
+    new MutationObserver(check).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-status"] });
+  });
+}
+
+export async function badgeStatuses(page: Page): Promise<(StatusSeen & { lines: number })[]> {
+  return page.evaluate(() => (window as unknown as { __badge: { status: string; at: number; lines: number }[] }).__badge ?? []);
+}
+
+export async function firstLineAt(page: Page): Promise<number | null> {
+  return page.evaluate(() => (window as unknown as { __firstLine: number | null }).__firstLine);
+}
+
+/** Poll GET /api/v1/meetings/{id} every 200 ms and keep each status change with its time. */
+export function pollApiStatuses(api: APIRequestContext, id: string): { stop: () => Promise<StatusSeen[]> } {
+  const seen: StatusSeen[] = [];
+  let running = true;
+  const loop = (async () => {
+    while (running) {
+      const response = await api.get(`/api/v1/meetings/${id}`).catch(() => null);
+      if (response?.ok()) {
+        const { status } = await response.json();
+        if (seen[seen.length - 1]?.status !== status) seen.push({ status, at: Date.now() });
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  })();
+  return {
+    stop: async () => {
+      running = false;
+      await loop;
+      return seen;
+    },
+  };
+}
+
+/**
+ * How long after the API showed each status the badge showed it (or a later one, when the badge
+ * moved past a short-lived status), in ms. A negative lag means the badge was first (the live
+ * stream can beat the 2 s reconciler that writes the API row).
+ */
+export function badgeLags(api: StatusSeen[], badge: StatusSeen[]): { status: string; lagMs: number | null }[] {
+  return api.map((row, index) => {
+    const reached = new Set(api.slice(index).map((r) => r.status));
+    const first = badge.find((b) => reached.has(b.status)); // the badge log is in time order
+    return { status: row.status, lagMs: first ? first.at - row.at : null };
+  });
+}
+
 // ─── page checks ────────────────────────────────────────────────────────────────────────────────
 
-const EXPECTED_STATUS = /status of (401|403|429)\b/;
+// API refusals the pages answer on screen (sign-in steps, 403, not found, already in a meeting, a
+// link that is not a meeting link, rate limits); the browser logs each one as a console error.
+const EXPECTED_STATUS = /status of (401|403|404|409|422|429)\b/;
 
 type Watch = { errors: string[]; foreign: string[] };
 
@@ -177,15 +323,25 @@ export async function screenshots(page: Page, name: string, testInfo: TestInfo):
 type Fixtures = {
   /** Open a page in a fresh context (its own cookies); watched like the default page. */
   openPage: (options?: BrowserContextOptions) => Promise<Page>;
+  /** Console errors this test causes on purpose (e.g. a request it aborts); others still fail it. */
+  expectConsoleErrors: (pattern: RegExp) => void;
 };
 
-export const test = base.extend<Fixtures & { watched: Watch[] }>({
+type Watched = Watch[] & { allowed: RegExp[] };
+
+export const test = base.extend<Fixtures & { watched: Watched }>({
   // Every watched page of a test; checked when the test ends.
   watched: async ({}, use) => {
-    const watched: Watch[] = [];
+    const watched = Object.assign([] as Watch[], { allowed: [] as RegExp[] });
     await use(watched);
-    expect(watched.flatMap((w) => w.errors), "unexpected console errors").toEqual([]);
+    const errors = watched.flatMap((w) => w.errors).filter((e) => !watched.allowed.some((p) => p.test(e)));
+    expect(errors, "unexpected console errors").toEqual([]);
     expect(watched.flatMap((w) => w.foreign), "requests that left the portal origin").toEqual([]);
+  },
+  expectConsoleErrors: async ({ watched }, use) => {
+    await use((pattern) => {
+      watched.allowed.push(pattern);
+    });
   },
   page: async ({ page, watched }, use) => {
     watched.push(watch(page));
