@@ -402,8 +402,10 @@ class FakeGateway:
     minted, so each org's principal sees only its own meetings. `POST /bots` parses the link the
     way the platform does for the three families, refuses a second live bot for the same
     (principal, platform, native id) with the structured 409, and answers 201 with status
-    `requested`. Tests move a meeting on with `set` / `set_data`. `fail` maps a call ("dispatch",
-    "list bots", "get meeting", "stop") to a status to answer; `dispatch_delay` stalls dispatch."""
+    `requested`. Tests move a meeting on with `set` / `set_data`, and give it transcript segments
+    with `transcripts[id]` (served by `GET /transcripts/by-id/{id}` as a TranscriptionResponse).
+    `fail` maps a call ("dispatch", "list bots", "get meeting", "stop", "get transcript") to a
+    status to answer; `dispatch_delay` stalls dispatch."""
 
     LIVE = ("requested", "joining", "awaiting_admission", "active", "needs_human_help", "stopping")
 
@@ -413,6 +415,7 @@ class FakeGateway:
         self.owners: dict[int, int] = {}  # platform meeting id -> platform user id
         self.dispatches: list[dict] = []  # request bodies, in order
         self.stops: list[tuple[str, str]] = []
+        self.transcripts: dict[int, list[dict]] = {}  # platform meeting id -> raw segments
         self.calls: list[tuple[str, str]] = []
         self.fail: dict[str, int] = {}
         self.dispatch_delay = 0.0
@@ -544,6 +547,29 @@ class FakeGateway:
             if self.owners.get(mid) != user:
                 return httpx.Response(404, json={"detail": "Meeting not found"})
             return httpx.Response(200, json=self.meetings[mid])
+        if request.method == "GET" and re.fullmatch(r"/transcripts/by-id/\d+", path):
+            if "get transcript" in self.fail:
+                return httpx.Response(self.fail["get transcript"], json={"detail": "boom"})
+            mid = int(path.rsplit("/", 1)[1])
+            if self.owners.get(mid) != user:
+                return httpx.Response(404, json={"detail": f"Meeting {mid} not found"})
+            m = self.meetings[mid]
+            return httpx.Response(
+                200,
+                json={
+                    "id": mid,
+                    "platform": m["platform"],
+                    "native_meeting_id": m["native_meeting_id"],
+                    "constructed_meeting_url": m["constructed_meeting_url"],
+                    "status": m["status"],
+                    "start_time": m["start_time"],
+                    "end_time": m["end_time"],
+                    "recordings": [],
+                    "notes": None,
+                    "data": {},
+                    "segments": list(self.transcripts.get(mid, [])),
+                },
+            )
         if request.method == "DELETE" and path.startswith("/bots/"):
             if "stop" in self.fail:
                 return httpx.Response(self.fail["stop"], json={"detail": "boom"})
