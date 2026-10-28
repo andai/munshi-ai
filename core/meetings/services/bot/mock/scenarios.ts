@@ -22,7 +22,7 @@ import type { Invocation } from '../src/config.js';
 export type ScenarioName =
   | 'normal' | 'join-timeout' | 'reject' | 'crash' | 'immediate-stop'
   | 'continue' | 'speak-ack' | 'emit-n-segments' | 'slow-join' | 'recording'
-  | 'silence-left-alone' | 'left-alone' | 'evicted';
+  | 'silence-left-alone' | 'left-alone' | 'evicted' | 'paced';
 
 export interface Scenario {
   name: ScenarioName;
@@ -32,6 +32,8 @@ export interface Scenario {
   joinDelayMs?: number;
   /** transcript.v1 segments published during the active phase. */
   segments?: number;
+  /** the pause between two published segments (default 50 ms). */
+  segmentGapMs?: number;
   /** pipeline.start throws → the orchestrator drives to failed(stage=active) (crash). */
   crashOnStart?: boolean;
   /** upload one recording chunk to the backend during the active phase (recording leg). */
@@ -65,6 +67,8 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'silence-left-alone': { name: 'silence-left-alone', join: 'admitted', silenceAlone: true },
   'left-alone':      { name: 'left-alone',      join: 'admitted', segments: 1, aloneAfterMs: 1500, disclosure: 'chat' },
   'evicted':         { name: 'evicted',         join: 'admitted', segments: 1, evictAfterMs: 1500, disclosure: 'chat' },
+  // At human pace, for watching a meeting in a browser: 12 s in the lobby, then 8 lines 1.5 s apart.
+  'paced':           { name: 'paced',           join: 'admitted', joinDelayMs: 12000, segments: 8, segmentGapMs: 1500, endAfterMs: 2000, disclosure: 'chat' },
 };
 
 export function getScenario(name: string | undefined): Scenario {
@@ -148,7 +152,7 @@ export interface PipelineOpts {
  *  the REAL transcript sink, optionally uploads a recording chunk, then self-ends (→ stopped) unless the
  *  scenario waits for the backend. `crashOnStart` throws → the orchestrator emits failed(stage=active). */
 export function fakePipeline(sc: Scenario, inv: Invocation, transcript: TranscriptSink, opts: PipelineOpts = {}): Pipeline {
-  const gap = opts.segGapMs ?? 50;
+  const gap = opts.segGapMs ?? sc.segmentGapMs ?? 50;
   const endAfter = opts.endAfterMs ?? sc.endAfterMs;
   let cancelled = false;
   return {

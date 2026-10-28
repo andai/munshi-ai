@@ -55,6 +55,7 @@ interface Expect { status: BotStatus; reason: CompletionReason; stage?: string; 
 const EXPECT: Record<ScenarioName, Expect> = {
   'normal':          { status: 'completed', reason: 'stopped', recorded: 1 },
   'emit-n-segments': { status: 'completed', reason: 'stopped', minSegs: 12 },
+  'paced':           { status: 'completed', reason: 'stopped', minSegs: 8 },
   'slow-join':       { status: 'completed', reason: 'stopped' },
   'recording':       { status: 'completed', reason: 'stopped', recorded: 1 },
   'speak-ack':       { status: 'completed', reason: 'stopped', speakAfter: 4 },
@@ -112,7 +113,7 @@ function scenarioSelection(): void {
   check('an empty mock= selects nothing', pick('https://zoom.us/j/12345678901?mock=') === undefined);
   check('no URL selects nothing', pick(null) === undefined);
   check('a non-URL selects nothing', pick('not a url') === undefined);
-  check('the URL-selected names are registered', ['normal', 'reject', 'join-timeout', 'left-alone', 'evicted'].every((n) => getScenario(n).name === n));
+  check('the URL-selected names are registered', ['normal', 'reject', 'join-timeout', 'left-alone', 'evicted', 'paced'].every((n) => getScenario(n).name === n));
   let threw = false;
   try { getScenario('no-such-scenario'); } catch { threw = true; }
   check('an unknown scenario name is refused', threw);

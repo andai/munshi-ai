@@ -1,12 +1,12 @@
-// Global teardown: remove the andai-e2e stack and its volumes, so every run starts empty, and the
-// owner's credential file. E2E_KEEP_STACK=1 leaves both (for a manual pass in a browser; the file's
-// path is printed); remove them afterwards with `docker compose -p andai-e2e down -v`.
+// Global teardown: remove the andai-e2e stack, its volumes and the bot containers it started, so
+// every run starts empty, and the owner's credential file. E2E_KEEP_STACK=1 leaves both (for a
+// manual pass in a browser; the file's path is printed); remove them afterwards with
+// `docker compose -p andai-e2e down -v`.
 
-import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { PROJECT } from "./env";
+import { PROJECT, stackDown } from "./env";
 
 export default async function globalTeardown() {
   const ownerFile = process.env.E2E_OWNER_FILE;
@@ -15,5 +15,5 @@ export default async function globalTeardown() {
     return;
   }
   if (ownerFile) rmSync(dirname(ownerFile), { recursive: true, force: true });
-  execFileSync("docker", ["compose", "-p", PROJECT, "down", "-v", "--remove-orphans"], { stdio: "inherit" });
+  stackDown();
 }
