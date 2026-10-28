@@ -17,6 +17,10 @@ to that platform meeting, or answers the andai meeting that already holds it.
 **No rejoin (D-38).** A link whose bot a participant removed in the last 12 hours is refused with
 409 `removed_by_participant`; canary meetings are exempt. andai never re-dispatches on its own.
 
+**Canaries.** Source `canary` is accepted only from the canary org (`orgs.is_canary`, created once
+by `python -m andai_core canary-setup`), and that org sends nothing else, so canary bots never use
+a customer org's bot cap or appear in its data. `canary_actor` is how andai-worker acts as it.
+
 **Access (AUTH_MATRIX).** A meeting is readable and stoppable by its requester, by a lead of its
 team, and by org admins and owners; for anyone else it does not exist (404). The pasted link is
 returned with its passcode only to the requester and admins.
@@ -34,7 +38,7 @@ from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import anyio.to_thread
-from sqlalchemy import Engine, exists, select
+from sqlalchemy import Engine, exists, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as Tx
 
@@ -45,6 +49,8 @@ from andai_core.db.models import (
     TERMINAL_STATUSES,
     ConsentRecord,
     Meeting,
+    Org,
+    OrgMembership,
     Team,
     TeamMembership,
 )
@@ -356,6 +362,14 @@ class Meetings:
         meeting_id = uuid.uuid4()
         try:
             with self._tx(actor) as tx:
+                is_canary = bool(tx.scalar(select(Org.is_canary).where(Org.id == actor.org_id)))
+                if (source == "canary") != is_canary:
+                    raise MeetingError(
+                        403,
+                        "canary_org_only",
+                        "canary meetings come only from the canary organisation, and it sends "
+                        "nothing else",
+                    )
                 _check_team(tx, actor, team_id)
                 if source != "canary" and recently_removed(tx, actor.org_id, key, now):
                     raise MeetingError(
@@ -611,6 +625,30 @@ class Meetings:
         )
 
 
+# ─── the canary org ───────────────────────────────────────────────────────────────────────────────
+
+
+def canary_org_id(engine: Engine) -> uuid.UUID | None:
+    """The canary org's id, read with no org context through `andai_canary_org_id()` (0005)."""
+    with transaction(engine) as tx:
+        value = tx.scalar(text("SELECT andai_canary_org_id()"))
+    return None if value is None else uuid.UUID(str(value))
+
+
+def canary_actor(engine: Engine) -> Actor | None:
+    """The canary org's owner as an `Actor`, or None before `canary-setup` ran."""
+    org_id = canary_org_id(engine)
+    if org_id is None:
+        return None
+    with transaction(engine, org_id=org_id) as tx:
+        owner = tx.scalar(
+            select(OrgMembership.user_id).where(
+                OrgMembership.org_id == org_id, OrgMembership.role == "owner"
+            )
+        )
+    return None if owner is None else Actor(org_id=org_id, user_id=owner, role="owner")
+
+
 def _fail(meeting: Meeting, reason: str, now: datetime) -> None:
     meeting.status = "failed"
     meeting.failure_reason = reason
@@ -620,6 +658,8 @@ def _fail(meeting: Meeting, reason: str, now: datetime) -> None:
 
 __all__ = [
     "Actor",
+    "canary_actor",
+    "canary_org_id",
     "JoinResult",
     "MeetingError",
     "Meetings",

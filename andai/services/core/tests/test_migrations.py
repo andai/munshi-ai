@@ -5,10 +5,10 @@ from __future__ import annotations
 from alembic import command
 from sqlalchemy import Engine, create_engine, text
 
-from andai_core.db.models import GLOBAL_TABLES, ORG_SCOPED_TABLES, Base
+from andai_core.db.models import GLOBAL_TABLES, ORG_SCOPED_TABLES, SYSTEM_TABLES, Base
 from conftest import Postgres, alembic_config
 
-ALL_TABLES = set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES)
+ALL_TABLES = set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES) | set(SYSTEM_TABLES)
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -108,8 +108,10 @@ def test_app_role_grants(migrated: Postgres) -> None:
         engine.dispose()
 
     crud = {"SELECT", "INSERT", "UPDATE", "DELETE"}
-    for table in ALL_TABLES - {"audit_events"}:
+    for table in ALL_TABLES - {"audit_events"} - set(SYSTEM_TABLES):
         assert granted[table] == crud, table
     assert granted["audit_events"] == {"INSERT"}
+    for table in SYSTEM_TABLES:  # canary runs and alert incidents are kept, never deleted
+        assert granted[table] == {"SELECT", "INSERT", "UPDATE"}, table
     assert tuple(app_role) == (False, False, False, False)
     assert version_table is False
