@@ -1,6 +1,7 @@
 /**
  * Teams chat sender against jsdom fixtures of the Teams meeting chat: editor present, pane closed,
- * no chat button, pane without an editor, a read-only editor (guests barred from chat), Enter
+ * no chat button, a Chat button that appears late, a closed pane whose editor stays rendered off
+ * screen (the guest page), pane without an editor, a read-only editor (guests barred from chat), Enter
  * ignored (Send button), and a message that never appears.
  *
  * The fixture plays Teams' part: the toolbar Chat button toggles the pane, and Enter or Send in the
@@ -25,14 +26,20 @@ interface FixtureOpts {
   editor?: 'ok' | 'missing' | 'readonly';
   enterSends?: boolean;
   sendButtonSends?: boolean;
+  /** The Chat button is added this many ms after the call starts (the guest toolbar). */
+  chatButtonAfterMs?: number;
+  /** The pane is always mounted; closed means rendered off screen (the guest page). */
+  offscreenWhenClosed?: boolean;
 }
 
 function teams(opts: FixtureOpts = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="toolbar"></div></body></html>');
   const { document: doc } = dom.window;
-  dom.window.Element.prototype.getBoundingClientRect = function () {
-    return { width: 120, height: 40, top: 0, left: 0, right: 120, bottom: 40, x: 0, y: 0, toJSON() {} } as DOMRect;
+  dom.window.Element.prototype.getBoundingClientRect = function (this: Element) {
+    const left = this.closest('[data-offscreen]') ? -400 : 0;
+    return { width: 120, height: 40, top: 0, left, right: left + 120, bottom: 40, x: left, y: 0, toJSON() {} } as DOMRect;
   };
+  let opens = 0;
   const messages: string[] = [];
   let pane: HTMLElement | null = null;
   const post = (editor: HTMLElement) => {
@@ -65,15 +72,26 @@ function teams(opts: FixtureOpts = {}) {
     }
     doc.body.appendChild(pane);
   };
-  if (!opts.noChatButton) {
+  const isOpen = (): boolean => pane !== null && !(opts.offscreenWhenClosed && pane.hasAttribute('data-offscreen'));
+  const addChatButton = () => {
     const btn = doc.createElement('button');
     btn.id = 'chat-button';
     btn.setAttribute('aria-label', 'Chat');
-    btn.addEventListener('click', () => { if (pane) { pane.remove(); pane = null; } else mount(); });
+    btn.addEventListener('click', () => {
+      if (opts.offscreenWhenClosed && pane) {
+        if (pane.hasAttribute('data-offscreen')) { pane.removeAttribute('data-offscreen'); opens++; }
+        else pane.setAttribute('data-offscreen', '');
+      } else if (pane) { pane.remove(); pane = null; } else { mount(); opens++; }
+    });
     doc.getElementById('toolbar')!.appendChild(btn);
+  };
+  if (!opts.noChatButton) {
+    if (opts.chatButtonAfterMs) setTimeout(addChatButton, opts.chatButtonAfterMs);
+    else addChatButton();
   }
-  if (opts.paneOpen) mount();
-  return { doc, paneOpen: () => pane !== null, messages: () => messages };
+  if (opts.offscreenWhenClosed) { mount(); if (!opts.paneOpen) pane!.setAttribute('data-offscreen', ''); }
+  else if (opts.paneOpen) mount();
+  return { doc, paneOpen: isOpen, messages: () => messages, opens: () => opens };
 }
 
 const fast = { pollMs: 20, timeoutMs: 1500 };
@@ -102,6 +120,22 @@ const fast = { pollMs: 20, timeoutMs: 1500 };
     const f = teams({ noChatButton: true });
     const r = await sendTeamsChatMessage(NOTICE, { ...fast, doc: f.doc });
     check('chat_unavailable', r.channel === 'bot_name_only' && r.detail === 'chat_unavailable', r);
+  }
+
+  console.log('\n=== the Chat button appears after the call starts (guest toolbar) ===');
+  {
+    const f = teams({ chatButtonAfterMs: 300 });
+    const r = await sendTeamsChatMessage(NOTICE, { ...fast, doc: f.doc });
+    check('waits for the button, then posts to chat', r.channel === 'chat' && f.messages().length === 1, { r, m: f.messages() });
+  }
+
+  console.log('\n=== closed pane keeps its editor rendered off screen (guest page) ===');
+  {
+    const f = teams({ offscreenWhenClosed: true });
+    const r = await sendTeamsChatMessage(NOTICE, { ...fast, doc: f.doc });
+    check('opens the pane instead of typing into the off-screen editor', f.opens() === 1, f.opens());
+    check('posts to chat', r.channel === 'chat' && f.messages().length === 1, { r, m: f.messages() });
+    check('the pane it opened is closed again', !f.paneOpen());
   }
 
   console.log('\n=== pane opens without an editor ===');

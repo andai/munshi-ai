@@ -18,8 +18,9 @@ import type { Invocation, Platform } from './config.js';
 import type { DisclosureOutcome } from './contracts.js';
 import type { LifecycleSink, Pipeline } from './ports.js';
 
-/** The sender's own budget: open the panel, type, send, see the message. */
-export const DISCLOSURE_TIMEOUT_MS = 20_000;
+/** The sender's own budget: wait for the chat control (up to 30 s; Teams' guest toolbar adds it
+ *  8–15 s after admission), open the panel, type, send, see the message. */
+export const DISCLOSURE_TIMEOUT_MS = 45_000;
 /** Extra time before a sender that ignores its budget is cut off as `timeout`. */
 const HARD_STOP_GRACE_MS = 5_000;
 const DETAIL_MAX = 500;

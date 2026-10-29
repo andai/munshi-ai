@@ -27,7 +27,7 @@ export interface ChatSendInput {
 
 export interface ChatSendOptions {
   input?: ChatSendInput;
-  /** Whole-send budget in ms (open panel → confirmed bubble). Default 20 000. */
+  /** Whole-send budget in ms (chat ready → confirmed bubble). Default 20 000. */
   timeoutMs?: number;
   /** Poll interval while waiting for the composer or the sent bubble. Default 200. */
   pollMs?: number;
@@ -55,6 +55,9 @@ export interface ChatSelectors {
   send: readonly string[];
 }
 
+/** How long to wait for the chat to exist at all (a composer or the button that opens one): some
+ *  toolbars render it seconds after admission (Teams' guest page: 8–15 s). Bounded by the budget. */
+const READY_BUDGET_MS = 30_000;
 const OPEN_BUDGET_MS = 8_000;
 const ENTER_GRACE_MS = 3_000;
 const PROBE_LEN = 48;
@@ -71,8 +74,11 @@ function isShown(el: Element, needBox: boolean): boolean {
     if (st && (st.display === 'none' || st.visibility === 'hidden')) return false;
   }
   if (!needBox) return true;
+  // On screen, not just laid out: a closed panel can keep its composer rendered outside the window.
   const r = el.getBoundingClientRect();
-  return r.width > 0 || r.height > 0;
+  const w = view?.innerWidth ?? Infinity;
+  const h = view?.innerHeight ?? Infinity;
+  return (r.width > 0 || r.height > 0) && r.right > 0 && r.bottom > 0 && r.left < w && r.top < h;
 }
 
 function find(doc: Document, selectors: readonly string[], needBox: boolean): HTMLElement | null {
@@ -159,6 +165,9 @@ async function sendChatMessage(sel: ChatSelectors, text: string, opts: ChatSendO
   if (!message) return nameOnly('empty_message');
   let opened = false;
   try {
+    const ready = await until(() => find(doc, sel.composer, true) ?? find(doc, sel.open, false),
+      Math.min(deadline, Date.now() + READY_BUDGET_MS), pollMs);
+    if (!ready) return nameOnly('chat_unavailable');
     let composer = find(doc, sel.composer, true);
     if (!composer) {
       const toggle = find(doc, sel.open, false);
