@@ -407,9 +407,12 @@ class FakeGateway:
     calendar invitees with `invitees[id]`. `GET /meetings/{platform}/{native}/participants` answers
     like meeting-api: the principal's newest meeting with that native id, its invitees
     (`source: invite`) and then the distinct speakers of its transcript (`source: speaker`), not
-    de-duplicated. `fail` maps a call ("dispatch", "list bots", "get meeting", "stop",
-    "get transcript", "get participants") to a status to answer; `dispatch_delay` stalls
-    dispatch."""
+    de-duplicated. `DELETE /meetings/{id}` deletes a terminal meeting's transcript and stored
+    objects (`objects[id]`) and keeps the row as a tombstone, like meeting-api: 404 for a meeting
+    the principal does not own, 409 while it is live, 204 otherwise (again after a delete);
+    `deletions` lists the ids in order. `fail` maps a call ("dispatch", "list bots",
+    "get meeting", "stop", "get transcript", "get participants", "delete meeting") to a status to
+    answer; `dispatch_delay` stalls dispatch."""
 
     LIVE = ("requested", "joining", "awaiting_admission", "active", "needs_human_help", "stopping")
 
@@ -421,6 +424,8 @@ class FakeGateway:
         self.stops: list[tuple[str, str]] = []
         self.transcripts: dict[int, list[dict]] = {}  # platform meeting id -> raw segments
         self.invitees: dict[int, list[dict]] = {}  # platform meeting id -> {name, email}
+        self.objects: dict[int, list[str]] = {}  # platform meeting id -> stored object keys
+        self.deletions: list[int] = []
         self.calls: list[tuple[str, str]] = []
         self.fail: dict[str, int] = {}
         self.dispatch_delay = 0.0
@@ -610,6 +615,25 @@ class FakeGateway:
                     "observed_roster": "not_recorded",
                 },
             )
+        if request.method == "DELETE" and re.fullmatch(r"/meetings/\d+", path):
+            if "delete meeting" in self.fail:
+                return httpx.Response(self.fail["delete meeting"], json={"detail": "boom"})
+            mid = int(path.rsplit("/", 1)[1])
+            with self._lock:
+                if self.owners.get(mid) != user:
+                    return httpx.Response(404, json={"detail": "Meeting not found"})
+                m = self.meetings[mid]
+                if m["status"] not in ("completed", "failed"):
+                    return httpx.Response(
+                        409,
+                        json={"detail": "Meeting artifacts can only be deleted after the"
+                              " lifecycle is terminal"},
+                    )
+                self.deletions.append(mid)
+                self.transcripts.pop(mid, None)
+                self.objects.pop(mid, None)
+                m["data"] = {"artifact_deletion": {"state": "completed"}}
+            return httpx.Response(204)
         if request.method == "DELETE" and path.startswith("/bots/"):
             if "stop" in self.fail:
                 return httpx.Response(self.fail["stop"], json={"detail": "boom"})

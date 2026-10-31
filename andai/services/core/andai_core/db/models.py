@@ -8,7 +8,7 @@ Two kinds of table:
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
   `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
-  (0008).
+  (0008), `meeting_removals` (0009).
 * System tables with no org and no customer data (no row-level security; migration 0005):
   `canary_runs` and `alert_state`, written by andai-worker.
 
@@ -97,6 +97,10 @@ GRANTEE_TYPES = ("user", "team")
 # Minutes of meeting (migration 0008; SPEC `OutputLanguage`).
 OUTPUT_LANGUAGES = ("en", "hi", "hinglish")
 
+# Meeting deletion (migration 0009): `none` until deleted, then `pending` until purged (the row
+# goes), or `failed` once the purge has spent its attempts.
+DELETION_STATES = ("none", "pending", "failed")
+
 # Canary runs and alert incidents (migration 0005).
 CANARY_RUN_STATES = ("scheduled", "running", "done")
 CANARY_OUTCOMES = ("success", "failure")
@@ -117,6 +121,7 @@ ORG_SCOPED_TABLES = (
     "transcript_segments",
     "meeting_shares",
     "mom_documents",
+    "meeting_removals",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # No org, no customer data, no row-level security (migration 0005).
@@ -445,6 +450,15 @@ class Meeting(Base):
                 " AND transcript_state IN ('none', 'pending')"
             ),
         ),
+        CheckConstraint(_in("deletion_state", DELETION_STATES), name="deletion_state"),
+        CheckConstraint(
+            "(deleted_at IS NULL) = (deletion_state = 'none')", name="hidden_when_deleted"
+        ),
+        Index(
+            "ix_meetings_deletion_due",
+            "deletion_next_at",
+            postgresql_where=text("deletion_state = 'pending'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -491,6 +505,19 @@ class Meeting(Base):
     )
     transcript_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     transcript_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Deletion (`meetings/deletion.py`): hidden from every read path once `deleted_at` is set,
+    # purged by andai-worker (the row goes with everything of the meeting).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    deletion_state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'none'")
+    )
+    deletion_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    deletion_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TranscriptSegment(Base):
@@ -616,6 +643,28 @@ class ConsentRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class MeetingRemoval(Base):
+    """A meeting participants removed the bot from, kept after the meeting was deleted so the
+    12-hour no-rejoin rule (D-38) still holds: the org, the link's key and when. No content."""
+
+    __tablename__ = "meeting_removals"
+    __table_args__ = (
+        Index(
+            "ix_meeting_removals_org_id_join_url_key_removed_at",
+            "org_id",
+            "join_url_key",
+            "removed_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    join_url_key: Mapped[str] = mapped_column(Text, nullable=False)
+    removed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class CanaryRun(Base):

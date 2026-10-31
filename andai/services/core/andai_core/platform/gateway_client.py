@@ -14,6 +14,11 @@ andai-core for that call only; this module never stores, logs or repeats it.
   principal's newest meeting with that native id: `{meeting_id, participants: [{name, email,
   source: invite|speaker}], ...}`, calendar invitees then distinct transcript speakers, not
   de-duplicated.
+* `delete_meeting(key, id)` — `DELETE /meetings/{id}` (row id, so a recurring link's other
+  meetings are never touched): for a terminal meeting the platform deletes the recording objects
+  under the meeting's storage prefix, then its transcript rows, and keeps the meeting row as a
+  tombstone. 404 when the principal has no such meeting; 409 while the meeting is not terminal;
+  503 while storage deletion is unavailable.
 
 `live_url(base_url)` is the gateway's live WebSocket (`/ws`) for the same base URL; andai-core's
 live relay (`meetings/live.py`) connects to it with the same per-call key.
@@ -73,6 +78,8 @@ class PlatformGateway(Protocol):
     async def get_transcript(self, key: str, meeting_id: int) -> dict: ...
 
     async def get_participants(self, key: str, platform: str, native_meeting_id: str) -> dict: ...
+
+    async def delete_meeting(self, key: str, meeting_id: int) -> None: ...
 
 
 def live_url(base_url: str) -> str:
@@ -191,3 +198,8 @@ class HttpPlatformGateway:
         if response.status_code >= 400:
             raise GatewayError("get participants", response.status_code)
         return _object("get participants", response)
+
+    async def delete_meeting(self, key: str, meeting_id: int) -> None:
+        response = await self._call("delete meeting", key, "DELETE", f"/meetings/{int(meeting_id)}")
+        if response.status_code >= 400:
+            raise GatewayError("delete meeting", response.status_code)

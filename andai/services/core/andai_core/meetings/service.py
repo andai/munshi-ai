@@ -15,7 +15,10 @@ bot for the meeting, e.g. the same Zoom meeting pasted under another hostname) a
 to that platform meeting, or answers the andai meeting that already holds it.
 
 **No rejoin (D-38).** A link whose bot a participant removed in the last 12 hours is refused with
-409 `removed_by_participant`; canary meetings are exempt. andai never re-dispatches on its own.
+409 `removed_by_participant`; canary meetings are exempt. andai never re-dispatches on its own. The
+removal is read from the meeting's consent record, or, once the meeting is deleted and purged,
+from the content-free marker the purge leaves (`meeting_removals`). A deleted meeting is terminal,
+so it never holds a link against a new dispatch.
 
 **Canaries.** Source `canary` is accepted only from the canary org (`orgs.is_canary`, created once
 by `python -m andai_core canary-setup`), and that org sends nothing else, so canary bots never use
@@ -40,7 +43,7 @@ from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import anyio.to_thread
-from sqlalchemy import Engine, exists, select, text
+from sqlalchemy import Engine, exists, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as Tx
 
@@ -51,6 +54,7 @@ from andai_core.db.models import (
     TERMINAL_STATUSES,
     ConsentRecord,
     Meeting,
+    MeetingRemoval,
     Org,
     OrgMembership,
     Team,
@@ -292,20 +296,22 @@ def _check_team(tx: Tx, actor: Actor, team_id: uuid.UUID | None) -> None:
 
 
 def recently_removed(tx: Tx, org_id: uuid.UUID, key: str, now: datetime) -> bool:
-    """Whether a participant removed the bot from a meeting of this link in the last 12 hours."""
-    return bool(
-        tx.scalar(
-            select(
-                exists().where(
-                    ConsentRecord.meeting_id == Meeting.id,
-                    Meeting.org_id == org_id,
-                    Meeting.join_url_key == key,
-                    ConsentRecord.removed_at.is_not(None),
-                    ConsentRecord.removed_at > now - REMOVAL_WINDOW,
-                )
-            )
-        )
+    """Whether a participant removed the bot from a meeting of this link in the last 12 hours: a
+    meeting's consent record (deleted or not) or the removal marker of a purged one says so."""
+    since = now - REMOVAL_WINDOW
+    on_record = exists().where(
+        ConsentRecord.meeting_id == Meeting.id,
+        Meeting.org_id == org_id,
+        Meeting.join_url_key == key,
+        ConsentRecord.removed_at.is_not(None),
+        ConsentRecord.removed_at > since,
     )
+    marked = exists().where(
+        MeetingRemoval.org_id == org_id,
+        MeetingRemoval.join_url_key == key,
+        MeetingRemoval.removed_at > since,
+    )
+    return bool(tx.scalar(select(or_(on_record, marked))))
 
 
 def _live_by_key(tx: Tx, org_id: uuid.UUID, key: str) -> Meeting | None:

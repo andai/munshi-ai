@@ -1,16 +1,17 @@
 # andai/services/core/andai_core/meetings
 
-Sending the bot to a meeting, following it, listing, sharing and reading its minutes:
+Sending the bot to a meeting, following it, listing, sharing, reading its minutes and deleting it:
 
 - `routes.py` — `GET /api/v1/meetings` (the list), `POST /api/v1/meetings/join`,
-  `GET /api/v1/meetings/{id}`, `POST /api/v1/meetings/{id}/stop`,
+  `GET /api/v1/meetings/{id}`, `DELETE /api/v1/meetings/{id}`, `POST /api/v1/meetings/{id}/stop`,
   `GET /api/v1/meetings/{id}/transcript`, `GET /api/v1/meetings/{id}/live`,
   `GET /api/v1/meetings/{id}/mom`, `GET/POST /api/v1/meetings/{id}/shares` and
   `DELETE /api/v1/meetings/{id}/shares/{share_id}` (access per `.work/AUTH_MATRIX.md`; 404 for
   anyone who may not read the meeting).
 - `access.py` — the one access predicate, `accessible(actor)`, used as SQL by every read path
   (detail, transcript, live, minutes, list, search): admins and owners, the requester, a lead of
-  the meeting's team, and the users and current team members it is shared with. `can_read`, `can_stop` and
+  the meeting's team, and the users and current team members it is shared with. A deleted meeting
+  is readable by no one. `can_read`, `can_stop` and
   `can_share` (requester, team lead, admins, owners — not grantees), `can_delete` (requester,
   admins, owners), the view's `permissions`, and who a meeting is shared with.
 - `listing.py` — the dashboard list: Live / Upcoming / Past sections by status, newest first,
@@ -28,10 +29,17 @@ Sending the bot to a meeting, following it, listing, sharing and reading its min
   unknown are 404 `no_such_grantee`.
 - `service.py` — link family check, one live bot per link per org, dispatch with the org's key and
   its fixed defaults (bot name, language, lobby and alone timeouts, recording notice), the 12-hour
-  no-rejoin rule after a removal (D-38), stop, and the API view (passcode only for the requester
+  no-rejoin rule after a removal (D-38, from consent records and removal markers), stop, and the API view (passcode only for the requester
   and admins; also `title`, `attendees`, `transcript_state`, team and requester names, the
   caller's `permissions`, and `shared_with` for those who may share). Source `canary` only from the
   canary org, which sends nothing else; `canary_actor` is how andai-worker acts as that org.
+- `deletion.py` — `request_delete` (requester, admins, owners; 409 `meeting_live` while the bot is
+  in the meeting) hides the meeting and writes `meeting.delete` in one transaction; `purge`, run by
+  andai-worker for each deletion `andai_claim_deletions()` hands out, deletes the platform's
+  recording objects and transcript with the org's key (the platform keeps a tombstone row), then
+  andai's segments, shares, consent record, minutes and meeting row, keeping only the audit events
+  and, for a meeting participants removed the bot from in the last 12 hours, a content-free
+  `meeting_removals` marker (D-38). Retries back off from 10 s to 2 min; `failed` after 30.
 - `status_map.py` — the platform's status, completion reason and join evidence → andai status,
   `JoinFailureReason` and end reason; admit instructions per platform.
 - `consent.py` — the consent record of each meeting the bot was admitted to.
@@ -49,6 +57,7 @@ Sending the bot to a meeting, following it, listing, sharing and reading its min
     idempotent.
   - An empty transcript is retried with backoff, as is a platform error; a platform error ends in
     `failed` after 8 attempts.
+  - A deleted meeting is never ingested, and nothing is stored for one deleted mid-ingest.
   - andai-worker runs it for each meeting that `andai_claim_ingest()` hands out.
 - `live.py` — the live relay: server-sent events with status, segments and retractions for one
   viewer, from one gateway WebSocket that andai-core holds with the org's key. Access is checked
