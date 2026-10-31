@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import Engine, select, text, update
 
 from andai_core.auth.passwords import hash_password
-from andai_core.db.models import ConsentRecord, Invite, User
+from andai_core.db.models import ConsentRecord, Invite, TranscriptSegment, User
 from andai_core.db.session import transaction
 from andai_core.main import create_app
 from andai_core.org.service import create_org
@@ -153,6 +153,20 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
                 admitted_at=harness.clock(),
             )
         )
+        # A row of andai's own transcript copy, carrying the tag too.
+        tx.add(
+            TranscriptSegment(
+                meeting_id=meeting_id,
+                id=f"seg_{tag}",
+                org_id=org_id,
+                seq=0,
+                speaker=f"{label} Speaker {tag}",
+                text_raw=f"{label} stored {tag}",
+                text_canonical=f"{label} stored {tag}",
+                script="latn",
+                search_text=f"{label} stored {tag}".lower(),
+            )
+        )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -237,6 +251,9 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "consent_records": (
             "SELECT meeting_id, disclosure_channel, removed_at, updated_at"
             " FROM consent_records WHERE org_id = :o"
+        ),
+        "transcript_segments": (
+            "SELECT meeting_id, id, speaker, text_raw FROM transcript_segments WHERE org_id = :o"
         ),
     }
     params = {"o": b.org_id, "u": b.users}

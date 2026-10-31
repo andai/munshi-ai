@@ -12,7 +12,8 @@ Each org's principal on the meeting platform:
 
 - `gateway_client.py` — `HttpPlatformGateway`, the gateway client (`PLATFORM_GATEWAY_URL`), called
   with one org's key per call: `dispatch` (`POST /bots`), `list_bots`, `get_meeting`, `stop`,
-  `get_transcript` (`GET /transcripts/by-id/{id}`); `live_url` names the gateway's `/ws`, which the
+  `get_transcript` (`GET /transcripts/by-id/{id}`), `get_participants`
+  (`GET /meetings/{platform}/{native}/participants`); `live_url` names the gateway's `/ws`, which the
   live relay (`meetings/live.py`) opens with the same key.
   Errors carry the call and status only; a structured duplicate 409 is `DuplicateMeeting`.
 

@@ -29,6 +29,7 @@ from andai_core.db.models import (
     PlatformPrincipal,
     Team,
     TeamMembership,
+    TranscriptSegment,
 )
 from andai_core.db.session import transaction
 from conftest import Postgres, bootstrap_org, new_user
@@ -45,6 +46,7 @@ READABLE = {
     "platform_principals": "org_id",
     "meetings": "org_id",
     "consent_records": "org_id",
+    "transcript_segments": "org_id",
 }
 
 
@@ -134,6 +136,22 @@ def _seed_meeting(
                 admitted_at=datetime.now(UTC),
             )
         )
+        tx.add(
+            TranscriptSegment(
+                meeting_id=meeting_id,
+                id=f"seg_{meeting_id.hex[:24]}",
+                org_id=org_id,
+                seq=0,
+                start_s=0.0,
+                end_s=1.5,
+                speaker="Asha",
+                text_raw="कल की मीटिंग",
+                text_canonical="kal ki meeting",
+                script="deva",
+                language="hi",
+                search_text="kal ki miting",
+            )
+        )
     return meeting_id
 
 
@@ -210,6 +228,7 @@ def test_other_org_rows_are_invisible(
         ("platform_principals", "key_id = 'hijacked'"),
         ("meetings", "status = 'cancelled'"),
         ("consent_records", "disclosure_detail = 'hijacked'"),
+        ("transcript_segments", "speaker = 'hijacked'"),
     ],
 )
 def test_other_org_rows_cannot_be_updated_or_deleted(
@@ -543,10 +562,12 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "SETOF uuid"
     assert (fn[4], fn[5]) == (False, True)
-    # 0004 (open meetings) and 0005 (join statistics) together; never the link, ids or people.
+    # 0004 (open meetings), 0005 (join statistics) and 0006 (the ingest claim) together; never
+    # the link, the title, attendees or people.
     assert readable == {
         "org_id", "status", "platform", "source", "failure_reason", "end_reason", "started_at",
-        "created_at",
+        "created_at", "id", "platform_meeting_id", "transcript_state", "transcript_attempts",
+        "transcript_next_at",
     }
     assert consent_columns == 0
     assert can_create is False
@@ -673,3 +694,205 @@ def test_system_tables_hold_no_org_data_and_the_scan_role_cannot_read_them(
             assert conn.execute(
                 text("SELECT has_table_privilege('andai_scan', :t, 'SELECT')"), {"t": table}
             ).scalar_one() is False
+
+
+# ─── andai's transcript copy and the ingest claim (migration 0006) ────────────────────────────────
+
+CLAIM = "SELECT org_id, meeting_id FROM andai_claim_ingest(:n)"
+
+
+def _set_meeting(engine: Engine, org: SeededOrg, meeting_id: uuid.UUID, **values: object) -> None:
+    assignments = ", ".join(f"{column} = :{column}" for column in values)
+    with transaction(engine, org_id=org.org_id) as tx:
+        tx.execute(
+            text(f"UPDATE meetings SET {assignments} WHERE id = :m"), {"m": meeting_id, **values}
+        )
+
+
+def _mine(rows: list, org: SeededOrg) -> set[uuid.UUID]:
+    return {meeting for org_id, meeting in rows if org_id == org.org_id}
+
+
+def test_claim_ingest_returns_finished_meetings_of_every_org_while_meetings_stay_hidden(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    for org in (org_a, org_b):
+        _set_meeting(app_engine, org, org.meeting_id, status="done")
+    with transaction(app_engine) as tx:  # andai_app, no app.org_id
+        claimed = tx.execute(text(CLAIM), {"n": 1000}).all()
+        direct = tx.execute(text("SELECT count(*) FROM meetings")).scalar_one()
+        segments = tx.execute(text("SELECT count(*) FROM transcript_segments")).scalar_one()
+    assert _mine(claimed, org_a) == {org_a.meeting_id}
+    assert _mine(claimed, org_b) == {org_b.meeting_id}
+    assert all(set(row._fields) == {"org_id", "meeting_id"} for row in claimed)
+    assert (direct, segments) == (0, 0)
+
+
+def test_claim_ingest_takes_only_terminal_meetings_with_a_platform_id_that_are_due(
+    app_engine: Engine, superuser_engine: Engine, org_a: SeededOrg
+) -> None:
+    def meeting(status: str, **values: object) -> uuid.UUID:
+        meeting_id = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status=status)
+        if values:
+            _set_meeting(app_engine, org_a, meeting_id, **values)
+        return meeting_id
+
+    done = meeting("done")
+    failed = meeting("failed")
+    cancelled = meeting("cancelled")
+    meeting("done", platform_meeting_id=None)
+    meeting("done", transcript_state="stored")
+    meeting("done", transcript_state="failed")
+    meeting("done", transcript_attempts=8)
+    meeting("done", transcript_next_at=datetime.now(UTC) + timedelta(minutes=5))
+    meeting("processing")
+    retry = meeting("done", transcript_state="pending", transcript_attempts=3,
+                    transcript_next_at=datetime.now(UTC) - timedelta(seconds=1))
+    # org_a's seeded meeting is still recording
+
+    with transaction(app_engine) as tx:
+        first = tx.execute(text(CLAIM), {"n": 1000}).all()
+    with transaction(app_engine) as tx:
+        again = tx.execute(text(CLAIM), {"n": 1000}).all()
+
+    assert _mine(first, org_a) == {done, failed, cancelled, retry}
+    assert _mine(again, org_a) == set()  # leased
+    with superuser_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT transcript_state, transcript_attempts, transcript_next_at > now()"
+                " FROM meetings WHERE id = ANY(:ids)"
+            ),
+            {"ids": [done, failed, cancelled, retry]},
+        ).all()
+    assert sorted(rows) == sorted(
+        [("pending", 0, True), ("pending", 0, True), ("pending", 0, True), ("pending", 3, True)]
+    )
+
+
+def test_claim_ingest_respects_the_limit(app_engine: Engine, org_a: SeededOrg) -> None:
+    ids = {
+        _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done") for _ in range(3)
+    }
+    with transaction(app_engine) as tx:
+        none = tx.execute(text(CLAIM), {"n": 0}).all()
+        two = tx.execute(text(CLAIM), {"n": 2}).all()
+    with transaction(app_engine) as tx:
+        rest = tx.execute(text(CLAIM), {"n": 100_000}).all()
+    assert none == [] and len(two) == 2
+    assert _mine(two, org_a) | _mine(rest, org_a) == ids
+    assert not _mine(two, org_a) & _mine(rest, org_a)
+
+
+def test_two_claimers_never_take_the_same_meeting(app_engine: Engine, org_a: SeededOrg) -> None:
+    ids = {
+        _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done") for _ in range(4)
+    }
+    with app_engine.connect() as first:
+        held = first.execute(text(CLAIM), {"n": 1000}).all()  # rows stay locked: no commit yet
+        with app_engine.connect() as second:
+            other = second.execute(text(CLAIM), {"n": 1000}).all()
+            second.commit()
+        first.commit()
+    assert _mine(held, org_a) == ids
+    assert _mine(other, org_a) == set()
+
+
+def test_claim_ingest_is_a_scan_owned_definer_function(superuser_engine: Engine) -> None:
+    with superuser_engine.connect() as conn:
+        fn = conn.execute(
+            text(
+                "SELECT p.prosecdef, r.rolname, p.proconfig, pg_get_function_result(p.oid),"
+                " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                " FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner"
+                " WHERE p.proname = 'andai_claim_ingest'"
+            )
+        ).one()
+        columns = [
+            name
+            for (name,) in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'meetings'"
+                )
+            )
+        ]
+        updatable = {
+            column
+            for column in columns
+            if conn.execute(
+                text("SELECT has_column_privilege('andai_scan', 'meetings', :c, 'UPDATE')"),
+                {"c": column},
+            ).scalar_one()
+        }
+        segments = conn.execute(
+            text(
+                "SELECT has_table_privilege('andai_scan', 'transcript_segments',"
+                " 'SELECT, INSERT, UPDATE, DELETE')"
+            )
+        ).scalar_one()
+        segment_columns = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.column_privileges"
+                " WHERE grantee = 'andai_scan' AND table_name = 'transcript_segments'"
+            )
+        ).scalar_one()
+    assert fn[0] is True and fn[1] == "andai_scan"
+    assert fn[2] == ["search_path=public, pg_temp"]
+    assert fn[3] == "TABLE(org_id uuid, meeting_id uuid)"
+    assert (fn[4], fn[5]) == (False, True)
+    assert updatable == {"transcript_state", "transcript_attempts", "transcript_next_at"}
+    assert (segments, segment_columns) == (False, 0)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT join_url FROM meetings",
+        "SELECT title FROM meetings",
+        "SELECT attendees FROM meetings",
+        "SELECT requested_by FROM meetings",
+        "SELECT settings_snapshot FROM meetings",
+        "SELECT * FROM meetings",
+        "SELECT * FROM transcript_segments",
+        "SELECT text_raw FROM transcript_segments",
+        "UPDATE meetings SET status = 'done'",
+        "UPDATE meetings SET transcript_at = now()",
+        "UPDATE meetings SET attendees = '[]'::jsonb",
+        "DELETE FROM meetings",
+        "DELETE FROM transcript_segments",
+        "INSERT INTO transcript_segments (meeting_id, id, org_id, seq, speaker, text_raw,"
+        " text_canonical, script, search_text) SELECT id, 'x', org_id, 0, '', '', '', 'latn', ''"
+        " FROM meetings LIMIT 1",
+    ],
+)
+def test_the_scan_role_cannot_read_or_write_beyond_its_grants(
+    superuser_engine: Engine, org_a: SeededOrg, statement: str
+) -> None:
+    with superuser_engine.connect() as conn:
+        conn.execute(text("SET LOCAL ROLE andai_scan"))
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            conn.execute(text(statement))
+
+
+def test_the_scan_role_can_do_what_the_claim_needs(
+    superuser_engine: Engine, org_a: SeededOrg
+) -> None:
+    with superuser_engine.connect() as conn:  # rolled back on close
+        conn.execute(text("SET LOCAL ROLE andai_scan"))
+        seen = conn.execute(
+            text(
+                "SELECT id, org_id, status, platform_meeting_id, transcript_state,"
+                " transcript_attempts, transcript_next_at FROM meetings WHERE id = :m"
+            ),
+            {"m": org_a.meeting_id},
+        ).all()
+        updated = conn.execute(
+            text(
+                "UPDATE meetings SET transcript_state = 'pending', transcript_attempts = 1,"
+                " transcript_next_at = now() WHERE id = :m"
+            ),
+            {"m": org_a.meeting_id},
+        ).rowcount
+    assert len(seen) == 1 and updated == 1

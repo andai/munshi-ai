@@ -165,6 +165,35 @@ def test_get_transcript_reads_by_platform_meeting_id_with_the_org_key() -> None:
     assert caught.value.status == 404 and KEY not in str(caught.value)
 
 
+def test_get_participants_reads_by_platform_and_native_id_with_the_org_key() -> None:
+    seen = []
+    answer = {
+        "meeting_id": 42,
+        "platform": "teams",
+        "native_meeting_id": "19:meeting_abc@thread.v2",
+        "participants": [{"name": "Asha", "email": None, "source": "speaker"}],
+        "sources": ["speaker"],
+        "observed_roster": "not_recorded",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if "missing" in request.url.path:
+            return httpx.Response(404, json={"detail": "Meeting not found"})
+        return httpx.Response(200, json=answer)
+
+    client = gateway(handler)
+    assert run(client.get_participants(KEY, "teams", "19:meeting_abc@thread.v2")) == answer
+    with pytest.raises(GatewayError) as caught:
+        run(client.get_participants(KEY, "zoom", "missing"))
+
+    assert seen[0].method == "GET"
+    assert seen[0].url.raw_path == b"/meetings/teams/19%3Ameeting_abc%40thread.v2/participants"
+    assert seen[0].headers[API_KEY_HEADER] == KEY
+    assert caught.value.what == "get participants"
+    assert caught.value.status == 404 and KEY not in str(caught.value)
+
+
 @pytest.mark.parametrize(
     ("base", "url"),
     [

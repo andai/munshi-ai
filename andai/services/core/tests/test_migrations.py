@@ -115,3 +115,65 @@ def test_app_role_grants(migrated: Postgres) -> None:
         assert granted[table] == {"SELECT", "INSERT", "UPDATE"}, table
     assert tuple(app_role) == (False, False, False, False)
     assert version_table is False
+
+
+TRANSCRIPT_COLUMNS = {
+    "title",
+    "attendees",
+    "transcript_state",
+    "transcript_attempts",
+    "transcript_next_at",
+    "transcript_at",
+}
+
+
+def _meeting_columns(engine: Engine) -> set[str]:
+    with engine.connect() as conn:
+        return set(
+            conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'meetings'"
+                )
+            ).scalars()
+        )
+
+
+def _scan_objects(engine: Engine) -> tuple[int, int, int]:
+    """(claim functions, scan_claim policies, andai_scan UPDATE column grants)."""
+    with engine.connect() as conn:
+        return (
+            conn.execute(
+                text("SELECT count(*) FROM pg_proc WHERE proname = 'andai_claim_ingest'")
+            ).scalar_one(),
+            conn.execute(
+                text("SELECT count(*) FROM pg_policies WHERE policyname = 'scan_claim'")
+            ).scalar_one(),
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM information_schema.column_privileges"
+                    " WHERE grantee = 'andai_scan' AND privilege_type = 'UPDATE'"
+                )
+            ).scalar_one(),
+        )
+
+
+def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
+        assert _scan_objects(engine) == (1, 1, 3)
+
+        command.downgrade(config, "0005")
+        assert _revision(engine) == "0005"
+        assert _tables(engine) == ALL_TABLES - {"transcript_segments"}
+        assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
+        assert _scan_objects(engine) == (0, 0, 0)
+
+        command.upgrade(config, "head")
+        assert _tables(engine) == ALL_TABLES
+        assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
+        assert _scan_objects(engine) == (1, 1, 3)
+    finally:
+        engine.dispose()

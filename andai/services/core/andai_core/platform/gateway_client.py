@@ -9,6 +9,11 @@ andai-core for that call only; this module never stores, logs or repeats it.
 * `get_meeting(key, id)` — `GET /meetings/{id}`.
 * `stop(key, platform, native_meeting_id)` — `DELETE /bots/{platform}/{native_meeting_id}`.
 * `get_transcript(key, id)` — `GET /transcripts/by-id/{id}`; the platform's TranscriptionResponse.
+* `get_participants(key, platform, native_meeting_id)` —
+  `GET /meetings/{platform}/{native_meeting_id}/participants`. meeting-api answers for the
+  principal's newest meeting with that native id: `{meeting_id, participants: [{name, email,
+  source: invite|speaker}], ...}`, calendar invitees then distinct transcript speakers, not
+  de-duplicated.
 
 `live_url(base_url)` is the gateway's live WebSocket (`/ws`) for the same base URL; andai-core's
 live relay (`meetings/live.py`) connects to it with the same per-call key.
@@ -66,6 +71,8 @@ class PlatformGateway(Protocol):
     async def stop(self, key: str, platform: str, native_meeting_id: str) -> None: ...
 
     async def get_transcript(self, key: str, meeting_id: int) -> dict: ...
+
+    async def get_participants(self, key: str, platform: str, native_meeting_id: str) -> dict: ...
 
 
 def live_url(base_url: str) -> str:
@@ -174,3 +181,13 @@ class HttpPlatformGateway:
         if response.status_code >= 400:
             raise GatewayError("get transcript", response.status_code)
         return _object("get transcript", response)
+
+    async def get_participants(self, key: str, platform: str, native_meeting_id: str) -> dict:
+        path = (
+            f"/meetings/{quote(platform, safe='')}/{quote(native_meeting_id, safe='')}"
+            "/participants"
+        )
+        response = await self._call("get participants", key, "GET", path)
+        if response.status_code >= 400:
+            raise GatewayError("get participants", response.status_code)
+        return _object("get participants", response)

@@ -403,9 +403,13 @@ class FakeGateway:
     way the platform does for the three families, refuses a second live bot for the same
     (principal, platform, native id) with the structured 409, and answers 201 with status
     `requested`. Tests move a meeting on with `set` / `set_data`, and give it transcript segments
-    with `transcripts[id]` (served by `GET /transcripts/by-id/{id}` as a TranscriptionResponse).
-    `fail` maps a call ("dispatch", "list bots", "get meeting", "stop", "get transcript") to a
-    status to answer; `dispatch_delay` stalls dispatch."""
+    with `transcripts[id]` (served by `GET /transcripts/by-id/{id}` as a TranscriptionResponse) and
+    calendar invitees with `invitees[id]`. `GET /meetings/{platform}/{native}/participants` answers
+    like meeting-api: the principal's newest meeting with that native id, its invitees
+    (`source: invite`) and then the distinct speakers of its transcript (`source: speaker`), not
+    de-duplicated. `fail` maps a call ("dispatch", "list bots", "get meeting", "stop",
+    "get transcript", "get participants") to a status to answer; `dispatch_delay` stalls
+    dispatch."""
 
     LIVE = ("requested", "joining", "awaiting_admission", "active", "needs_human_help", "stopping")
 
@@ -416,6 +420,7 @@ class FakeGateway:
         self.dispatches: list[dict] = []  # request bodies, in order
         self.stops: list[tuple[str, str]] = []
         self.transcripts: dict[int, list[dict]] = {}  # platform meeting id -> raw segments
+        self.invitees: dict[int, list[dict]] = {}  # platform meeting id -> {name, email}
         self.calls: list[tuple[str, str]] = []
         self.fail: dict[str, int] = {}
         self.dispatch_delay = 0.0
@@ -568,6 +573,41 @@ class FakeGateway:
                     "notes": None,
                     "data": {},
                     "segments": list(self.transcripts.get(mid, [])),
+                },
+            )
+        participants = re.fullmatch(r"/meetings/([^/]+)/([^/]+)/participants", path)
+        if request.method == "GET" and participants:
+            if "get participants" in self.fail:
+                return httpx.Response(self.fail["get participants"], json={"detail": "boom"})
+            platform, native = unquote(participants.group(1)), unquote(participants.group(2))
+            with self._lock:
+                owned = [
+                    mid for mid, m in self.meetings.items()
+                    if self.owners[mid] == user and m["platform"] == platform
+                    and m["native_meeting_id"] == native
+                ]
+            if not owned:
+                return httpx.Response(404, json={"detail": "Meeting not found"})
+            mid = max(owned)
+            rows = [
+                {"name": i.get("name"), "email": i.get("email"), "source": "invite"}
+                for i in self.invitees.get(mid, [])
+            ]
+            speakers: list[str] = []
+            for segment in self.transcripts.get(mid, []):
+                name = segment.get("speaker")
+                if isinstance(name, str) and name.strip() and name not in speakers:
+                    speakers.append(name)
+            rows += [{"name": name, "email": None, "source": "speaker"} for name in speakers]
+            return httpx.Response(
+                200,
+                json={
+                    "meeting_id": mid,
+                    "platform": platform,
+                    "native_meeting_id": native,
+                    "participants": rows,
+                    "sources": sorted({r["source"] for r in rows}),
+                    "observed_roster": "not_recorded",
                 },
             )
         if request.method == "DELETE" and path.startswith("/bots/"):
