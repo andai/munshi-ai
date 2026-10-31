@@ -1,15 +1,19 @@
 """A meeting's live status and transcript, relayed to one viewer as server-sent events.
 
-`GET /api/v1/meetings/{id}/live` (AUTH_MATRIX: requester, a lead of the meeting's team, admins and
-owners; 404 for anyone else, before any stream starts). The browser never reaches the platform:
+`GET /api/v1/meetings/{id}/live` (AUTH_MATRIX: whoever may read the meeting, `access.py`; 404 for
+anyone else, before any stream starts). The browser never reaches the platform:
 after the access check andai-core opens one gateway WebSocket (`/ws`) for this viewer with the
 org's key, subscribes to the meeting (`{platform, native_id}`) and re-shapes what arrives:
 
     event: status    {status, failure_reason, end_reason, admit_instructions, at}
     event: segment   a transcript segment in andai's shape (`transcript.py`)
     event: retract   {ids: [segment id, ...]}   (pending drafts the platform withdrew)
-    event: error     {code: "live_unavailable", detail}
+    event: error     {code: "live_unavailable" | "access_revoked", detail}
     : keepalive      (a comment every 15 seconds)
+
+* Access is checked again before every keepalive and every re-read of andai's row. A viewer who
+  may no longer read the meeting (a share revoked, a team left) gets `error` `access_revoked` and
+  the stream ends, within one keepalive interval.
 
 * The first event is always `status`, from andai's own row. A meeting that has ended gets that one
   event and the stream ends; nothing reaches the platform.
@@ -48,9 +52,13 @@ from fastapi.responses import StreamingResponse
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
+from sqlalchemy import Engine, exists, select
+
 from andai_core.auth.deps import Services
-from andai_core.db.models import TERMINAL_STATUSES
-from andai_core.meetings.service import Actor, MeetingError
+from andai_core.db.models import TERMINAL_STATUSES, Meeting
+from andai_core.db.session import transaction
+from andai_core.meetings.access import Actor, accessible
+from andai_core.meetings.service import MeetingError
 from andai_core.meetings.status_map import Mapped, admit_instructions, map_platform
 from andai_core.meetings.transcript import (
     Watched,
@@ -75,6 +83,7 @@ PLATFORM_POLL_SECONDS = 1.0
 OPEN_TIMEOUT_SECONDS = 10.0
 ENDED = frozenset({"completed", "failed"})
 UNAVAILABLE_DETAIL = "live updates stopped; poll the meeting and its transcript"
+REVOKED_DETAIL = "you can no longer open this meeting"
 HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
@@ -84,6 +93,15 @@ def event(name: str, data: dict) -> str:
 
 KEEPALIVE = ": keepalive\n\n"
 UNAVAILABLE = event("error", {"code": "live_unavailable", "detail": UNAVAILABLE_DETAIL})
+REVOKED = event("error", {"code": "access_revoked", "detail": REVOKED_DETAIL})
+
+
+def may_read(engine: Engine, actor: Actor, meeting_id: uuid.UUID) -> bool:
+    """Whether `actor` may still read the meeting (`access.accessible`)."""
+    with transaction(engine, org_id=actor.org_id, user_id=actor.user_id) as tx:
+        return bool(
+            tx.scalar(select(exists().where(Meeting.id == meeting_id, accessible(actor))))
+        )
 
 
 def _platform_id(value: object) -> int | None:
@@ -238,6 +256,11 @@ class Relay:
         except MeetingError:
             return None  # gone, or no longer readable
 
+    async def _still_allowed(self) -> bool:
+        return await anyio.to_thread.run_sync(
+            lambda: may_read(self.services.engine, self.actor, self.meeting.id)
+        )
+
     def _ready(self) -> bool:
         m = self.meeting
         return None not in (m.platform_meeting_id, m.native_meeting_id, m.key)
@@ -256,6 +279,9 @@ class Relay:
         while True:
             wait = HEARTBEAT_SECONDS - (time.monotonic() - beat)
             if wait <= 0:
+                if not await self._still_allowed():
+                    yield REVOKED
+                    return
                 yield KEEPALIVE
                 beat = time.monotonic()
                 continue
@@ -290,7 +316,7 @@ class Relay:
             await asyncio.sleep(PLATFORM_POLL_SECONDS)
             reloaded = await self._reload()
             if reloaded is None:
-                yield UNAVAILABLE
+                yield REVOKED
                 return
             self.meeting = m = reloaded
             self.base = m.started_at or self.base
@@ -332,4 +358,4 @@ async def open_stream(
     return StreamingResponse(relay.events(), media_type="text/event-stream", headers=HEADERS)
 
 
-__all__ = ["HEARTBEAT_SECONDS", "Relay", "open_stream"]
+__all__ = ["HEARTBEAT_SECONDS", "Relay", "may_read", "open_stream"]

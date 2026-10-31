@@ -24,6 +24,7 @@ from andai_core.db.models import (
     ConsentRecord,
     Invite,
     Meeting,
+    MeetingShare,
     Org,
     OrgMembership,
     PlatformPrincipal,
@@ -47,6 +48,7 @@ READABLE = {
     "meetings": "org_id",
     "consent_records": "org_id",
     "transcript_segments": "org_id",
+    "meeting_shares": "org_id",
 }
 
 
@@ -152,6 +154,15 @@ def _seed_meeting(
                 search_text="kal ki miting",
             )
         )
+        tx.add(
+            MeetingShare(
+                org_id=org_id,
+                meeting_id=meeting_id,
+                grantee_type="user",
+                grantee_id=owner_id,
+                granted_by=owner_id,
+            )
+        )
     return meeting_id
 
 
@@ -229,6 +240,7 @@ def test_other_org_rows_are_invisible(
         ("meetings", "status = 'cancelled'"),
         ("consent_records", "disclosure_detail = 'hijacked'"),
         ("transcript_segments", "speaker = 'hijacked'"),
+        ("meeting_shares", "grantee_type = 'team'"),
     ],
 )
 def test_other_org_rows_cannot_be_updated_or_deleted(

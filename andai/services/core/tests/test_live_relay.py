@@ -22,10 +22,11 @@ from dataclasses import dataclass, field
 import httpx
 import pytest
 import uvicorn
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, delete, text
 from websockets.asyncio.server import ServerConnection, serve
 
 from andai_core.auth.sessions import COOKIE_NAME
+from andai_core.db.models import MeetingShare
 from andai_core.db.session import transaction
 from andai_core.main import create_app
 from andai_core.meetings import live
@@ -457,6 +458,60 @@ def test_keepalive_comments_while_nothing_happens(
         world.stub.subscribed()
 
         assert events.comment() == ": keepalive"
+
+
+def _share_with(world: World, user_id: uuid.UUID) -> None:
+    with transaction(world.engine, org_id=world.org.owner.org_id) as tx:
+        tx.add(
+            MeetingShare(
+                org_id=world.org.owner.org_id, meeting_id=uuid.UUID(world.meeting_id),
+                grantee_type="user", grantee_id=user_id, granted_by=world.org.lead.user_id,
+            )
+        )
+
+
+def _unshare(world: World) -> None:
+    with transaction(world.engine, org_id=world.org.owner.org_id) as tx:
+        tx.execute(
+            delete(MeetingShare).where(MeetingShare.meeting_id == uuid.UUID(world.meeting_id))
+        )
+
+
+def test_a_revoked_share_ends_an_open_stream_within_one_keepalive(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(live, "HEARTBEAT_SECONDS", 0.2)
+    _share_with(world, world.org.member.user_id)
+
+    with world.stream("member") as events:
+        assert events.next()[0] == "status"
+        conn = world.stub.subscribed()
+        assert events.comment() == ": keepalive", "still allowed: the stream carries on"
+
+        _unshare(world)
+        started = time.monotonic()
+
+        assert events.next() == ("error", {"code": "access_revoked",
+                                           "detail": live.REVOKED_DETAIL})
+        assert events.next() is None
+        assert time.monotonic() - started < 0.2 + 1.0
+        assert conn.closed.wait(WAIT), "the gateway socket closes with the stream"
+
+
+def test_a_share_revoked_while_waiting_for_the_platform_ends_the_stream(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(live, "PLATFORM_POLL_SECONDS", 0.05)
+    world.set_row(platform_meeting_id=None, native_meeting_id=None)
+    _share_with(world, world.org.member.user_id)
+
+    with world.stream("member") as events:
+        assert events.next()[0] == "status"
+        _unshare(world)
+
+        assert events.next()[1]["code"] == "access_revoked"
+        assert events.next() is None
+    assert world.stub.connections == []
 
 
 def test_an_ended_meeting_sends_its_status_and_never_reaches_the_platform(world: World) -> None:

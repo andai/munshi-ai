@@ -983,6 +983,145 @@ def role_org(engine: Engine) -> RoleOrg:
     return RoleOrg(owner, admin, member, lead, team, other_team)
 
 
+# ─── the nine callers of a meeting (Phase 5 access matrix) ───────────────────────────────────────
+
+CALLERS = (
+    "requester",
+    "lead",
+    "team_member",
+    "user_grantee",
+    "team_grantee",
+    "admin",
+    "owner",
+    "unrelated",
+    "other_org",
+)
+# Per AUTH_MATRIX, for a meeting the requester sent for `team`, shared with `user_grantee` and with
+# `shared_team` (whose member is `team_grantee`).
+READERS = frozenset({"requester", "lead", "user_grantee", "team_grantee", "admin", "owner"})
+STOPPERS = frozenset({"requester", "lead", "admin", "owner"})
+SHARERS = STOPPERS
+DELETERS = frozenset({"requester", "admin", "owner"})
+
+
+def seed_meeting(
+    engine: Engine,
+    org_id: uuid.UUID,
+    requester: uuid.UUID,
+    team: uuid.UUID | None,
+    *,
+    status: str = "done",
+    shares: tuple[tuple[str, uuid.UUID], ...] | list = (),
+    started_at=None,
+    ended_at=None,
+    created_at=None,
+    title: str | None = None,
+) -> uuid.UUID:
+    """A meeting inserted directly (no platform), with `shares` ((grantee_type, grantee_id))."""
+    from andai_core.db.models import Meeting, MeetingShare
+    from andai_core.db.session import transaction
+
+    meeting_id = uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(
+            Meeting(
+                id=meeting_id,
+                org_id=org_id,
+                team_id=team,
+                requested_by=requester,
+                platform="zoom",
+                join_url=f"https://zoom.us/j/{meeting_id.int % 10**11}?pwd=x",
+                join_url_key=f"zoom.us/j/{meeting_id.hex}",
+                status=status,
+                failure_reason="internal_error" if status == "failed" else None,
+                settings_snapshot={"bot_name": "munshi.ai (recording)"},
+                started_at=started_at,
+                ended_at=ended_at,
+                title=title,
+                **({} if created_at is None else {"created_at": created_at}),
+            )
+        )
+        tx.flush()
+        for grantee_type, grantee_id in shares:
+            tx.add(
+                MeetingShare(
+                    org_id=org_id,
+                    meeting_id=meeting_id,
+                    grantee_type=grantee_type,
+                    grantee_id=grantee_id,
+                    granted_by=requester,
+                )
+            )
+    return meeting_id
+
+
+@dataclass
+class AccessOrg:
+    """An org with the eight in-org callers, the meeting's `team` (requester, lead, team member)
+    and `shared_team` (team grantee); `other_org` is the owner of a second org."""
+
+    harness: Harness
+    engine: Engine
+    people: dict[str, Member]
+    team: uuid.UUID
+    shared_team: uuid.UUID
+    clients: dict
+    meeting_id: uuid.UUID | None = None  # the module's shared meeting, when a test module seeds one
+
+    @property
+    def org_id(self) -> uuid.UUID:
+        return self.people["owner"].org_id
+
+    def client(self, caller: str):
+        """A signed-in client of `caller`, kept for the module."""
+        if caller not in self.clients:
+            self.clients[caller] = sign_in(self.harness, self.people[caller])
+        return self.clients[caller]
+
+    def actor(self, caller: str):
+        from andai_core.meetings.access import Actor
+
+        person = self.people[caller]
+        role = {"owner": "owner", "admin": "admin", "other_org": "owner"}.get(caller, "member")
+        return Actor(person.org_id, person.user_id, role)
+
+    def meeting(self, *, status: str = "done", shares: bool = True, **fields) -> uuid.UUID:
+        """A meeting the requester sent for `team`, shared with the user grantee and
+        `shared_team` unless `shares` is false."""
+        return seed_meeting(
+            self.engine,
+            self.org_id,
+            self.people["requester"].user_id,
+            self.team,
+            status=status,
+            shares=(
+                (("user", self.people["user_grantee"].user_id), ("team", self.shared_team))
+                if shares
+                else ()
+            ),
+            **fields,
+        )
+
+
+def access_org(engine: Engine) -> AccessOrg:
+    owner = new_member(engine)
+    people = {"owner": owner, "admin": new_member(engine, role="admin", org_id=owner.org_id)}
+    for caller in ("requester", "lead", "team_member", "user_grantee", "team_grantee", "unrelated"):
+        people[caller] = new_member(engine, role="member", org_id=owner.org_id)
+    people["other_org"] = new_member(engine)
+    team = new_team(
+        engine,
+        owner.org_id,
+        {
+            people["requester"].user_id: "member",
+            people["lead"].user_id: "lead",
+            people["team_member"].user_id: "member",
+        },
+    )
+    shared_team = new_team(engine, owner.org_id, {people["team_grantee"].user_id: "member"})
+    return AccessOrg(make_harness(engine), engine, people, team, shared_team, {})
+
+
 def served(app) -> set[tuple[str, str]]:
     """Every (method, path template) `app` serves, included routers flattened (an included router
     is one entry in `app.routes`)."""

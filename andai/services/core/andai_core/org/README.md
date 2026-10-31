@@ -7,6 +7,8 @@ Org administration for andai-core, under `/api/v1`:
   role, disable or re-enable an account; disabling ends every session), `GET/POST /teams` and
   `PUT /teams/{id}/members` (replace a team's members; a team lead may change who is in their own
   team but not who leads it).
+- `directory.py` — `GET /org/directory`: the org's active members (id, name, team ids) and teams
+  (id, name) for any member, for the meeting share picker; no emails, no roles.
 - `service.py` — the rules behind those routes: nobody changes themselves, the owner is out of an
   admin's reach, only the owner hands on ownership, team members belong to the org; every change
   is audited.
