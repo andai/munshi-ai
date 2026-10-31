@@ -29,6 +29,7 @@ from andai_core.db.models import (
     ConsentRecord,
     Invite,
     Meeting,
+    MeetingRemoval,
     MeetingShare,
     TranscriptSegment,
     User,
@@ -199,6 +200,12 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
         mom.seed_version(
             tx, org_id, meeting_id, mom_body([f"seg_{tag}"], summary=f"{label} minutes {tag}")
         )
+        # The marker a purged meeting leaves when participants removed the bot (D-38).
+        tx.add(
+            MeetingRemoval(
+                org_id=org_id, join_url_key=f"zoom.us/j/removed-{tag}", removed_at=harness.clock()
+            )
+        )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -280,8 +287,8 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "recovery_codes": "SELECT count(*) FROM recovery_codes WHERE user_id = ANY(:u)",
         "sessions": "SELECT count(*) FROM sessions WHERE user_id = ANY(:u)",
         "meetings": (
-            "SELECT id, status, failure_reason, platform_meeting_id, join_url, updated_at"
-            " FROM meetings WHERE org_id = :o"
+            "SELECT id, status, failure_reason, platform_meeting_id, join_url, updated_at,"
+            " deleted_at, deletion_state FROM meetings WHERE org_id = :o"
         ),
         "consent_records": (
             "SELECT meeting_id, disclosure_channel, removed_at, updated_at"
@@ -295,6 +302,9 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         ),
         "mom_documents": (
             "SELECT meeting_id, version, search_text FROM mom_documents WHERE org_id = :o"
+        ),
+        "meeting_removals": (
+            "SELECT join_url_key, removed_at FROM meeting_removals WHERE org_id = :o"
         ),
     }
     params = {"o": b.org_id, "u": b.users}
@@ -336,6 +346,9 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ],
     ("POST", "/api/v1/meetings/{meeting_id}/stop"): lambda b: [
         ("stop B meeting", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("DELETE", "/api/v1/meetings/{meeting_id}"): lambda b: [
+        ("delete B meeting", {"meeting_id": b.meeting_id}, None),
     ],
     ("GET", "/api/v1/meetings/{meeting_id}/transcript"): lambda b: [
         ("read B transcript", {"meeting_id": b.meeting_id}, None),

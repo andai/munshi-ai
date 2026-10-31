@@ -108,10 +108,13 @@ def test_app_role_grants(migrated: Postgres) -> None:
         engine.dispose()
 
     crud = {"SELECT", "INSERT", "UPDATE", "DELETE"}
-    for table in ALL_TABLES - {"audit_events", "mom_documents"} - set(SYSTEM_TABLES):
+    for table in ALL_TABLES - {"audit_events", "mom_documents", "meeting_removals"} - set(
+        SYSTEM_TABLES
+    ):
         assert granted[table] == crud, table
     assert granted["audit_events"] == {"INSERT"}
     assert granted["mom_documents"] == {"SELECT", "INSERT"}  # a version is never changed
+    assert granted["meeting_removals"] == {"SELECT", "INSERT"}  # a removal is a fact
     for table in SYSTEM_TABLES:  # canary runs and alert incidents are kept, never deleted
         assert granted[table] == {"SELECT", "INSERT", "UPDATE"}, table
     assert tuple(app_role) == (False, False, False, False)
@@ -164,12 +167,12 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
     engine = create_engine(migrated.superuser_url)
     try:
         assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
-        assert _scan_objects(engine) == (1, 1, 3)
+        assert _scan_objects(engine) == (1, 1, 4)
 
         command.downgrade(config, "0005")
         assert _revision(engine) == "0005"
         assert _tables(engine) == ALL_TABLES - {
-            "transcript_segments", "meeting_shares", "mom_documents"
+            "transcript_segments", "meeting_shares", "mom_documents", "meeting_removals"
         }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
@@ -177,7 +180,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
         command.upgrade(config, "head")
         assert _tables(engine) == ALL_TABLES
         assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
-        assert _scan_objects(engine) == (1, 1, 3)
+        assert _scan_objects(engine) == (1, 1, 4)
     finally:
         engine.dispose()
 
@@ -202,7 +205,9 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
 
         command.downgrade(config, "0006")
         assert _revision(engine) == "0006"
-        assert _tables(engine) == ALL_TABLES - {"meeting_shares", "mom_documents"}
+        assert _tables(engine) == ALL_TABLES - {
+            "meeting_shares", "mom_documents", "meeting_removals"
+        }
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
         command.upgrade(config, "head")
@@ -251,11 +256,75 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
 
         command.downgrade(config, "0007")
         assert _revision(engine) == "0007"
-        assert _tables(engine) == ALL_TABLES - {"mom_documents"}
+        assert _tables(engine) == ALL_TABLES - {"mom_documents", "meeting_removals"}
         assert _search_state(engine) == (set(), False, False)
 
         command.upgrade(config, "head")
         assert _tables(engine) == ALL_TABLES
         assert _search_state(engine) == (SEARCH_INDEXES, True, True)
+    finally:
+        engine.dispose()
+
+
+DELETION_COLUMNS = {
+    "deleted_at", "deleted_by", "deletion_state", "deletion_attempts", "deletion_next_at"
+}
+DELETION_FUNCTIONS = ("andai_claim_deletions", "andai_deletion_backlog")
+
+
+def _deletion_state(engine: Engine) -> tuple[bool, int, set[str], set[str], str]:
+    """(deletion columns present, deletion functions, andai_scan SELECT and UPDATE grants on the
+    deletion columns, the ingest claim's body with whitespace collapsed)."""
+    with engine.connect() as conn:
+        functions = conn.execute(
+            text("SELECT count(*) FROM pg_proc WHERE proname = ANY(:n)"),
+            {"n": list(DELETION_FUNCTIONS)},
+        ).scalar_one()
+        grants = conn.execute(
+            text(
+                "SELECT privilege_type, column_name FROM information_schema.column_privileges"
+                " WHERE grantee = 'andai_scan' AND table_name = 'meetings'"
+                " AND column_name = ANY(:c)"
+            ),
+            {"c": sorted(DELETION_COLUMNS)},
+        ).all()
+        body = conn.execute(
+            text("SELECT prosrc FROM pg_proc WHERE proname = 'andai_claim_ingest'")
+        ).scalar_one()
+    selectable = {c for p, c in grants if p == "SELECT"}
+    updatable = {c for p, c in grants if p == "UPDATE"}
+    present = DELETION_COLUMNS <= _meeting_columns(engine)
+    return present, functions, selectable, updatable, " ".join(body.split())
+
+
+def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        present, functions, selectable, updatable, head_body = _deletion_state(engine)
+        assert (present, functions) == (True, 2)
+        assert selectable == DELETION_COLUMNS - {"deleted_by"}
+        assert updatable == {"deletion_next_at"}
+        assert "deletion_state = 'none'" in head_body
+
+        command.downgrade(config, "0008")
+        assert _revision(engine) == "0008"
+        assert _tables(engine) == ALL_TABLES - {"meeting_removals"}
+        present, functions, selectable, updatable, body_0008 = _deletion_state(engine)
+        assert (present, functions, selectable, updatable) == (False, 0, set(), set())
+        assert _scan_objects(engine) == (1, 1, 3)
+
+        # The downgrade restores the claim exactly as 0006 created it.
+        command.downgrade(config, "0005")
+        command.upgrade(config, "0008")
+        assert _deletion_state(engine)[4] == body_0008
+        assert "deletion" not in body_0008
+
+        command.upgrade(config, "head")
+        assert _tables(engine) == ALL_TABLES
+        assert _deletion_state(engine)[:4] == (
+            True, 2, DELETION_COLUMNS - {"deleted_by"}, {"deletion_next_at"}
+        )
+        assert _deletion_state(engine)[4] == head_body
     finally:
         engine.dispose()

@@ -169,6 +169,50 @@ def test_a_failing_platform_leaves_the_meeting_pending_and_the_loop_going(world:
     assert asyncio.run(world.runner().tick()) == TickResult(claimed=1, stored=1)
 
 
+def test_a_meeting_deleted_during_its_ingest_gets_nothing_stored(world: World) -> None:
+    """The user deletes the meeting while the worker reads its transcript from the platform: the
+    ingest stores nothing for it, a later claim never takes it, and the purge leaves no segment."""
+    from andai_core.meetings import deletion
+    from andai_core.meetings.access import Actor
+
+    org = world.org()
+    meeting = world.meeting(org)
+    gateway = world.harness.services.gateway
+    read = gateway.get_transcript
+
+    def delete_now() -> None:
+        with transaction(world.engine, org_id=org.org_id, user_id=org.user_id) as tx:
+            deletion.request_delete(
+                tx, Actor(org.org_id, org.user_id, "owner"), meeting,
+                now=world.harness.clock(),
+            )
+
+    async def read_then_delete(key, platform_meeting_id):
+        document = await read(key, platform_meeting_id)
+        delete_now()
+        return document
+
+    gateway.get_transcript = read_then_delete
+    try:
+        result = asyncio.run(world.runner().tick())
+    finally:
+        del gateway.get_transcript
+
+    assert result == TickResult(claimed=1)  # read, then found deleted: nothing stored
+    assert world.segments(org.org_id, meeting) == 0
+    with transaction(world.engine, org_id=org.org_id) as tx:
+        tx.execute(text("UPDATE meetings SET transcript_next_at = now() WHERE id = :m"),
+                   {"m": meeting})
+    assert asyncio.run(world.runner().tick()) == TickResult()  # a deleted meeting is never claimed
+
+    s = world.harness.services
+    purged = asyncio.run(
+        deletion.purge(world.engine, s.keyring, s.gateway, org.org_id, meeting, clock=s.clock)
+    )
+    assert purged is not None and purged.state == "purged"
+    assert world.segments(org.org_id) == 0
+
+
 def test_the_worker_always_starts_the_ingest_loop(
     world: World, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -200,6 +244,6 @@ def test_the_worker_always_starts_the_ingest_loop(
     with caplog.at_level(logging.INFO, logger="andai_worker.main"):
         started = asyncio.run(main())
 
-    assert started == 1  # ingest only: no canary links, no alert address
+    assert started == 2  # ingest and deletion: no canary links, no alert address
     assert world.state(org, meeting) == "stored"
     assert any("transcript ingest every" in r.getMessage() for r in caplog.records)
