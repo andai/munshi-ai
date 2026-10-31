@@ -18,7 +18,7 @@ import { createOrchestrator } from '../src/orchestrator.js';
 import { canTransition, type Act, type BotStatus, type CompletionReason, type LifecycleEvent, type TranscriptSegment } from '../src/contracts.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
 import type { Invocation } from '../src/config.js';
-import { SCENARIOS, type Scenario, type ScenarioName, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, getScenario, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
+import { HINDI_LINES, SCENARIOS, type Scenario, type ScenarioName, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, getScenario, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
 import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource } from '../src/aloneness.js';
 
@@ -56,6 +56,7 @@ const EXPECT: Record<ScenarioName, Expect> = {
   'normal':          { status: 'completed', reason: 'stopped', recorded: 1 },
   'emit-n-segments': { status: 'completed', reason: 'stopped', minSegs: 12 },
   'paced':           { status: 'completed', reason: 'stopped', minSegs: 8 },
+  'hindi-lines':     { status: 'completed', reason: 'stopped', minSegs: 6 },
   'slow-join':       { status: 'completed', reason: 'stopped' },
   'recording':       { status: 'completed', reason: 'stopped', recorded: 1 },
   'speak-ack':       { status: 'completed', reason: 'stopped', speakAfter: 4 },
@@ -113,7 +114,7 @@ function scenarioSelection(): void {
   check('an empty mock= selects nothing', pick('https://zoom.us/j/12345678901?mock=') === undefined);
   check('no URL selects nothing', pick(null) === undefined);
   check('a non-URL selects nothing', pick('not a url') === undefined);
-  check('the URL-selected names are registered', ['normal', 'reject', 'join-timeout', 'left-alone', 'evicted', 'paced'].every((n) => getScenario(n).name === n));
+  check('the URL-selected names are registered', ['normal', 'reject', 'join-timeout', 'left-alone', 'evicted', 'paced', 'hindi-lines'].every((n) => getScenario(n).name === n));
   let threw = false;
   try { getScenario('no-such-scenario'); } catch { threw = true; }
   check('an unknown scenario name is refused', threw);
@@ -138,6 +139,13 @@ async function main(): Promise<void> {
     if (exp.status === 'failed' && exp.stage === 'awaiting_admission') check(`${tag} never reached active`, !seq(events).includes('active'));
     check(`${tag} every transcript.v1 segment conforms`, segments.every((s) => validateSegment(s)), JSON.stringify(segments.slice(0, 1)));
     if (exp.minSegs != null) check(`${tag} published ≥${exp.minSegs} segments`, segments.length >= exp.minSegs, `got ${segments.length}`);
+    if (sc.lines) {
+      check(`${tag} emits its fixed lines in order`, JSON.stringify(segments.map((s) => s.text)) === JSON.stringify(sc.lines), JSON.stringify(segments.map((s) => s.text)));
+      check(`${tag} the lines mix Devanagari and Roman script`,
+        HINDI_LINES.some((l) => /[\u0900-\u097F]/.test(l) && /[A-Za-z]/.test(l)) && HINDI_LINES.some((l) => !/[\u0900-\u097F]/.test(l)));
+    } else if (exp.minSegs != null) {
+      check(`${tag} segments read "mock utterance N"`, segments.every((s, i) => s.text === `mock utterance ${i}`), JSON.stringify(segments.slice(0, 2)));
+    }
     if (exp.recorded != null) check(`${tag} recording leg fired ×${exp.recorded}`, recorded === exp.recorded, `got ${recorded}`);
     if (exp.recorded == null && !exp.speakAfter) check(`${tag} no recording when not requested`, recorded === 0);
     const reported = events.filter((e) => e.disclosure);

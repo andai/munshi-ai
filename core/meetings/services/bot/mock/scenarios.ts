@@ -11,7 +11,8 @@
  * Because the orchestrator + adapters are the real ones, the backend sees prod-identical lifecycle.v1
  * emission, and the mock CANNOT emit off-contract (P5/P16, ARCH §5). A scenario drives one backend
  * behaviour: normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
- * emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted. Selected by env
+ * emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted · paced ·
+ * hindi-lines (fixed Devanagari and Roman Hinglish lines). Selected by env
  * `MOCK_SCENARIO`, a bot name `mock:<scenario>`, or a `mock=<scenario>` query parameter on the meeting
  * URL (`scenarioFromMeetingUrl`), so a caller that sets neither env nor bot name can still pick one.
  */
@@ -22,7 +23,7 @@ import type { Invocation } from '../src/config.js';
 export type ScenarioName =
   | 'normal' | 'join-timeout' | 'reject' | 'crash' | 'immediate-stop'
   | 'continue' | 'speak-ack' | 'emit-n-segments' | 'slow-join' | 'recording'
-  | 'silence-left-alone' | 'left-alone' | 'evicted' | 'paced';
+  | 'silence-left-alone' | 'left-alone' | 'evicted' | 'paced' | 'hindi-lines';
 
 export interface Scenario {
   name: ScenarioName;
@@ -32,6 +33,8 @@ export interface Scenario {
   joinDelayMs?: number;
   /** transcript.v1 segments published during the active phase. */
   segments?: number;
+  /** fixed texts for the published segments, in order (else `mock utterance N`). */
+  lines?: readonly string[];
   /** the pause between two published segments (default 50 ms). */
   segmentGapMs?: number;
   /** pipeline.start throws → the orchestrator drives to failed(stage=active) (crash). */
@@ -52,6 +55,16 @@ export interface Scenario {
   disclosure?: DisclosureOutcome['channel'];
 }
 
+/** The `hindi-lines` meeting: Hinglish as the platform emits it, Devanagari and Roman mixed. */
+export const HINDI_LINES: readonly string[] = [
+  'कल की मीटिंग में deadline तय हुई',
+  'क्या हम Friday तक ship कर सकते हैं',
+  'ठीक है, मैं report भेज दूँगा',
+  'haan, budget ka kya scene hai?',
+  'बजट अभी pending है, सोमवार तक confirm करेंगे',
+  'ok, phir milte hain',
+];
+
 /** The scenario registry. Live timings; the fidelity test overrides them to run in milliseconds. */
 export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'normal':          { name: 'normal',          join: 'admitted', segments: 3, recording: true, endAfterMs: 1500, disclosure: 'chat' },
@@ -69,6 +82,8 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'evicted':         { name: 'evicted',         join: 'admitted', segments: 1, evictAfterMs: 1500, disclosure: 'chat' },
   // At human pace, for watching a meeting in a browser: 12 s in the lobby, then 8 lines 1.5 s apart.
   'paced':           { name: 'paced',           join: 'admitted', joinDelayMs: 12000, segments: 8, segmentGapMs: 1500, endAfterMs: 2000, disclosure: 'chat' },
+  // A Hindi/Hinglish meeting: the fixed HINDI_LINES, then the same end as emit-n-segments.
+  'hindi-lines':     { name: 'hindi-lines',     join: 'admitted', segments: HINDI_LINES.length, lines: HINDI_LINES, endAfterMs: 1500 },
 };
 
 export function getScenario(name: string | undefined): Scenario {
@@ -162,7 +177,7 @@ export function fakePipeline(sc: Scenario, inv: Invocation, transcript: Transcri
       void (async () => {
         const n = sc.segments ?? 0;
         for (let i = 0; i < n && !cancelled; i++) {
-          await transcript.publish(mockSegment(inv, i)).catch((e) => opts.log?.(`mock: publish failed: ${String(e)}`));
+          await transcript.publish(mockSegment(inv, i, sc.lines?.[i])).catch((e) => opts.log?.(`mock: publish failed: ${String(e)}`));
           if (gap) await delay(gap);
         }
         if (sc.recording && opts.recordChunk) await opts.recordChunk().catch((e) => opts.log?.(`mock: recordChunk failed: ${String(e)}`));
