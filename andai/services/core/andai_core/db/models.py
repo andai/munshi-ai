@@ -7,7 +7,8 @@ Two kinds of table:
 * Org-scoped, carrying `org_id` and protected by Postgres row-level security on
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
-  `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007).
+  `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
+  (0008).
 * System tables with no org and no customer data (no row-level security; migration 0005):
   `canary_runs` and `alert_state`, written by andai-worker.
 
@@ -27,6 +28,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -40,7 +42,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 NAMING_CONVENTION = {
@@ -92,6 +94,9 @@ ATTENDEE_SOURCES = ("invite", "speaker")
 # Meeting shares (migration 0007).
 GRANTEE_TYPES = ("user", "team")
 
+# Minutes of meeting (migration 0008; SPEC `OutputLanguage`).
+OUTPUT_LANGUAGES = ("en", "hi", "hinglish")
+
 # Canary runs and alert incidents (migration 0005).
 CANARY_RUN_STATES = ("scheduled", "running", "done")
 CANARY_OUTCOMES = ("success", "failure")
@@ -111,6 +116,7 @@ ORG_SCOPED_TABLES = (
     "consent_records",
     "transcript_segments",
     "meeting_shares",
+    "mom_documents",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # No org, no customer data, no row-level security (migration 0005).
@@ -136,6 +142,20 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
 
 def _created_at() -> Mapped[datetime]:
     return mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+# The stored whole-word form of a folded search text (migration 0008).
+SEARCH_TSV = "to_tsvector('simple'::regconfig, search_text)"
+
+
+def _trigram_index(table: str, column: str) -> Index:
+    """Spelling-variant index of a folded text column (migration 0008)."""
+    return Index(
+        f"ix_{table}_{column}_trgm",
+        column,
+        postgresql_using="gin",
+        postgresql_ops={column: "gin_trgm_ops"},
+    )
 
 
 class Base(DeclarativeBase):
@@ -411,6 +431,12 @@ class Meeting(Base):
         ),
         Index("ix_meetings_org_id_requested_by", "org_id", "requested_by"),
         Index(
+            "ix_meetings_title_search_fts",
+            text("to_tsvector('simple'::regconfig, title_search)"),
+            postgresql_using="gin",
+        ),
+        _trigram_index("meetings", "title_search"),
+        Index(
             "ix_meetings_transcript_due",
             "transcript_next_at",
             postgresql_where=text(
@@ -450,6 +476,8 @@ class Meeting(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     title: Mapped[str | None] = mapped_column(Text)
+    # fold(title), the form search reads; written with `title` by `meetings.title.set_title` only.
+    title_search: Mapped[str | None] = mapped_column(Text)
     # [{name, source: invite|speaker}], from the platform's participants once the meeting is done.
     attendees: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
@@ -478,6 +506,7 @@ class TranscriptSegment(Base):
         ),
         CheckConstraint(_in("script", SCRIPT_TAGS), name="script"),
         Index("ix_transcript_segments_org_id_meeting_id_seq", "org_id", "meeting_id", "seq"),
+        Index("ix_transcript_segments_search_tsv", "search_tsv", postgresql_using="gin"),
     )
 
     meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -494,6 +523,10 @@ class TranscriptSegment(Base):
     script: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str | None] = mapped_column(Text)
     search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # to_tsvector of search_text, stored: search reads it on every row of the org (migration 0008).
+    search_tsv: Mapped[str] = mapped_column(
+        TSVECTOR, Computed(SEARCH_TSV, persisted=True), nullable=False, deferred=True
+    )
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -523,6 +556,36 @@ class MeetingShare(Base):
     grantee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     granted_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = _created_at()
+
+
+class MomDocument(Base):
+    """One version of a meeting's minutes. `body` is the SPEC `MomDocument` with `meetingId` and
+    `version` equal to the row's; `search_text` the folded text search reads
+    (`meetings.mom.search_text`). Versions are never changed: an edit is a new version."""
+
+    __tablename__ = "mom_documents"
+    __table_args__ = (
+        PrimaryKeyConstraint("meeting_id", "version"),
+        ForeignKeyConstraint(
+            ["meeting_id", "org_id"], ["meetings.id", "meetings.org_id"], ondelete="CASCADE"
+        ),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint(_in("output_language", OUTPUT_LANGUAGES), name="output_language"),
+        Index("ix_mom_documents_search_tsv", "search_tsv", postgresql_using="gin"),
+        _trigram_index("mom_documents", "search_text"),
+    )
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    template_id: Mapped[str] = mapped_column(Text, nullable=False)
+    output_language: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    search_tsv: Mapped[str] = mapped_column(
+        TSVECTOR, Computed(SEARCH_TSV, persisted=True), nullable=False, deferred=True
     )
     created_at: Mapped[datetime] = _created_at()
 

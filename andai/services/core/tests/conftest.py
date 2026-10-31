@@ -1017,30 +1017,30 @@ def seed_meeting(
     created_at=None,
     title: str | None = None,
 ) -> uuid.UUID:
-    """A meeting inserted directly (no platform), with `shares` ((grantee_type, grantee_id))."""
+    """A meeting inserted directly (no platform), with `shares` ((grantee_type, grantee_id)); the
+    title is written through `set_title`, so it is searchable."""
     from andai_core.db.models import Meeting, MeetingShare
     from andai_core.db.session import transaction
+    from andai_core.meetings.title import set_title
 
     meeting_id = uuid.uuid4()
     with transaction(engine, org_id=org_id) as tx:
-        tx.add(
-            Meeting(
-                id=meeting_id,
-                org_id=org_id,
-                team_id=team,
-                requested_by=requester,
-                platform="zoom",
-                join_url=f"https://zoom.us/j/{meeting_id.int % 10**11}?pwd=x",
-                join_url_key=f"zoom.us/j/{meeting_id.hex}",
-                status=status,
-                failure_reason="internal_error" if status == "failed" else None,
-                settings_snapshot={"bot_name": "munshi.ai (recording)"},
-                started_at=started_at,
-                ended_at=ended_at,
-                title=title,
-                **({} if created_at is None else {"created_at": created_at}),
-            )
+        meeting = Meeting(
+            id=meeting_id,
+            org_id=org_id,
+            team_id=team,
+            requested_by=requester,
+            platform="zoom",
+            join_url=f"https://zoom.us/j/{meeting_id.int % 10**11}?pwd=x",
+            join_url_key=f"zoom.us/j/{meeting_id.hex}",
+            status=status,
+            failure_reason="internal_error" if status == "failed" else None,
+            settings_snapshot={"bot_name": "munshi.ai (recording)"},
+            started_at=started_at,
+            ended_at=ended_at,
+            **({} if created_at is None else {"created_at": created_at}),
         )
+        set_title(tx, meeting, title)
         tx.flush()
         for grantee_type, grantee_id in shares:
             tx.add(
@@ -1053,6 +1053,87 @@ def seed_meeting(
                 )
             )
     return meeting_id
+
+
+def seed_segments(
+    engine: Engine,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    lines: list[str] | list[tuple[str, str]],
+) -> list[str]:
+    """Stored transcript segments of a meeting, shaped as ingest stores them (raw, canonical,
+    script, folded search text) and marked `stored`; `lines` are texts or (speaker, text).
+    Returns the segment ids in order."""
+    from sqlalchemy import func, update
+
+    from andai_core.db.models import Meeting, TranscriptSegment
+    from andai_core.db.session import transaction
+    from andai_core.text import canonical, fold, script_of
+
+    ids = []
+    with transaction(engine, org_id=org_id) as tx:
+        tx.execute(
+            update(Meeting)
+            .where(Meeting.id == meeting_id)
+            .values(transcript_state="stored", transcript_at=func.now())
+        )
+        for seq, line in enumerate(lines):
+            speaker, raw = line if isinstance(line, tuple) else ("Asha", line)
+            segment_id = f"seg_{meeting_id.hex[:12]}_{seq:04d}"
+            roman = canonical(raw)
+            tx.add(
+                TranscriptSegment(
+                    meeting_id=meeting_id,
+                    id=segment_id,
+                    org_id=org_id,
+                    seq=seq,
+                    start_s=seq * 5.0,
+                    end_s=seq * 5.0 + 4.0,
+                    speaker=speaker,
+                    text_raw=raw,
+                    text_canonical=roman,
+                    script=script_of(raw),
+                    language=None,
+                    search_text=fold(roman),
+                )
+            )
+            ids.append(segment_id)
+    return ids
+
+
+def mom_body(evidence: list[str], **overrides) -> dict:
+    """A SPEC `MomDocument` citing the segment ids in `evidence` (three are used: a decision, two
+    action items, a topic), without `meetingId` and `version`, which the store sets."""
+    from datetime import UTC, datetime
+
+    doc = {
+        "templateId": "standard",
+        "outputLanguage": "hinglish",
+        "summary": "Budget review kal tak hoga.",
+        "decisions": [{"text": "Deadline kal hai", "evidence": evidence[:1]}],
+        "actionItems": [
+            {
+                "id": str(uuid.uuid4()),
+                "text": "Ravi budget sheet bhejega",
+                "owner": "Ravi",
+                "due": "2026-11-01",
+                "evidence": evidence[1:2] or evidence[:1],
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "text": "Vendor se baat karni hai",
+                "owner": "unassigned",
+                "evidence": evidence[2:3] or evidence[:1],
+            },
+        ],
+        "topics": [{"title": "Budget", "evidence": evidence[2:3]}],
+        "risks": [{"text": "Vendor delay", "evidence": []}],
+        "llmProfileId": str(uuid.uuid4()),
+        "model": "test-model",
+        "generatedAt": datetime(2026, 10, 31, 10, 0, tzinfo=UTC).isoformat(),
+    }
+    doc.update(overrides)
+    return doc
 
 
 @dataclass

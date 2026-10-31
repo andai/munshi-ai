@@ -108,9 +108,10 @@ def test_app_role_grants(migrated: Postgres) -> None:
         engine.dispose()
 
     crud = {"SELECT", "INSERT", "UPDATE", "DELETE"}
-    for table in ALL_TABLES - {"audit_events"} - set(SYSTEM_TABLES):
+    for table in ALL_TABLES - {"audit_events", "mom_documents"} - set(SYSTEM_TABLES):
         assert granted[table] == crud, table
     assert granted["audit_events"] == {"INSERT"}
+    assert granted["mom_documents"] == {"SELECT", "INSERT"}  # a version is never changed
     for table in SYSTEM_TABLES:  # canary runs and alert incidents are kept, never deleted
         assert granted[table] == {"SELECT", "INSERT", "UPDATE"}, table
     assert tuple(app_role) == (False, False, False, False)
@@ -167,7 +168,9 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
 
         command.downgrade(config, "0005")
         assert _revision(engine) == "0005"
-        assert _tables(engine) == ALL_TABLES - {"transcript_segments", "meeting_shares"}
+        assert _tables(engine) == ALL_TABLES - {
+            "transcript_segments", "meeting_shares", "mom_documents"
+        }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
 
@@ -199,11 +202,60 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
 
         command.downgrade(config, "0006")
         assert _revision(engine) == "0006"
-        assert _tables(engine) == ALL_TABLES - {"meeting_shares"}
+        assert _tables(engine) == ALL_TABLES - {"meeting_shares", "mom_documents"}
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
         command.upgrade(config, "head")
         assert _tables(engine) == ALL_TABLES
         assert LIST_INDEXES <= _meeting_indexes(engine)
+    finally:
+        engine.dispose()
+
+
+SEARCH_INDEXES = {
+    "ix_transcript_segments_search_tsv",
+    "ix_mom_documents_search_tsv",
+    "ix_mom_documents_search_text_trgm",
+    "ix_meetings_title_search_fts",
+    "ix_meetings_title_search_trgm",
+}
+
+
+def _search_state(engine: Engine) -> tuple[set[str], bool, bool]:
+    """(search indexes present, pg_trgm installed, meetings.title_search and
+    transcript_segments.search_tsv present)."""
+    with engine.connect() as conn:
+        indexes = set(
+            conn.execute(
+                text("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")
+            ).scalars()
+        )
+        trgm = conn.execute(
+            text("SELECT count(*) FROM pg_extension WHERE extname = 'pg_trgm'")
+        ).scalar_one()
+        tsv = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_name = 'transcript_segments' AND column_name = 'search_tsv'"
+            )
+        ).scalar_one()
+    columns = "title_search" in _meeting_columns(engine) and tsv == 1
+    return indexes & SEARCH_INDEXES, trgm == 1, columns
+
+
+def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        assert _search_state(engine) == (SEARCH_INDEXES, True, True)
+
+        command.downgrade(config, "0007")
+        assert _revision(engine) == "0007"
+        assert _tables(engine) == ALL_TABLES - {"mom_documents"}
+        assert _search_state(engine) == (set(), False, False)
+
+        command.upgrade(config, "head")
+        assert _tables(engine) == ALL_TABLES
+        assert _search_state(engine) == (SEARCH_INDEXES, True, True)
     finally:
         engine.dispose()
