@@ -9,6 +9,11 @@ meeting id (`GET /transcripts/by-id/{id}`) and answers
 ordered by `start`; an empty list before the first segment, or while the bot has no platform
 meeting yet. It is also the polling source for a viewer whose live stream (`live.py`) dropped.
 
+Once andai holds its own copy of a finished meeting (`transcript_state = stored`, `ingest.py`),
+the route serves that copy from `transcript_segments` with no platform call. Each stored segment
+also carries `text_raw` (the platform's text exactly), `text_canonical` (Roman Hinglish) and
+`script` (`latn | deva | mixed | other`); `text` stays the raw text and the ids are the same.
+
 **Segment** — the one shape andai returns, live or polled:
 
     {id, speaker, start, end, text, language, final, absolute_start, absolute_end}
@@ -36,9 +41,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import anyio.to_thread
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 
 from andai_core.crypto import Keyring
+from andai_core.db.models import TranscriptSegment
 from andai_core.db.session import transaction
 from andai_core.meetings.service import Actor, MeetingError, readable
 from andai_core.platform import principals
@@ -72,6 +78,7 @@ class Watched:
     bot_name: str
     started_at: datetime | None
     key: str | None = field(default=None, repr=False)
+    transcript_state: str = "none"
 
 
 def watched(engine: Engine, keyring: Keyring, actor: Actor, meeting_id: uuid.UUID) -> Watched:
@@ -94,6 +101,7 @@ def watched(engine: Engine, keyring: Keyring, actor: Actor, meeting_id: uuid.UUI
             bot_name=str(snapshot.get("bot_name") or ""),
             started_at=meeting.started_at,
             key=key,
+            transcript_state=meeting.transcript_state,
         )
 
 
@@ -214,6 +222,38 @@ def order(segments: list[dict]) -> list[dict]:
     )
 
 
+# ─── andai's stored copy ───────────────────────────────────────────────────────────────────────────
+
+
+def stored_segment(row: TranscriptSegment) -> dict:
+    """A stored row as andai's segment, with its raw, canonical and script fields."""
+    return {
+        "id": row.id,
+        "speaker": row.speaker,
+        "start": row.start_s,
+        "end": row.end_s,
+        "text": row.text_raw,
+        "language": row.language,
+        "final": True,
+        "absolute_start": None if row.absolute_start is None else _iso(row.absolute_start),
+        "absolute_end": None if row.absolute_end is None else _iso(row.absolute_end),
+        "text_raw": row.text_raw,
+        "text_canonical": row.text_canonical,
+        "script": row.script,
+    }
+
+
+def stored_segments(engine: Engine, actor: Actor, meeting_id: uuid.UUID) -> list[dict]:
+    """The stored copy of a meeting `actor` was already allowed to read, in order."""
+    with transaction(engine, org_id=actor.org_id, user_id=actor.user_id) as tx:
+        rows = tx.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.meeting_id == meeting_id)
+            .order_by(TranscriptSegment.seq)
+        )
+        return [stored_segment(row) for row in rows]
+
+
 # ─── the route ────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -228,6 +268,11 @@ async def read_transcript(
         lambda: watched(engine, keyring, actor, meeting_id)
     )
     answer: dict = {"meeting_id": str(meeting.id), "segments": []}
+    if meeting.transcript_state == "stored":
+        answer["segments"] = await anyio.to_thread.run_sync(
+            lambda: stored_segments(engine, actor, meeting.id)
+        )
+        return answer
     if meeting.platform_meeting_id is None or meeting.key is None:
         return answer
     try:
@@ -260,5 +305,7 @@ __all__ = [
     "read_transcript",
     "segment_id",
     "segments_of_frame",
+    "stored_segment",
+    "stored_segments",
     "watched",
 ]

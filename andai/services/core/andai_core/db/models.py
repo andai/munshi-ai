@@ -7,7 +7,7 @@ Two kinds of table:
 * Org-scoped, carrying `org_id` and protected by Postgres row-level security on
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
-  `consent_records`.
+  `consent_records`, `transcript_segments` (0006).
 * System tables with no org and no customer data (no row-level security; migration 0005):
   `canary_runs` and `alert_state`, written by andai-worker.
 
@@ -28,6 +28,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -83,6 +84,11 @@ JOIN_FAILURE_REASONS = (
 )
 DISCLOSURE_CHANNELS = ("chat", "bot_name_only", "tts")
 
+# andai's own transcript copy (migration 0006).
+TRANSCRIPT_STATES = ("none", "pending", "stored", "failed")
+SCRIPT_TAGS = ("latn", "deva", "mixed", "other")
+ATTENDEE_SOURCES = ("invite", "speaker")
+
 # Canary runs and alert incidents (migration 0005).
 CANARY_RUN_STATES = ("scheduled", "running", "done")
 CANARY_OUTCOMES = ("success", "failure")
@@ -100,6 +106,7 @@ ORG_SCOPED_TABLES = (
     "audit_events",
     "meetings",
     "consent_records",
+    "transcript_segments",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # No org, no customer data, no row-level security (migration 0005).
@@ -389,6 +396,16 @@ class Meeting(Base):
             unique=True,
             postgresql_where=text(f"native_meeting_id IS NOT NULL AND {_not_terminal()}"),
         ),
+        CheckConstraint(_in("transcript_state", TRANSCRIPT_STATES), name="transcript_state"),
+        Index(
+            "ix_meetings_transcript_due",
+            "transcript_next_at",
+            postgresql_where=text(
+                f"status IN ({', '.join(repr(v) for v in TERMINAL_STATUSES)})"
+                " AND platform_meeting_id IS NOT NULL"
+                " AND transcript_state IN ('none', 'pending')"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -419,6 +436,52 @@ class Meeting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    title: Mapped[str | None] = mapped_column(Text)
+    # [{name, source: invite|speaker}], from the platform's participants once the meeting is done.
+    attendees: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    # andai's own copy of the final transcript (`meetings/ingest.py`, andai-worker).
+    transcript_state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'none'")
+    )
+    transcript_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    transcript_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    transcript_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TranscriptSegment(Base):
+    """One segment of a finished meeting's transcript, as andai stored it. `id` is andai's
+    `segment_id`; `text_raw` is the platform's text exactly; `text_canonical` its Roman Hinglish
+    form; `search_text` the folded form search indexes."""
+
+    __tablename__ = "transcript_segments"
+    __table_args__ = (
+        PrimaryKeyConstraint("meeting_id", "id"),
+        ForeignKeyConstraint(
+            ["meeting_id", "org_id"], ["meetings.id", "meetings.org_id"], ondelete="CASCADE"
+        ),
+        CheckConstraint(_in("script", SCRIPT_TAGS), name="script"),
+        Index("ix_transcript_segments_org_id_meeting_id_seq", "org_id", "meeting_id", "seq"),
+    )
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    id: Mapped[str] = mapped_column(Text, nullable=False)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_s: Mapped[float | None] = mapped_column(Float)
+    end_s: Mapped[float | None] = mapped_column(Float)
+    absolute_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    absolute_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    speaker: Mapped[str] = mapped_column(Text, nullable=False)
+    text_raw: Mapped[str] = mapped_column(Text, nullable=False)
+    text_canonical: Mapped[str] = mapped_column(Text, nullable=False)
+    script: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str | None] = mapped_column(Text)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
 
 
 class ConsentRecord(Base):

@@ -70,6 +70,8 @@ def seed_meeting(
     end_reason: str | None = None,
     started: bool | None = None,
     created_at: datetime | None = None,
+    platform_meeting_id: int | None = None,
+    native_meeting_id: str | None = None,
 ) -> uuid.UUID:
     """A meeting row in `org_id` written as the app role under that org's context."""
     from andai_core.db.models import Meeting
@@ -92,7 +94,52 @@ def seed_meeting(
                 end_reason=end_reason,
                 started_at=support.Clock()() if started else None,
                 settings_snapshot={},
+                platform_meeting_id=platform_meeting_id,
+                native_meeting_id=native_meeting_id,
                 **({} if created_at is None else {"created_at": created_at}),
             )
         )
     return meeting_id
+
+
+HINGLISH_LINES = [
+    {"segment_id": "s:1", "speaker": "Asha", "text": "कल की मीटिंग में deadline तय हुई",
+     "start": 0.0, "end": 2.0, "completed": True, "language": "hi"},
+    {"segment_id": "s:2", "speaker": "Vikram", "text": "ठीक है, मैं report भेज दूँगा",
+     "start": 2.5, "end": 4.0, "completed": True, "language": "hi"},
+]
+
+
+def platform_meeting(
+    harness, key: str, *, segments: list[dict] | None = None, status: str = "completed"
+) -> tuple[int, str]:
+    """A meeting of the org whose platform key is `key`, put straight into the harness's in-memory
+    gateway (the stub platform) with its transcript; returns (platform meeting id, native id)."""
+    from datetime import UTC
+
+    gateway = harness.gateway
+    [platform_user] = [
+        t["user_id"] for t in harness.admin_api.tokens.values() if t["token"] == key
+    ]
+    native = f"{uuid.uuid4().int % 10**11:011d}"
+    mid = next(gateway._ids)
+    now = datetime.now(UTC).isoformat()
+    gateway.meetings[mid] = {
+        "id": mid,
+        "user_id": platform_user,
+        "platform": "zoom",
+        "native_meeting_id": native,
+        "constructed_meeting_url": f"https://zoom.us/j/{native}",
+        "status": status,
+        "bot_container_id": None,
+        "start_time": now,
+        "end_time": now,
+        "completion_reason": None,
+        "failure_stage": None,
+        "data": {},
+        "created_at": now,
+        "updated_at": now,
+    }
+    gateway.owners[mid] = platform_user
+    gateway.transcripts[mid] = [dict(s) for s in (HINGLISH_LINES if segments is None else segments)]
+    return mid, native

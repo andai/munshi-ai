@@ -220,6 +220,9 @@ def view(tx: Tx, actor: Actor, meeting: Meeting) -> dict:
         "ended_at": None if meeting.ended_at is None else meeting.ended_at.isoformat(),
         "created_at": meeting.created_at.isoformat(),
         "updated_at": meeting.updated_at.isoformat(),
+        "title": meeting.title,
+        "attendees": list(meeting.attendees or []),
+        "transcript_state": meeting.transcript_state,
     }
 
 
