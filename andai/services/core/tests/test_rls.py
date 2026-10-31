@@ -25,6 +25,7 @@ from andai_core.db.models import (
     Invite,
     Meeting,
     MeetingShare,
+    MomDocument,
     Org,
     OrgMembership,
     PlatformPrincipal,
@@ -49,6 +50,7 @@ READABLE = {
     "consent_records": "org_id",
     "transcript_segments": "org_id",
     "meeting_shares": "org_id",
+    "mom_documents": "org_id",
 }
 
 
@@ -161,6 +163,18 @@ def _seed_meeting(
                 grantee_type="user",
                 grantee_id=owner_id,
                 granted_by=owner_id,
+            )
+        )
+        tx.flush()
+        tx.add(
+            MomDocument(
+                meeting_id=meeting_id,
+                version=1,
+                org_id=org_id,
+                template_id="standard",
+                output_language="hinglish",
+                body={"meetingId": str(meeting_id), "version": 1, "summary": "kal ki meeting"},
+                search_text="kal ki miting",
             )
         )
     return meeting_id
@@ -292,6 +306,34 @@ def test_rows_cannot_be_written_into_another_org(
                 text("UPDATE invites SET org_id = :a WHERE org_id = :b"),
                 {"a": org_a.org_id, "b": org_b.org_id},
             )
+
+
+def test_minutes_cannot_be_written_into_another_org(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    with pytest.raises(ProgrammingError, match=RLS_ERROR):
+        with transaction(app_engine, org_id=org_b.org_id) as tx:
+            tx.add(
+                MomDocument(
+                    meeting_id=org_a.meeting_id,
+                    version=2,
+                    org_id=org_a.org_id,
+                    template_id="standard",
+                    output_language="en",
+                    body={},
+                    search_text="planted",
+                )
+            )
+
+
+def test_the_app_role_may_not_update_or_delete_minutes(
+    app_engine: Engine, org_a: SeededOrg
+) -> None:
+    """A minutes version is never changed, in any org: no UPDATE or DELETE grant at all."""
+    for statement in ("UPDATE mom_documents SET search_text = 'x'", "DELETE FROM mom_documents"):
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            with transaction(app_engine, org_id=org_a.org_id) as tx:
+                tx.execute(text(statement))
 
 
 @pytest.mark.parametrize("table", sorted(READABLE))

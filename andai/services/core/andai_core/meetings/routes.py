@@ -18,6 +18,9 @@
   (`transcript.py`); the polling source when the live stream drops. Same access as reading.
 * `GET /meetings/{id}/live` — server-sent events with the meeting's status and transcript as they
   change (`live.py`). Same access as reading; the browser never reaches the platform.
+* `GET /meetings/{id}/mom` — the latest version of the meeting's minutes, a SPEC `MomDocument`
+  whose evidence ids are the transcript's segment ids (`mom.py`). Same access as reading; 404
+  `no_minutes` when there are none yet. There is no write route.
 * `GET /meetings/{id}/shares`, `POST /meetings/{id}/shares {grantee_type, grantee_id}` and
   `DELETE /meetings/{id}/shares/{share_id}` — who the meeting is shared with, share it with a user
   or team of the org (201 new, 200 already shared), stop sharing (204). Requester, team lead,
@@ -38,7 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from andai_core.auth.deps import Services, client_ip, get_services
 from andai_core.auth.roles import Caller, require_role
 from andai_core.db.session import transaction
-from andai_core.meetings import listing, shares
+from andai_core.meetings import listing, mom, shares
 from andai_core.meetings.live import open_stream
 from andai_core.meetings.service import Actor, MeetingError, Meetings
 from andai_core.meetings.transcript import read_transcript
@@ -143,6 +146,17 @@ async def live(
     services: Services = Depends(get_services),
 ) -> StreamingResponse:
     return await open_stream(services, meetings(services).gateway, actor(caller), meeting_id)
+
+
+@router.get("/meetings/{meeting_id}/mom")
+def minutes(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> dict:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        return mom.read(tx, who, meeting_id)
 
 
 @router.get("/meetings/{meeting_id}/shares")

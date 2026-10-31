@@ -18,8 +18,8 @@ rows they may not see (the list carries no totals).
 
 Each item: id, title (may be null), platform, status, failure and end reasons, team `{id, name}`
 (or null), the requester's id and display name, start, end and creation times, `duration_s`,
-`shared` (the meeting reaches the caller through a share) and `has_minutes` (always false until
-minutes exist).
+`shared` (the meeting reaches the caller through a share) and `has_minutes` (a version of its
+minutes exists, `mom.py`).
 """
 
 from __future__ import annotations
@@ -31,10 +31,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, Select, and_, func, literal, select, tuple_
+from sqlalchemy import ColumnElement, Select, and_, exists, func, literal, select, tuple_
 from sqlalchemy.orm import Session as Tx
 
-from andai_core.db.models import Meeting, Team, User
+from andai_core.db.models import Meeting, MomDocument, Team, User
 from andai_core.meetings.access import Actor, accessible, shared_with
 from andai_core.meetings.service import MeetingError
 
@@ -139,6 +139,9 @@ def query(
             Team.name.label("team_name"),
             User.display_name.label("requester_name"),
             and_(Meeting.requested_by != actor.user_id, shared_with(actor)).label("shared"),
+            exists()
+            .where(MomDocument.meeting_id == Meeting.id, MomDocument.org_id == Meeting.org_id)
+            .label("has_minutes"),
             SORT_TIME.label("sort_time"),
         )
         .join(User, User.id == Meeting.requested_by)
@@ -153,7 +156,13 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
-def item(meeting: Meeting, team_name: str | None, requester_name: str, shared: bool) -> dict:
+def item(
+    meeting: Meeting,
+    team_name: str | None,
+    requester_name: str,
+    shared: bool,
+    has_minutes: bool,
+) -> dict:
     duration = None
     if meeting.started_at is not None and meeting.ended_at is not None:
         duration = max(0, round((meeting.ended_at - meeting.started_at).total_seconds()))
@@ -176,7 +185,7 @@ def item(meeting: Meeting, team_name: str | None, requester_name: str, shared: b
         "created_at": _iso(meeting.created_at),
         "duration_s": duration,
         "shared": bool(shared),
-        "has_minutes": False,
+        "has_minutes": bool(has_minutes),
     }
 
 
@@ -190,7 +199,8 @@ def _page(tx: Tx, actor: Actor, section: str, filter_: str, limit: int, after: P
         next_cursor = encode_cursor(Position(section, filter_, last.sort_time, last.Meeting.id))
     return {
         "items": [
-            item(row.Meeting, row.team_name, row.requester_name, row.shared) for row in rows
+            item(row.Meeting, row.team_name, row.requester_name, row.shared, row.has_minutes)
+            for row in rows
         ],
         "next_cursor": next_cursor,
     }

@@ -36,6 +36,7 @@ from andai_core.meetings.reconciler import Reconciler
 from andai_core.meetings.service import MeetingError
 from andai_core.org import routes as org_routes
 from andai_core.org import security as org_security
+from andai_core.search import routes as search_routes
 from andai_core.mail import SmtpMailer
 from andai_core.platform.admin_client import HttpPlatformAdmin
 from andai_core.platform.gateway_client import HttpPlatformGateway
@@ -110,6 +111,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(org_security.router)
     app.include_router(org_routes.router)
     app.include_router(meeting_routes.router)
+    app.include_router(search_routes.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

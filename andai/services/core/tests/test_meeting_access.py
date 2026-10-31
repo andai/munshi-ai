@@ -1,5 +1,5 @@
 """Who may read, stop, share and delete a meeting (`meetings/access.py`), over the routes that read
-or stop one: nine callers against `.work/AUTH_MATRIX.md`.
+or stop one (detail, transcript, live, minutes, stop): nine callers against `.work/AUTH_MATRIX.md`.
 
 The org has an owner, an admin, the meeting's requester, a lead of the meeting's team, a plain
 member of that team, a user the meeting is shared with, a member of a team the meeting is shared
@@ -73,6 +73,17 @@ def test_live(world: AccessOrg, caller: str) -> None:
         assert response.status_code == 200, response.text
         assert response.headers["content-type"].startswith("text/event-stream")
         assert response.text.startswith("event: status\n")  # ended: one status, then the end
+    else:
+        assert _refused(response), response.text
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_minutes(world: AccessOrg, caller: str) -> None:
+    response = world.client(caller).get(f"/api/v1/meetings/{world.meeting_id}/mom")
+
+    assert response.status_code == 404, response.text
+    if caller in READERS:  # readable, no minutes yet; the content is test_mom_read.py
+        assert response.json()["code"] == "no_minutes"
     else:
         assert _refused(response), response.text
 
@@ -161,6 +172,7 @@ def test_a_revoked_share_is_404_on_the_next_request(world: AccessOrg) -> None:
     assert _refused(grantee.get(path))
     assert _refused(grantee.get(f"{path}/transcript"))
     assert _refused(grantee.get(f"{path}/live"))
+    assert _refused(grantee.get(f"{path}/mom"))
     assert world.client("team_grantee").get(path).status_code == 200, "the team share stays"
 
 

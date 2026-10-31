@@ -27,9 +27,11 @@ from conftest import (
     AccessOrg,
     access_org,
     make_harness,
+    mom_body,
     new_member,
     new_team,
     seed_meeting,
+    seed_segments,
     sign_in,
 )
 
@@ -148,6 +150,28 @@ def test_an_item_carries_what_the_dashboard_shows(world: AccessOrg) -> None:
     own = world.client("requester").get(PATH, params={"section": "past", "limit": 50}).json()
     [mine] = [i for i in own["sections"]["past"]["items"] if i["id"] == str(meeting_id)]
     assert mine["shared"] is False, "shared means: reaches the caller through a share"
+
+
+def test_has_minutes_follows_the_minutes(world: AccessOrg) -> None:
+    from andai_core.meetings import mom
+
+    started = T0 - timedelta(days=500)
+    with_minutes = world.meeting(started_at=started)
+    without = world.meeting(started_at=started - timedelta(hours=1))
+    ids = seed_segments(world.engine, world.org_id, with_minutes, ["kal tak", "theek hai"])
+    with transaction(world.engine, org_id=world.org_id) as tx:
+        mom.seed_version(tx, world.org_id, with_minutes, mom_body(ids))
+
+    listed = {
+        i["id"]: i["has_minutes"]
+        for i in world.client("team_grantee")
+        .get(PATH, params={"section": "past", "limit": 50})
+        .json()["sections"]["past"]["items"]
+    }
+
+    assert listed[str(with_minutes)] is True
+    assert listed[str(without)] is False
+
 
 
 # ─── filters ──────────────────────────────────────────────────────────────────────────────────────

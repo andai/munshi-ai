@@ -25,10 +25,20 @@ import pytest
 from sqlalchemy import Engine, select, text, update
 
 from andai_core.auth.passwords import hash_password
-from andai_core.db.models import ConsentRecord, Invite, MeetingShare, TranscriptSegment, User
+from andai_core.db.models import (
+    ConsentRecord,
+    Invite,
+    Meeting,
+    MeetingShare,
+    TranscriptSegment,
+    User,
+)
 from andai_core.db.session import transaction
 from andai_core.main import create_app
+from andai_core.meetings import mom
+from andai_core.meetings.title import set_title
 from andai_core.org.service import create_org
+from andai_core.text import fold
 from conftest import (
     PASSWORD,
     Harness,
@@ -36,6 +46,7 @@ from conftest import (
     enroll,
     invite_user,
     make_harness,
+    mom_body,
     new_member,
     new_team,
     served,
@@ -63,6 +74,7 @@ class SeededOrg:
     meeting_id: uuid.UUID
     meeting_link: str
     share_id: uuid.UUID
+    tag: str = ""
     values: set[str] = field(default_factory=set)
 
     @property
@@ -166,7 +178,7 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
                 text_raw=f"{label} stored {tag}",
                 text_canonical=f"{label} stored {tag}",
                 script="latn",
-                search_text=f"{label} stored {tag}".lower(),
+                search_text=fold(f"{label} stored {tag}"),
             )
         )
         # The meeting is shared with the org's admin.
@@ -179,6 +191,13 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
                 grantee_id=members["admin"].user_id,
                 granted_by=members["lead"].user_id,
             )
+        )
+        # A title and minutes, both carrying the tag, so search and the minutes route can leak it.
+        meeting = tx.get(Meeting, meeting_id)
+        set_title(tx, meeting, f"{label} review {tag}")
+        tx.flush()
+        mom.seed_version(
+            tx, org_id, meeting_id, mom_body([f"seg_{tag}"], summary=f"{label} minutes {tag}")
         )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
@@ -198,6 +217,7 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
         meeting_id=meeting_id,
         meeting_link=meeting_link,
         share_id=share_id,
+        tag=tag,
     )
     seeded.values = {
         str(meeting_id),
@@ -273,6 +293,9 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "meeting_shares": (
             "SELECT id, meeting_id, grantee_type, grantee_id FROM meeting_shares WHERE org_id = :o"
         ),
+        "mom_documents": (
+            "SELECT meeting_id, version, search_text FROM mom_documents WHERE org_id = :o"
+        ),
     }
     params = {"o": b.org_id, "u": b.users}
     with superuser_engine.connect() as conn:
@@ -319,6 +342,9 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ],
     ("GET", "/api/v1/meetings/{meeting_id}/live"): lambda b: [
         ("watch B meeting", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("GET", "/api/v1/meetings/{meeting_id}/mom"): lambda b: [
+        ("read B minutes", {"meeting_id": b.meeting_id}, None),
     ],
     ("GET", "/api/v1/meetings/{meeting_id}/shares"): lambda b: [
         ("list B shares", {"meeting_id": b.meeting_id}, None),
@@ -369,6 +395,7 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("POST", "/api/v1/meetings/join"): (ALL, "join"),
     ("GET", "/api/v1/meetings"): (ALL, None),
     ("GET", "/api/v1/org/directory"): (ALL, None),
+    ("GET", "/api/v1/search"): (ALL, None),  # without `q`: 422; the searches are below
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────
@@ -499,6 +526,32 @@ def test_org_a_reads_list_org_a_and_never_org_b(world: World) -> None:
     assert str(world.b.team) not in [t["id"] for t in teams]
     me = owner.get("/api/v1/me").json()
     assert me["org"]["id"] == str(world.a.org_id)
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_search_finds_nothing_of_org_b(world: World, superuser_engine: Engine, role: str) -> None:
+    """B's tag is in its title, transcript and minutes; A never finds B's meeting, by B's words or
+    by words both orgs use."""
+    before = b_state(superuser_engine, world.b)
+    client = world.client(world.a, role)
+
+    for q in (world.b.tag, "Beta", "review", "minutes", "stored"):
+        response = client.get("/api/v1/search", params={"q": q})
+
+        assert response.status_code == 200, (q, response.text)
+        assert response.json()["results"] == [] or q != world.b.tag
+        assert str(world.b.meeting_id) not in response.text
+        # The answer echoes the query; anything else of B's would be a leak.
+        assert leaked(response.text.replace(q, ""), world.b) == [], q
+    assert b_state(superuser_engine, world.b) == before
+
+
+def test_search_finds_org_a_meetings_for_org_a(world: World) -> None:
+    """The positive half: the same searches do find A's meeting for A's readers."""
+    body = world.client(world.a, "lead").get("/api/v1/search", params={"q": world.a.tag}).json()
+
+    assert [r["id"] for r in body["results"]] == [str(world.a.meeting_id)]
+    assert {h["source"] for h in body["results"][0]["hits"]} == {"title", "transcript", "minutes"}
 
 
 PUBLIC_CASES = [

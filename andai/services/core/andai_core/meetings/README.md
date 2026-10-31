@@ -1,20 +1,28 @@
 # andai/services/core/andai_core/meetings
 
-Sending the bot to a meeting, following it, listing and sharing meetings:
+Sending the bot to a meeting, following it, listing, sharing and reading its minutes:
 
 - `routes.py` — `GET /api/v1/meetings` (the list), `POST /api/v1/meetings/join`,
   `GET /api/v1/meetings/{id}`, `POST /api/v1/meetings/{id}/stop`,
   `GET /api/v1/meetings/{id}/transcript`, `GET /api/v1/meetings/{id}/live`,
-  `GET/POST /api/v1/meetings/{id}/shares` and `DELETE /api/v1/meetings/{id}/shares/{share_id}`
-  (access per `.work/AUTH_MATRIX.md`; 404 for anyone who may not read the meeting).
+  `GET /api/v1/meetings/{id}/mom`, `GET/POST /api/v1/meetings/{id}/shares` and
+  `DELETE /api/v1/meetings/{id}/shares/{share_id}` (access per `.work/AUTH_MATRIX.md`; 404 for
+  anyone who may not read the meeting).
 - `access.py` — the one access predicate, `accessible(actor)`, used as SQL by every read path
-  (detail, transcript, live, list): admins and owners, the requester, a lead of the meeting's
-  team, and the users and current team members it is shared with. `can_read`, `can_stop` and
+  (detail, transcript, live, minutes, list, search): admins and owners, the requester, a lead of
+  the meeting's team, and the users and current team members it is shared with. `can_read`, `can_stop` and
   `can_share` (requester, team lead, admins, owners — not grantees), `can_delete` (requester,
   admins, owners), the view's `permissions`, and who a meeting is shared with.
 - `listing.py` — the dashboard list: Live / Upcoming / Past sections by status, newest first,
   filters `all | mine | shared | team:<id>`, keyset pages with an opaque cursor; access filtered in
-  SQL before the limit, no totals.
+  SQL before the limit, no totals. `has_minutes` says whether a minutes version exists.
+- `mom.py` — minutes of meeting, read only in this phase: the latest version of a meeting's SPEC
+  `MomDocument` for its readers (404 `no_minutes` when there is none). Its evidence ids are
+  transcript segment ids. `seed_version` validates a document against the schema and the meeting's
+  stored segments before storing the next version; tests and seeds call it, and Phase 6's pipeline
+  will. Versions are never changed (the app role may only SELECT and INSERT `mom_documents`).
+- `title.py` — `set_title`, the only writer of a meeting's title: it stores the title and its fold
+  (`title_search`) together.
 - `shares.py` — grant and revoke read access to a user or team of the caller's org, each with its
   `share.grant` / `share.revoke` audit event in the same transaction; grantees outside the org or
   unknown are 404 `no_such_grantee`.
