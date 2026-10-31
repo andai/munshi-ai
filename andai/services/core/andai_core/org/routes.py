@@ -6,6 +6,8 @@
 * `PATCH /org/users/{id}` — change a member's role or disable/enable their account (disabling ends
   every session they hold). Admin or owner; the owner is out of an admin's reach, nobody changes
   themselves, and `role: "owner"` (from the owner only) hands ownership on.
+* `GET /org/directory` — active members' names and team ids and the teams' names, for any member
+  (the share picker; `directory.py`).
 * `GET /teams` — the org's teams and their members, for any member. `POST /teams` creates one
   (admin or owner). `PUT /teams/{id}/members` replaces a team's members (admin, owner, or a lead
   of that team, who cannot change who leads it).
@@ -29,9 +31,10 @@ from andai_core.auth.links import InvalidEmail, canonical_email
 from andai_core.auth.roles import Caller, require_role
 from andai_core.db.models import Org
 from andai_core.mail import MailError
-from andai_core.org import service
+from andai_core.org import directory, service
 
 router = APIRouter(prefix="/api/v1")
+router.include_router(directory.router)
 
 ADMINS = ("owner", "admin")
 EVERYONE = ("owner", "admin", "member")

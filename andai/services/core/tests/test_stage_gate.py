@@ -58,6 +58,11 @@ KNOWN = {
     ("POST", "/api/v1/meetings/{meeting_id}/stop"),
     ("GET", "/api/v1/meetings/{meeting_id}/transcript"),
     ("GET", "/api/v1/meetings/{meeting_id}/live"),
+    ("GET", "/api/v1/meetings"),
+    ("GET", "/api/v1/meetings/{meeting_id}/shares"),
+    ("POST", "/api/v1/meetings/{meeting_id}/shares"),
+    ("DELETE", "/api/v1/meetings/{meeting_id}/shares/{share_id}"),
+    ("GET", "/api/v1/org/directory"),
 }
 
 

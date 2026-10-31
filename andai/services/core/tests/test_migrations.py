@@ -167,7 +167,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
 
         command.downgrade(config, "0005")
         assert _revision(engine) == "0005"
-        assert _tables(engine) == ALL_TABLES - {"transcript_segments"}
+        assert _tables(engine) == ALL_TABLES - {"transcript_segments", "meeting_shares"}
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
 
@@ -175,5 +175,35 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
         assert _tables(engine) == ALL_TABLES
         assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
         assert _scan_objects(engine) == (1, 1, 3)
+    finally:
+        engine.dispose()
+
+
+LIST_INDEXES = {"ix_meetings_org_id_status_sort_time", "ix_meetings_org_id_requested_by"}
+
+
+def _meeting_indexes(engine: Engine) -> set[str]:
+    with engine.connect() as conn:
+        return set(
+            conn.execute(
+                text("SELECT indexname FROM pg_indexes WHERE tablename = 'meetings'")
+            ).scalars()
+        )
+
+
+def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        assert LIST_INDEXES <= _meeting_indexes(engine)
+
+        command.downgrade(config, "0006")
+        assert _revision(engine) == "0006"
+        assert _tables(engine) == ALL_TABLES - {"meeting_shares"}
+        assert not LIST_INDEXES & _meeting_indexes(engine)
+
+        command.upgrade(config, "head")
+        assert _tables(engine) == ALL_TABLES
+        assert LIST_INDEXES <= _meeting_indexes(engine)
     finally:
         engine.dispose()

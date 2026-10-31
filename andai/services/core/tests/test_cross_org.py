@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import Engine, select, text, update
 
 from andai_core.auth.passwords import hash_password
-from andai_core.db.models import ConsentRecord, Invite, TranscriptSegment, User
+from andai_core.db.models import ConsentRecord, Invite, MeetingShare, TranscriptSegment, User
 from andai_core.db.session import transaction
 from andai_core.main import create_app
 from andai_core.org.service import create_org
@@ -62,6 +62,7 @@ class SeededOrg:
     member_totp: object
     meeting_id: uuid.UUID
     meeting_link: str
+    share_id: uuid.UUID
     values: set[str] = field(default_factory=set)
 
     @property
@@ -133,6 +134,7 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
     assert sent.status_code == 201, sent.text
     meeting_id = uuid.UUID(sent.json()["id"])
     native_meeting_id = sent.json()["native_meeting_id"]
+    share_id = uuid.uuid4()
     # What the bot has heard so far; its text carries the org's tag, so any leak shows.
     harness.gateway.transcripts[max(harness.gateway.meetings)] = [
         {"segment_id": f"{label}-seg-{tag}", "speaker": f"{label} Speaker {tag}",
@@ -167,6 +169,17 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
                 search_text=f"{label} stored {tag}".lower(),
             )
         )
+        # The meeting is shared with the org's admin.
+        tx.add(
+            MeetingShare(
+                id=share_id,
+                org_id=org_id,
+                meeting_id=meeting_id,
+                grantee_type="user",
+                grantee_id=members["admin"].user_id,
+                granted_by=members["lead"].user_id,
+            )
+        )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -184,9 +197,11 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
         member_totp=member_totp,
         meeting_id=meeting_id,
         meeting_link=meeting_link,
+        share_id=share_id,
     )
     seeded.values = {
         str(meeting_id),
+        str(share_id),
         meeting_link,
         f"pw{tag}",
         native_meeting_id,
@@ -255,6 +270,9 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "transcript_segments": (
             "SELECT meeting_id, id, speaker, text_raw FROM transcript_segments WHERE org_id = :o"
         ),
+        "meeting_shares": (
+            "SELECT id, meeting_id, grantee_type, grantee_id FROM meeting_shares WHERE org_id = :o"
+        ),
     }
     params = {"o": b.org_id, "u": b.users}
     with superuser_engine.connect() as conn:
@@ -302,6 +320,24 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ("GET", "/api/v1/meetings/{meeting_id}/live"): lambda b: [
         ("watch B meeting", {"meeting_id": b.meeting_id}, None),
     ],
+    ("GET", "/api/v1/meetings/{meeting_id}/shares"): lambda b: [
+        ("list B shares", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("POST", "/api/v1/meetings/{meeting_id}/shares"): lambda b: [
+        (
+            "share B meeting with a B user",
+            {"meeting_id": b.meeting_id},
+            {"grantee_type": "user", "grantee_id": str(b.members["member"].user_id)},
+        ),
+        (
+            "share B meeting with a B team",
+            {"meeting_id": b.meeting_id},
+            {"grantee_type": "team", "grantee_id": str(b.team)},
+        ),
+    ],
+    ("DELETE", "/api/v1/meetings/{meeting_id}/shares/{share_id}"): lambda b: [
+        ("revoke B share", {"meeting_id": b.meeting_id, "share_id": b.share_id}, None),
+    ],
     ("PUT", "/api/v1/teams/{team_id}/members"): lambda b: [
         ("empty B team", {"team_id": b.team}, {"members": []}),
         (
@@ -331,6 +367,8 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("GET", "/api/v1/teams"): (ALL, None),
     ("POST", "/api/v1/teams"): (ADMINS, "team"),
     ("POST", "/api/v1/meetings/join"): (ALL, "join"),
+    ("GET", "/api/v1/meetings"): (ALL, None),
+    ("GET", "/api/v1/org/directory"): (ALL, None),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────
@@ -527,6 +565,48 @@ def test_org_b_people_cannot_be_put_in_an_org_a_team(
     assert b_state(superuser_engine, world.b) == before
 
 
+def test_org_a_meetings_cannot_be_shared_with_org_b(
+    world: World, superuser_engine: Engine
+) -> None:
+    before = b_state(superuser_engine, world.b)
+    lead = world.client(world.a, "lead")
+    path = f"/api/v1/meetings/{world.a.meeting_id}/shares"
+
+    for grantee_type, grantee_id in (
+        ("user", world.b.members["member"].user_id),
+        ("user", world.b.members["owner"].user_id),
+        ("team", world.b.team),
+    ):
+        response = lead.post(
+            path, json={"grantee_type": grantee_type, "grantee_id": str(grantee_id)}
+        )
+        assert (response.status_code, response.json()["code"]) == (404, "no_such_grantee")
+        assert leaked(response.text, world.b) == []
+    assert b_state(superuser_engine, world.b) == before
+    with superuser_engine.connect() as conn:
+        grantees = set(
+            conn.execute(
+                text("SELECT grantee_id FROM meeting_shares WHERE meeting_id = :m"),
+                {"m": world.a.meeting_id},
+            ).scalars()
+        )
+    assert grantees.isdisjoint({*world.b.users, world.b.team})
+
+
+def test_org_a_lists_and_directory_hold_org_a_only(world: World) -> None:
+    for role in ROLES:
+        client = world.client(world.a, role)
+        listed = client.get("/api/v1/meetings")
+        directory = client.get("/api/v1/org/directory")
+        assert listed.status_code == directory.status_code == 200
+        assert leaked(listed.text, world.b) == [] and leaked(directory.text, world.b) == []
+    owner = world.client(world.a, "owner")
+    live = owner.get("/api/v1/meetings", params={"section": "live"}).json()
+    assert str(world.a.meeting_id) in [i["id"] for i in live["sections"]["live"]["items"]]
+    names = {u["id"] for u in owner.get("/api/v1/org/directory").json()["users"]}
+    assert names == {str(u) for u in world.a.users}
+
+
 def test_a_session_of_org_b_sees_org_b_and_not_org_a(world: World) -> None:
     """The suite is symmetric: B's owner sees B's data, none of A's."""
     owner = world.client(world.b, "owner")
@@ -652,6 +732,7 @@ def test_canary_rows_never_reach_a_customer_org(
         ("POST", f"/api/v1/meetings/{canary.meeting_id}/stop", None),
         ("GET", f"/api/v1/meetings/{canary.meeting_id}/transcript", None),
         ("GET", f"/api/v1/meetings/{canary.meeting_id}/live", None),
+        ("GET", f"/api/v1/meetings/{canary.meeting_id}/shares", None),
         ("PATCH", f"/api/v1/org/users/{canary.owner_id}", {"role": "member"}),
         ("DELETE", f"/api/v1/org/users/{canary.owner_id}/mfa", None),
     ]
@@ -659,7 +740,10 @@ def test_canary_rows_never_reach_a_customer_org(
         response = _call(client, method, path, body)
         assert response.status_code in (403, 404), (path, response.status_code)
         assert _canary_leaks(response.text, canary) == [], path
-    for path in ("/api/v1/me", "/api/v1/org/users", "/api/v1/teams", "/api/v1/org/security"):
+    for path in (
+        "/api/v1/me", "/api/v1/org/users", "/api/v1/teams", "/api/v1/org/security",
+        "/api/v1/meetings", "/api/v1/org/directory",
+    ):
         response = client.get(path)
         assert _canary_leaks(response.text, canary) == [], path
     assert canary_state() == before

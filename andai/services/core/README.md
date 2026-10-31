@@ -4,8 +4,10 @@ The andai-core service (FastAPI, Python 3.12): `Dockerfile`, `pyproject.toml`, t
 package, Alembic `migrations/` (with `alembic.ini`) and `tests/`. HTTP surface: `GET /healthz` and
 the `/api/v1` auth routes (login, TOTP two-factor login and enrollment, logout, `me`, password
 reset, invite acceptance, bootstrap), org routes (`/api/v1/org/security`, member 2FA reset,
-members and invites under `/api/v1/org/users`, teams under `/api/v1/teams`) and meeting routes
-(`POST /api/v1/meetings/join`, `GET /api/v1/meetings/{id}`, `POST /api/v1/meetings/{id}/stop`).
+members and invites under `/api/v1/org/users`, the share picker's `/api/v1/org/directory`, teams
+under `/api/v1/teams`) and meeting routes (the list `GET /api/v1/meetings`, `POST
+/api/v1/meetings/join`, `GET /api/v1/meetings/{id}` with its stop, transcript, live and share
+routes).
 A background reconciler keeps meeting status and consent records in step with the meeting
 platform (`ANDAI_RECONCILER=off` turns it off).
 

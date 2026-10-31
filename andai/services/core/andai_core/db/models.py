@@ -7,7 +7,7 @@ Two kinds of table:
 * Org-scoped, carrying `org_id` and protected by Postgres row-level security on
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
-  `consent_records`, `transcript_segments` (0006).
+  `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007).
 * System tables with no org and no customer data (no row-level security; migration 0005):
   `canary_runs` and `alert_state`, written by andai-worker.
 
@@ -89,6 +89,9 @@ TRANSCRIPT_STATES = ("none", "pending", "stored", "failed")
 SCRIPT_TAGS = ("latn", "deva", "mixed", "other")
 ATTENDEE_SOURCES = ("invite", "speaker")
 
+# Meeting shares (migration 0007).
+GRANTEE_TYPES = ("user", "team")
+
 # Canary runs and alert incidents (migration 0005).
 CANARY_RUN_STATES = ("scheduled", "running", "done")
 CANARY_OUTCOMES = ("success", "failure")
@@ -107,6 +110,7 @@ ORG_SCOPED_TABLES = (
     "meetings",
     "consent_records",
     "transcript_segments",
+    "meeting_shares",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # No org, no customer data, no row-level security (migration 0005).
@@ -397,6 +401,15 @@ class Meeting(Base):
             postgresql_where=text(f"native_meeting_id IS NOT NULL AND {_not_terminal()}"),
         ),
         CheckConstraint(_in("transcript_state", TRANSCRIPT_STATES), name="transcript_state"),
+        # The meeting list: one section's statuses in display order, and "requested by me".
+        Index(
+            "ix_meetings_org_id_status_sort_time",
+            "org_id",
+            "status",
+            text("(coalesce(started_at, created_at)) DESC"),
+            text("id DESC"),
+        ),
+        Index("ix_meetings_org_id_requested_by", "org_id", "requested_by"),
         Index(
             "ix_meetings_transcript_due",
             "transcript_next_at",
@@ -481,6 +494,36 @@ class TranscriptSegment(Base):
     script: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str | None] = mapped_column(Text)
     search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class MeetingShare(Base):
+    """Read access to a meeting granted to a user or a team of the meeting's org. A team grant
+    reaches whoever is in the team when they read. Grantees read only."""
+
+    __tablename__ = "meeting_shares"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["meeting_id", "org_id"], ["meetings.id", "meetings.org_id"], ondelete="CASCADE"
+        ),
+        UniqueConstraint("meeting_id", "grantee_type", "grantee_id"),
+        CheckConstraint(_in("grantee_type", GRANTEE_TYPES), name="grantee_type"),
+        Index(
+            "ix_meeting_shares_org_id_grantee_type_grantee_id",
+            "org_id",
+            "grantee_type",
+            "grantee_id",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    grantee_type: Mapped[str] = mapped_column(Text, nullable=False)
+    grantee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    granted_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
     created_at: Mapped[datetime] = _created_at()
 
 

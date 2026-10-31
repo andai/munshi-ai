@@ -21,9 +21,11 @@ to that platform meeting, or answers the andai meeting that already holds it.
 by `python -m andai_core canary-setup`), and that org sends nothing else, so canary bots never use
 a customer org's bot cap or appear in its data. `canary_actor` is how andai-worker acts as it.
 
-**Access (AUTH_MATRIX).** A meeting is readable and stoppable by its requester, by a lead of its
-team, and by org admins and owners; for anyone else it does not exist (404). The pasted link is
-returned with its passcode only to the requester and admins.
+**Access (AUTH_MATRIX, `access.py`).** A meeting is readable by its requester, a lead of its team,
+org admins and owners, and whoever it is shared with (a user, or the members of a team); for anyone
+else it does not exist (404). Only the requester, the team lead, admins and owners may stop it; a
+grantee asking to stop gets the same 404. The pasted link is returned with its passcode only to the
+requester and admins.
 
 The Zoom passcode stays in the stored link and is never logged: every logged URL goes through
 `redact_url`.
@@ -53,9 +55,18 @@ from andai_core.db.models import (
     OrgMembership,
     Team,
     TeamMembership,
+    User,
 )
 from andai_core.db.session import transaction
 from andai_core.meetings import consent
+from andai_core.meetings.access import (
+    Actor,
+    accessible,
+    can_read,
+    can_stop,
+    permissions,
+    share_grants,
+)
 from andai_core.meetings.status_map import admit_instructions, map_platform
 from andai_core.platform import principals
 from andai_core.platform.gateway_client import DuplicateMeeting, GatewayError, PlatformGateway
@@ -63,7 +74,6 @@ from andai_core.settings import Settings
 
 log = logging.getLogger(__name__)
 
-ADMINS = ("owner", "admin")
 LANGUAGES = ("en", "hi", "hinglish")
 # The STT language sent for Hinglish until the speech pipeline settles on one (Phase 2).
 HINGLISH_STT_LANGUAGE = "hi"
@@ -144,63 +154,49 @@ def redact_url(url: str) -> str:
 # ─── access ───────────────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class Actor:
-    org_id: uuid.UUID
-    user_id: uuid.UUID
-    role: str  # org role
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role in ADMINS
-
-
-def _leads(tx: Tx, actor: Actor, team_id: uuid.UUID | None) -> bool:
-    if team_id is None:
-        return False
-    return bool(
-        tx.scalar(
-            select(
-                exists().where(
-                    TeamMembership.org_id == actor.org_id,
-                    TeamMembership.team_id == team_id,
-                    TeamMembership.user_id == actor.user_id,
-                    TeamMembership.role == "lead",
-                )
-            )
-        )
-    )
-
-
-def can_read(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
-    return (
-        actor.is_admin
-        or meeting.requested_by == actor.user_id
-        or _leads(tx, actor, meeting.team_id)
-    )
-
-
 def sees_passcode(actor: Actor, meeting: Meeting) -> bool:
     return actor.is_admin or meeting.requested_by == actor.user_id
 
 
 def readable(tx: Tx, actor: Actor, meeting_id: uuid.UUID) -> Meeting:
-    meeting = tx.scalar(
-        select(Meeting).where(Meeting.id == meeting_id, Meeting.org_id == actor.org_id)
-    )
-    if meeting is None or not can_read(tx, actor, meeting):
+    """The meeting `actor` may read (`access.accessible`), else the 404 refusal."""
+    meeting = tx.scalar(select(Meeting).where(Meeting.id == meeting_id, accessible(actor)))
+    if meeting is None:
+        raise NO_SUCH_MEETING
+    return meeting
+
+
+def stoppable(tx: Tx, actor: Actor, meeting_id: uuid.UUID) -> Meeting:
+    """The meeting `actor` may stop. A reader who may not stop it (a grantee) gets the same 404
+    as anyone else."""
+    meeting = readable(tx, actor, meeting_id)
+    if not can_stop(tx, actor, meeting):
         raise NO_SUCH_MEETING
     return meeting
 
 
 def view(tx: Tx, actor: Actor, meeting: Meeting) -> dict:
-    """The meeting as the API returns it to `actor`."""
+    """The meeting as the API returns it to `actor`, with what they may do with it
+    (`permissions`: `can_share`, `can_delete`, `can_stop` — who may, whatever the status) and, for
+    those who may share it, who it is shared with (`shared_with`; null for everyone else)."""
     snapshot = meeting.settings_snapshot or {}
     bot_name = str(snapshot.get("bot_name") or "")
+    allowed = permissions(tx, actor, meeting)
+    team_name = None
+    if meeting.team_id is not None:
+        team_name = tx.scalar(
+            select(Team.name).where(Team.id == meeting.team_id, Team.org_id == meeting.org_id)
+        )
     return {
         "id": str(meeting.id),
         "team_id": None if meeting.team_id is None else str(meeting.team_id),
+        "team": None if team_name is None else {"id": str(meeting.team_id), "name": team_name},
         "requested_by": str(meeting.requested_by),
+        "requested_by_name": tx.scalar(
+            select(User.display_name).where(User.id == meeting.requested_by)
+        ),
+        "permissions": allowed,
+        "shared_with": share_grants(tx, meeting) if allowed["can_share"] else None,
         "source": meeting.source,
         "platform": meeting.platform,
         "native_meeting_id": meeting.native_meeting_id,
@@ -584,7 +580,7 @@ class Meetings:
 
     def _stop_target(self, actor: Actor, meeting_id: uuid.UUID) -> tuple[Meeting, str | None]:
         with self._tx(actor) as tx:
-            meeting = readable(tx, actor, meeting_id)
+            meeting = stoppable(tx, actor, meeting_id)
             if meeting.status in TERMINAL_STATUSES:
                 raise MeetingError(409, "not_running", "the bot is no longer in this meeting")
             key = None
@@ -595,7 +591,7 @@ class Meetings:
     def _record_stop(self, actor: Actor, meeting_id: uuid.UUID, *, cancel: bool) -> dict:
         now = self.clock()
         with self._tx(actor) as tx:
-            meeting = readable(tx, actor, meeting_id)
+            meeting = stoppable(tx, actor, meeting_id)
             if cancel and meeting.status not in TERMINAL_STATUSES:
                 meeting.status = "cancelled"
                 meeting.failure_reason = None
@@ -661,6 +657,7 @@ def _fail(meeting: Meeting, reason: str, now: datetime) -> None:
 
 __all__ = [
     "Actor",
+    "can_read",
     "canary_actor",
     "canary_org_id",
     "JoinResult",
@@ -669,5 +666,7 @@ __all__ = [
     "join_url_key",
     "link_platform",
     "recently_removed",
+    "readable",
     "redact_url",
+    "stoppable",
 ]
