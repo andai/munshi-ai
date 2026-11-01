@@ -2,7 +2,7 @@
 //
 // 1. Refuse to start while anything listens on the stack's host ports (the dev stack uses the same
 //    ports): "stop the dev stack (make -C andai down) before running e2e".
-// 2. Rebuild the andai-core, andai-portal and mock-bot images from this tree (E2E_SKIP_BUILD=1
+// 2. Rebuild the andai-core, andai-worker, andai-portal and mock-bot images from this tree (E2E_SKIP_BUILD=1
 //    skips it when iterating on specs only), tagged with the env file's IMAGE_TAG, so a test tag
 //    never moves the images another stack on this machine runs.
 // 3. Start the whole stack as compose project andai-e2e (`make up`: db-init and db-migrate run as
@@ -99,7 +99,7 @@ export default async function globalSetup(_config: FullConfig) {
   }
 
   const version = imageTag(env);
-  if (process.env.E2E_SKIP_BUILD !== "1") make(["images", "ONLY=andai-core,andai-portal,mock-bot", `VERSION=${version}`]);
+  if (process.env.E2E_SKIP_BUILD !== "1") make(["images", "ONLY=andai-core,andai-worker,andai-portal,mock-bot", `VERSION=${version}`]);
   let owner: Awaited<ReturnType<typeof bootstrapOwner>>;
   try {
     make(["up", `ENV_FILE=${env}`, `PROJECT=${PROJECT}`, `VERSION=${version}`], { env: { BROWSER_IMAGE: MOCK_BOT_IMAGE } });

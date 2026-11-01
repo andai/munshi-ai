@@ -31,6 +31,8 @@ type Options = {
   body?: unknown;
   /** Follow 401/403 answers to the page they call for (default true). */
   redirect?: boolean;
+  /** Cancels the request; the call then rejects with the signal's AbortError. */
+  signal?: AbortSignal;
 };
 
 const STEP_PAGES: Record<NextStep, string> = {
@@ -66,7 +68,7 @@ function nextStepOf(payload: unknown): NextStep | null {
 
 export async function api<T = unknown>(path: string, options: Options = {}): Promise<T> {
   const method = options.method ?? "GET";
-  const init: RequestInit = { method, credentials: "same-origin", cache: "no-store", headers: {} };
+  const init: RequestInit = { method, credentials: "same-origin", cache: "no-store", headers: {}, signal: options.signal };
   if (options.body !== undefined) {
     init.headers = { "content-type": "application/json" };
     init.body = JSON.stringify(options.body);
@@ -74,7 +76,8 @@ export async function api<T = unknown>(path: string, options: Options = {}): Pro
   let response: Response;
   try {
     response = await fetch(`/api/v1${path}`, init);
-  } catch {
+  } catch (err) {
+    if (options.signal?.aborted) throw err;
     throw new ApiError(0, "the network is unavailable; check your connection", null, null);
   }
   const text = await response.text();

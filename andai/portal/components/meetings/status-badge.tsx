@@ -2,7 +2,8 @@ import { STATUS, clockTime, statusLabel, type Tone } from "@/components/meetings
 import type { MeetingStatus } from "@/lib/meetings";
 import { cn } from "@/lib/utils";
 
-// The meeting's status as a pill (a pulsing dot while it records) and when it last changed.
+// The meeting's status as a pill (a pulsing dot while it records) and when it last changed;
+// `StatusPill` is the same pill for a row in a list.
 
 const TONE: Record<Tone, { pill: string; dot: string }> = {
   neutral: { pill: "bg-muted text-muted-foreground", dot: "bg-muted-foreground" },
@@ -38,5 +39,20 @@ export function StatusBadge({ status, changedAt }: { status: MeetingStatus; chan
         </span>
       )}
     </div>
+  );
+}
+
+/** A meeting's status as a pill in a list row (no live region: lists do not announce each row). */
+export function StatusPill({ status, className }: { status: MeetingStatus; className?: string }) {
+  const tone = TONE[STATUS[status]?.tone ?? "neutral"];
+  return (
+    <span
+      data-testid="status-pill"
+      data-status={status}
+      className={cn("inline-flex h-6 w-fit items-center gap-1.5 rounded-full px-2.5 text-xs font-medium whitespace-nowrap", tone.pill, className)}
+    >
+      <span aria-hidden="true" className={cn("inline-flex size-1.5 rounded-full", tone.dot, status === "recording" && "motion-safe:animate-pulse")} />
+      {statusLabel(status)}
+    </span>
   );
 }
