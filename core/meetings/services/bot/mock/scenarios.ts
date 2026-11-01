@@ -82,8 +82,8 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'evicted':         { name: 'evicted',         join: 'admitted', segments: 1, evictAfterMs: 1500, disclosure: 'chat' },
   // At human pace, for watching a meeting in a browser: 12 s in the lobby, then 8 lines 1.5 s apart.
   'paced':           { name: 'paced',           join: 'admitted', joinDelayMs: 12000, segments: 8, segmentGapMs: 1500, endAfterMs: 2000, disclosure: 'chat' },
-  // A Hindi/Hinglish meeting: the fixed HINDI_LINES, then the same end as emit-n-segments.
-  'hindi-lines':     { name: 'hindi-lines',     join: 'admitted', segments: HINDI_LINES.length, lines: HINDI_LINES, endAfterMs: 1500 },
+  // A Hindi/Hinglish meeting: the fixed HINDI_LINES and one recording chunk, then the same end as emit-n-segments.
+  'hindi-lines':     { name: 'hindi-lines',     join: 'admitted', segments: HINDI_LINES.length, lines: HINDI_LINES, recording: true, endAfterMs: 1500 },
 };
 
 export function getScenario(name: string | undefined): Scenario {

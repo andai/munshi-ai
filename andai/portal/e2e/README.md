@@ -16,9 +16,17 @@ before and after a share is revoked, keyword search with snippets including a Ro
 Devanagari speech, and the first-list time with 1,000 meetings, desktop only) and `meeting-detail`
 (a finished meeting's transcript in both scripts, attendees, minutes whose evidence links scroll to
 and highlight the cited line, a search result opening at its line, sharing with a team and removing
-it as requester and team lead, what a grantee sees, and deletion). The dashboard and meeting-detail
+it as requester and team lead, what a grantee sees, and deletion) and `portal-core` (the whole chain
+on one meeting in an organisation of its own: the join form sends the mock bot to a Hinglish meeting
+(`mock=hindi-lines`), andai-worker stores the transcript, a Roman query finds the Devanagari speech,
+both scripts, a team share and its removal, seeded minutes' evidence, and a delete purged from
+andai's tables and from storage within 15 minutes; `E2E_CHAIN_LOG=/abs/file` appends each run's
+timings and counts as one JSON line). The dashboard and meeting-detail
 specs seed their meetings, shares, transcript segments, attendees and minutes in an organisation of
-their own, written inside the stack's andai-core container (`seedMeetings`, sample names only). Meeting links are
+their own, written inside the stack's andai-core container (`seedMeetings`, `seedMinutes`, sample
+names only); `meetingRows` and `recordingObjectCount` read a meeting's rows (psql in the postgres
+container) and the objects under an org's recordings prefix (`find` in the storage container), with no
+credential leaving either container. Meeting links are
 Zoom-shaped with a unique number per test and `mock=<scenario>` for the mock bot; the second
 organisation is created inside the stack's andai-core container (`docker exec`), since bootstrap
 runs once. Projects `desktop` (1440×900) and `mobile` (390×844).
