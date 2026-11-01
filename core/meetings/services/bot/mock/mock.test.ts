@@ -56,7 +56,7 @@ const EXPECT: Record<ScenarioName, Expect> = {
   'normal':          { status: 'completed', reason: 'stopped', recorded: 1 },
   'emit-n-segments': { status: 'completed', reason: 'stopped', minSegs: 12 },
   'paced':           { status: 'completed', reason: 'stopped', minSegs: 8 },
-  'hindi-lines':     { status: 'completed', reason: 'stopped', minSegs: 6 },
+  'hindi-lines':     { status: 'completed', reason: 'stopped', minSegs: 6, recorded: 1 },
   'slow-join':       { status: 'completed', reason: 'stopped' },
   'recording':       { status: 'completed', reason: 'stopped', recorded: 1 },
   'speak-ack':       { status: 'completed', reason: 'stopped', speakAfter: 4 },

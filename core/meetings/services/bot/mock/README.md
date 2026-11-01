@@ -23,8 +23,8 @@ hindi-lines` — one per backend behaviour (lifecycle FSM · join-retry · attri
 max-bots-adjacent · recording receiver · acts round-trip · leave-when-alone · removal by a
 participant). Two more serve other checks: `paced` (12 s in the lobby, then 8 lines 1.5 s apart) is
 for watching a meeting in a browser, and `hindi-lines` (six fixed lines that mix Devanagari and
-Roman Hinglish, `HINDI_LINES`, then the same end as `emit-n-segments`) is for transcript
-normalisation and search. Selection, first match
+Roman Hinglish, `HINDI_LINES`, and one recording chunk, then the same end as `emit-n-segments`) is
+for transcript normalisation, search and deletion. Selection, first match
 wins: env `MOCK_SCENARIO`, a bot name `mock:<scenario>`, a `mock=<scenario>` query parameter on the
 meeting URL. `normal` also
 reports a `chat` disclosure outcome when the invocation carries a `disclosure` (the real

@@ -1,8 +1,9 @@
 // Shared e2e helpers: the Mailpit reader, a TOTP generator that never reuses a time step, unique
 // test addresses, account setup through the API (a second organisation too), mock-bot meeting
-// links, status timing, seeded meetings (rows written inside the stack's andai-core container),
-// and a `test` whose pages are watched for unexpected console errors and requests that leave the
-// portal's origin.
+// links, status timing, seeded meetings and minutes (rows written inside the stack's andai-core
+// container), andai's row counts for one meeting and the object count under a storage prefix (for
+// the deletion purge), and a `test` whose pages are watched for unexpected console errors and
+// requests that leave the portal's origin.
 
 import {
   expect,
@@ -20,7 +21,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as OTPAuth from "otpauth";
 
-import { PROJECT, settings } from "./env";
+import { PROJECT, envFile, parseEnvFile, settings } from "./env";
 import { Mailpit } from "./mailpit";
 
 export const { portalOrigin, mailpit: mailpitUrl } = settings();
@@ -120,16 +121,20 @@ export async function enrollByApi(api: APIRequestContext): Promise<{ secret: str
   return { secret, codes: (await confirmed.json()).recovery_codes };
 }
 
-/** The e2e stack's andai-core container (only ever compose project andai-e2e). */
-function coreContainer(): string {
+/** A running container of the e2e stack's `service` (only ever compose project andai-e2e). */
+function serviceContainer(service: string): string {
   const container = execFileSync(
     "docker",
-    ["ps", "-q", "--filter", `label=com.docker.compose.project=${PROJECT}`, "--filter", "label=com.docker.compose.service=andai-core"],
+    ["ps", "-q", "--filter", `label=com.docker.compose.project=${PROJECT}`, "--filter", `label=com.docker.compose.service=${service}`],
     { encoding: "utf8" },
-  ).trim();
-  if (!container) throw new Error(`no andai-core container in compose project ${PROJECT}`);
+  )
+    .trim()
+    .split(/\s+/)[0];
+  if (!container) throw new Error(`no ${service} container in compose project ${PROJECT}`);
   return container;
 }
+
+const coreContainer = () => serviceContainer("andai-core");
 
 /**
  * A second organisation, made inside the stack's andai-core the way bootstrap makes the first (with
@@ -369,6 +374,118 @@ finally:
     engine.dispose()
 print(json.dumps(answer))
 `;
+
+/**
+ * Store a SPEC MomDocument (the next version) for a meeting that already has stored transcript
+ * lines, through andai's own `mom.seed_version`: two decisions, an assigned and an unassigned
+ * action item, one topic and no risks, citing the first, middle and last lines. Answers the
+ * meeting's segment ids in order.
+ */
+export function seedMinutes(orgId: string, meetingId: string): { segments: string[] } {
+  const output = execFileSync("docker", ["exec", "-i", coreContainer(), "python", "-c", MINUTES_SCRIPT], {
+    input: JSON.stringify({ org_id: orgId, meeting_id: meetingId }),
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  return JSON.parse(output.trim().split("\n").pop() ?? "{}");
+}
+
+const MINUTES_SCRIPT = `
+import json, sys, uuid
+from datetime import UTC, datetime, timedelta
+from sqlalchemy import select
+from andai_core.db.models import TranscriptSegment
+from andai_core.db.session import create_app_engine, transaction
+from andai_core.meetings.mom import seed_version
+from andai_core.settings import get_settings
+
+spec = json.load(sys.stdin)
+org_id, meeting_id = uuid.UUID(spec["org_id"]), uuid.UUID(spec["meeting_id"])
+now = datetime.now(UTC)
+engine = create_app_engine(settings=get_settings())
+try:
+    with transaction(engine, org_id=org_id) as tx:
+        ids = list(tx.scalars(select(TranscriptSegment.id).where(
+            TranscriptSegment.org_id == org_id, TranscriptSegment.meeting_id == meeting_id,
+        ).order_by(TranscriptSegment.seq)))
+        if not ids:
+            raise SystemExit("the meeting has no stored transcript lines to cite")
+        first, middle, last = ids[:1], ids[len(ids) // 2:len(ids) // 2 + 1], ids[-1:]
+        seed_version(tx, org_id, meeting_id, {
+            "templateId": "standard", "outputLanguage": "hinglish",
+            "summary": "Sample minutes: the deadline and the budget follow-up.",
+            "decisions": [
+                {"text": "Ship by Friday", "evidence": first},
+                {"text": "Confirm the budget on Monday", "evidence": last},
+            ],
+            "actionItems": [
+                {"id": str(uuid.uuid4()), "text": "Send the report", "owner": "Speaker A",
+                 "due": (now + timedelta(days=3)).date().isoformat(), "evidence": middle},
+                {"id": str(uuid.uuid4()), "text": "Confirm the budget", "owner": "unassigned", "evidence": last},
+            ],
+            "topics": [{"title": "Deadline", "evidence": first}],
+            "risks": [],
+            "llmProfileId": str(uuid.uuid4()), "model": "seed-model",
+            "generatedAt": now.isoformat(),
+        })
+finally:
+    engine.dispose()
+print(json.dumps({"segments": ids}))
+`;
+
+/** andai's tables that hold a meeting's content, with the count of its rows in each. */
+export type MeetingRows = {
+  meetings: number;
+  transcript_segments: number;
+  mom_documents: number;
+  meeting_shares: number;
+  consent_records: number;
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * How many rows andai holds for one meeting in each content table (all 0 once the purge is done),
+ * and the audit actions recorded against it (its shares' grants and revocations included), read as the database superuser with psql inside the
+ * stack's postgres container (it sees a deleted, not yet purged meeting, and the audit table the
+ * app role may only append to); no credential leaves the container.
+ */
+export function meetingRows(meetingId: string): { rows: MeetingRows; audit: string[] } {
+  if (!UUID_RE.test(meetingId)) throw new Error("not a meeting id");
+  const count = (table: string, column: string) => `(SELECT count(*) FROM ${table} WHERE ${column} = '${meetingId}')`;
+  const sql =
+    "SELECT json_build_object('rows', json_build_object(" +
+    `'meetings', ${count("meetings", "id")}, ` +
+    ["transcript_segments", "mom_documents", "meeting_shares", "consent_records"].map((t) => `'${t}', ${count(t, "meeting_id")}`).join(", ") +
+    `), 'audit', coalesce((SELECT json_agg(action ORDER BY at) FROM audit_events WHERE target = 'meeting:${meetingId}' OR target LIKE 'meeting:${meetingId} %'), '[]'::json))`;
+  const output = execFileSync(
+    "docker",
+    ["exec", "-i", serviceContainer("postgres"), "sh", "-c", 'psql -X -q -t -A -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d andai'],
+    { input: sql, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] },
+  );
+  return JSON.parse(output.trim());
+}
+
+// Where the stack's storage service (versitygw, POSIX backend) keeps every object as a file.
+const STORAGE_ROOT = "/srv/munshi-storage/data";
+
+/**
+ * How many objects the stack's storage holds under an organisation's recordings prefix
+ * (`org/<org id>/recordings/`), counted from the files of versitygw's POSIX backend inside the
+ * storage container, so no storage credential is used or printed; 0 once the prefix is gone.
+ */
+export function recordingObjectCount(orgId: string): number {
+  if (!UUID_RE.test(orgId)) throw new Error("not an org id");
+  const bucket = parseEnvFile(envFile()).MINIO_BUCKET || "munshi";
+  if (!/^[a-z0-9][a-z0-9.-]*$/.test(bucket)) throw new Error("unexpected bucket name");
+  const dir = `${STORAGE_ROOT}/${bucket}/org/${orgId}/recordings`;
+  const output = execFileSync(
+    "docker",
+    ["exec", serviceContainer("storage"), "sh", "-c", `[ -d "${dir}" ] && find "${dir}" -type f || true`],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  return output.split("\n").filter((line) => line.trim()).length;
+}
 
 // ─── meetings ───────────────────────────────────────────────────────────────────────────────────
 
