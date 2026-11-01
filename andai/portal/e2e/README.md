@@ -13,9 +13,12 @@ require-two-factor, admin reset), `meetings` (send the bot, live status and tran
 instructions, failures, polling when the stream drops, a colleague's meeting, another organisation's
 404) and `dashboard` (the meeting list's sections, filters and Load more, what a member may see
 before and after a share is revoked, keyword search with snippets including a Roman query for
-Devanagari speech, and the first-list time with 1,000 meetings, desktop only). The dashboard spec
-seeds its meetings, shares, transcript segments and minutes in an organisation of its own, written
-inside the stack's andai-core container (`seedMeetings`, sample names only). Meeting links are
+Devanagari speech, and the first-list time with 1,000 meetings, desktop only) and `meeting-detail`
+(a finished meeting's transcript in both scripts, attendees, minutes whose evidence links scroll to
+and highlight the cited line, a search result opening at its line, sharing with a team and removing
+it as requester and team lead, what a grantee sees, and deletion). The dashboard and meeting-detail
+specs seed their meetings, shares, transcript segments, attendees and minutes in an organisation of
+their own, written inside the stack's andai-core container (`seedMeetings`, sample names only). Meeting links are
 Zoom-shaped with a unique number per test and `mock=<scenario>` for the mock bot; the second
 organisation is created inside the stack's andai-core container (`docker exec`), since bootstrap
 runs once. Projects `desktop` (1440×900) and `mobile` (390×844).

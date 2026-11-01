@@ -1,6 +1,6 @@
 // Meetings through andai-core (same-origin /api/v1/meetings/* and /api/v1/search): list the
 // meetings the caller may open, search them, send the bot, read one meeting, stop it, read its
-// transcript, and follow it live.
+// transcript and minutes, follow it live, share it inside the org, and delete it.
 //
 // `listMeetings` and `searchMeetings` return andai-core's pages as they are: andai-core decides
 // which meetings a caller may see, so the portal never filters, merges or caches other people's
@@ -17,7 +17,7 @@
 //
 // The shapes are andai-core's; the portal adds no rules of its own.
 
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 
 export type Platform = "google_meet" | "teams" | "zoom";
 export type Language = "en" | "hi" | "hinglish";
@@ -53,10 +53,35 @@ export type Consent = {
   removed_at: string | null;
 };
 
+/** Whether andai holds its own copy of a finished meeting's transcript (`stored`) yet. */
+export type TranscriptState = "none" | "pending" | "stored" | "failed";
+
+/** Someone the platform listed for the meeting: a calendar invitee or a speaker. */
+export type Attendee = { name: string; source: "invite" | "speaker" };
+
+/** What the caller may do with the meeting (andai-core decides; the page only shows controls). */
+export type Permissions = { can_share: boolean; can_delete: boolean; can_stop: boolean };
+
+/** One grant of read access: a person or a team of the org. */
+export type Share = {
+  id: string;
+  grantee_type: "user" | "team";
+  grantee_id: string;
+  /** The person's or team's name; null when the team is gone. */
+  name: string | null;
+  granted_by: string;
+  created_at: string;
+};
+
 export type Meeting = {
   id: string;
   team_id: string | null;
+  team: TeamRef | null;
   requested_by: string;
+  requested_by_name: string | null;
+  permissions: Permissions;
+  /** Who it is shared with, for callers who may share it; null for everyone else. */
+  shared_with: Share[] | null;
   source: string;
   platform: Platform;
   native_meeting_id: string | null;
@@ -72,7 +97,12 @@ export type Meeting = {
   ended_at: string | null;
   created_at: string;
   updated_at: string;
+  title: string | null;
+  attendees: Attendee[];
+  transcript_state: TranscriptState;
 };
+
+export type Script = "latn" | "deva" | "mixed" | "other";
 
 export type Segment = {
   id: string;
@@ -84,6 +114,12 @@ export type Segment = {
   final: boolean;
   absolute_start: string | null;
   absolute_end: string | null;
+  /** Stored segments only (andai's own copy): the line exactly as said. */
+  text_raw?: string;
+  /** Stored segments only: the line in Roman Hinglish. */
+  text_canonical?: string;
+  /** Stored segments only: the script of `text_raw`. */
+  script?: Script;
 };
 
 /** One status as the live stream sends it; `at` is when andai-core saw the change. */
@@ -120,6 +156,85 @@ export function stopMeeting(id: string): Promise<Meeting> {
 export async function getTranscript(id: string): Promise<Segment[]> {
   const answer = await api<{ segments: Segment[] }>(`/meetings/${encodeURIComponent(id)}/transcript`);
   return answer.segments;
+}
+
+/**
+ * Delete the meeting's audio, transcript and minutes (202). andai-core hides it from every read at
+ * once and purges it within 15 minutes; 409 `meeting_live` while the bot is still in the meeting.
+ */
+export function deleteMeeting(id: string): Promise<{ id: string; purge_by: string }> {
+  return api(`/meetings/${encodeURIComponent(id)}`, { method: "DELETE", redirect: false });
+}
+
+// ─── minutes ───────────────────────────────────────────────────────────────────────────────────
+
+/** SPEC `MomDocument`; every `evidence` list names transcript segment ids. */
+export type MomDecision = { text: string; evidence: string[] };
+export type MomActionItem = {
+  id: string;
+  text: string;
+  /** A name, or "unassigned". */
+  owner: string;
+  ownerUserId?: string;
+  /** ISO date. */
+  due?: string;
+  evidence: string[];
+};
+export type MomTopic = { title: string; evidence: string[] };
+export type MomRisk = { text: string; evidence: string[] };
+
+export type MomDocument = {
+  meetingId: string;
+  version: number;
+  templateId: string;
+  outputLanguage: "en" | "hi" | "hinglish";
+  summary: string;
+  decisions: MomDecision[];
+  actionItems: MomActionItem[];
+  topics: MomTopic[];
+  risks: MomRisk[];
+  llmProfileId: string;
+  model: string;
+  generatedAt: string;
+  editedBy?: string;
+};
+
+export const UNASSIGNED = "unassigned";
+
+/** The latest minutes, or null when the meeting has none yet (404 `no_minutes`). */
+export async function getMinutes(id: string): Promise<MomDocument | null> {
+  try {
+    return await api<MomDocument>(`/meetings/${encodeURIComponent(id)}/mom`, { redirect: false });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+// ─── sharing ───────────────────────────────────────────────────────────────────────────────────
+
+/** The org's people (active members) and teams, names and ids only (`GET /org/directory`). */
+export type Directory = {
+  users: { id: string; name: string | null; team_ids: string[] }[];
+  teams: { id: string; name: string }[];
+};
+
+export function getDirectory(): Promise<Directory> {
+  return api<Directory>("/org/directory", { redirect: false });
+}
+
+export async function listShares(id: string): Promise<Share[]> {
+  const answer = await api<{ shares: Share[] }>(`/meetings/${encodeURIComponent(id)}/shares`, { redirect: false });
+  return answer.shares;
+}
+
+/** Share with a person or team of the org (the existing share when it is already shared). */
+export function grantShare(id: string, grantee: { grantee_type: "user" | "team"; grantee_id: string }): Promise<Share> {
+  return api<Share>(`/meetings/${encodeURIComponent(id)}/shares`, { method: "POST", body: grantee, redirect: false });
+}
+
+export async function revokeShare(id: string, shareId: string): Promise<void> {
+  await api(`/meetings/${encodeURIComponent(id)}/shares/${encodeURIComponent(shareId)}`, { method: "DELETE", redirect: false });
 }
 
 // ─── the list and search ───────────────────────────────────────────────────────────────────────

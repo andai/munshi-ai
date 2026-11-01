@@ -12,6 +12,7 @@
     --color-ink-bright: var(--ink-bright);
     --color-saffron: var(--saffron);
     --color-saffron-foreground: var(--saffron-foreground);
+    --color-saffron-ink: var(--saffron-ink);
     --color-success: var(--success);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -55,13 +56,15 @@
 
 /* munshi.ai brand: indigo ink (#3C3489 / #534AB7) with a saffron accent (#EF9F27).
    Saffron is a mark colour (bars, highlights, focus accents); body text on light surfaces stays
-   indigo or neutral because saffron on white is below 3:1. */
+   indigo or neutral because saffron on white is below 3:1; saffron-ink is the saffron family's
+   text colour (section labels), dark enough for 4.5:1 on cards. */
 :root {
     color-scheme: light;
     --ink: #3C3489;
     --ink-bright: #534AB7;
     --saffron: #EF9F27;
     --saffron-foreground: #2A1A00;
+    --saffron-ink: #8A4B00;
     --background: #FAFAFD;
     --foreground: #1B1934;
     --card: #FFFFFF;
@@ -103,6 +106,7 @@
     --ink-bright: #C3BEF7;
     --saffron: #F5AE45;
     --saffron-foreground: #2A1A00;
+    --saffron-ink: #F6BC62;
     --background: #121120;
     --foreground: #ECEBF7;
     --card: #1A192D;

@@ -203,8 +203,12 @@ export type SeedMeeting = {
   shares?: { type: "user" | "team"; id: string }[];
   /** Transcript lines, stored the way ingest stores them (raw, canonical, script, folded). */
   segments?: { speaker: string; text: string }[];
-  /** Store a SPEC MomDocument (version 1) citing the first segments. */
-  minutes?: boolean;
+  /** Store a SPEC MomDocument (version 1) citing the first segments; `"full"`: one with every
+   * section filled except risks, an unassigned action item, due dates, and evidence citing later
+   * lines too. */
+  minutes?: boolean | "full";
+  /** Attendees as ingest stores them (invitees, then speakers). */
+  attendees?: { name: string; source: "invite" | "speaker" }[];
 };
 
 /** Many look-alike past meetings ("<titlePrefix> 0001" …), one per `stepMin` back from now. */
@@ -275,6 +279,26 @@ def minutes_body(evidence):
         "generatedAt": now.isoformat(),
     }
 
+def full_minutes_body(evidence):
+    last, middle = evidence[-1:], evidence[len(evidence) // 2:len(evidence) // 2 + 1]
+    return {
+        "templateId": "standard", "outputLanguage": "hinglish",
+        "summary": "Sample review of the dispatch plan and the vendor list.",
+        "decisions": [
+            {"text": "Night shift starts next week", "evidence": evidence[:1]},
+            {"text": "Vendor list goes out on Friday", "evidence": last},
+        ],
+        "actionItems": [
+            {"id": str(uuid.uuid4()), "text": "Share the vendor list", "owner": "Sample Speaker",
+             "due": (now + timedelta(days=3)).date().isoformat(), "evidence": middle},
+            {"id": str(uuid.uuid4()), "text": "Extend the transit insurance", "owner": "unassigned", "evidence": last},
+        ],
+        "topics": [{"title": "Dispatch", "evidence": evidence[:1]}],
+        "risks": [],
+        "llmProfileId": str(uuid.uuid4()), "model": "seed-model",
+        "generatedAt": now.isoformat(),
+    }
+
 engine = create_app_engine(settings=get_settings())
 answer = {"meetings": {}, "bulk": 0}
 try:
@@ -291,6 +315,7 @@ try:
                 settings_snapshot={"bot_name": "munshi.ai (recording)"},
                 started_at=started, ended_at=ended,
                 transcript_state="stored" if status in TERMINAL else "none",
+                attendees=m.get("attendees") or [],
                 created_at=started or now,
             )
             set_title(tx, meeting, m.get("title"))
@@ -313,7 +338,8 @@ try:
             if m.get("minutes"):
                 if not ids:
                     raise SystemExit(f"{m['key']}: minutes need transcript segments to cite")
-                seed_version(tx, org_id, meeting_id, minutes_body(ids))
+                body = full_minutes_body(ids) if m["minutes"] == "full" else minutes_body(ids)
+                seed_version(tx, org_id, meeting_id, body)
             answer["meetings"][m["key"]] = {"id": str(meeting_id), "segments": ids}
         for b in spec["bulk"]:
             rows, shares = [], []

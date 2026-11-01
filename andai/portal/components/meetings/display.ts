@@ -175,3 +175,30 @@ export function durationText(seconds: number | null): string {
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
+
+// ─── the meeting page ───────────────────────────────────────────────────────────────────────────
+
+/** Up to two initials of a name ("Priya Raghavan" → "PR"); "?" when it has no letters. */
+export function initials(name: string): string {
+  const words = name.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const letters = words.slice(0, 2).map((word) => Array.from(word)[0].toUpperCase());
+  return letters.join("") || "?";
+}
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+/** "Fri, 23 Oct 2026 · 11:00–11:38" from a meeting's start and end (either may be missing). */
+export function meetingWhen(start: string | null, end: string | null): string {
+  const from = parsed(start);
+  if (!from) return "";
+  const to = parsed(end);
+  const times = to ? `${shortTimeFormat.format(from)}–${shortTimeFormat.format(to)}` : shortTimeFormat.format(from);
+  return `${dateFormat.format(from)} · ${times}`;
+}
+
+/** An action item's due date (ISO date, no time) as "3 Nov". */
+export function dueText(due: string | undefined): string {
+  if (!due) return "";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(due) ? new Date(`${due}T00:00:00`) : null;
+  return date && !Number.isNaN(date.getTime()) ? dayFormat.format(date) : due;
+}

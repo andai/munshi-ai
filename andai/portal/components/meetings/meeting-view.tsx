@@ -1,20 +1,33 @@
 "use client";
 
-import { ArrowLeft, Square, Video } from "lucide-react";
+import { ArrowLeft, Share2, Square, Trash2, Video } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import MeetingNotFound from "@/app/(app)/meetings/[id]/not-found";
 import { FormAlert } from "@/components/forms/form-alert";
 import { AdmitInstructions } from "@/components/meetings/admit-instructions";
+import { Attendees } from "@/components/meetings/attendees";
 import { ConsentNote } from "@/components/meetings/consent-note";
-import { LANGUAGE_NAME, PLATFORM_NAME, endText, linkHost } from "@/components/meetings/display";
+import { DeleteDialog } from "@/components/meetings/delete-dialog";
+import { LANGUAGE_NAME, PLATFORM_NAME, endText, linkHost, meetingWhen } from "@/components/meetings/display";
 import { FailurePanel } from "@/components/meetings/failure-panel";
 import { LiveTranscript } from "@/components/meetings/live-transcript";
+import { MinutesView } from "@/components/meetings/minutes-view";
+import { ShareDialog } from "@/components/meetings/share-dialog";
 import { StatusBadge } from "@/components/meetings/status-badge";
+import {
+  TranscriptView,
+  segmentAnchor,
+  segmentFromHash,
+  type ScriptChoice,
+  type SegmentTarget,
+} from "@/components/meetings/transcript-view";
 import { Button } from "@/components/ui/button";
 import { ApiError, sentence } from "@/lib/api";
 import {
   getMeeting,
+  getMinutes,
   getTranscript,
   isTerminal,
   mergeSegments,
@@ -22,34 +35,31 @@ import {
   subscribeLive,
   type LiveMode,
   type Meeting,
+  type MomDocument,
   type Segment,
   type StatusUpdate,
 } from "@/lib/meetings";
+import { useSession } from "@/lib/session";
 
-// One meeting, as andai-core reports it: status and when it changed, why it failed, how to admit
-// the bot while it waits, the recording notice, and the transcript as it arrives (live stream,
-// polling when the stream drops). A meeting this account may not read does not exist here (404).
+// One meeting, as andai-core reports it. While the bot is in it: status and when it changed, why it
+// failed, how to admit the bot while it waits, the recording notice, and the transcript as it
+// arrives (live stream, polling when the stream drops). Once it has ended: the transcript andai
+// stored (original script, or Roman Hinglish), the attendees and, where they exist, the minutes,
+// whose evidence links show the line they cite. Share, Delete and Stop appear for whoever
+// andai-core's `permissions` allow. A meeting this account may not read does not exist here (404),
+// and neither does one it has just deleted.
 
 const FINAL_READ_DELAY_MS = 3_000;
+// After the end, andai-worker stores the transcript within seconds; the page re-reads the meeting
+// until it has (for at most STORE_POLLS × STORE_POLL_MS, after which a reload shows it).
+const STORE_POLL_MS = 3_000;
+const STORE_POLLS = 40;
 
 type Loaded =
   | { state: "loading" }
   | { state: "missing" }
   | { state: "error"; message: string }
   | { state: "ready"; meeting: Meeting };
-
-function NotFound() {
-  return (
-    <section data-testid="meeting-not-found" className="mx-auto grid max-w-md justify-items-center gap-2 py-16 text-center">
-      <p className="text-sm font-medium text-muted-foreground">404</p>
-      <h1 className="text-2xl font-semibold tracking-tight">Meeting not found</h1>
-      <p className="text-sm text-muted-foreground">This meeting does not exist, or it is not shared with you.</p>
-      <Button asChild variant="secondary" className="mt-4">
-        <Link href="/">Back to meetings</Link>
-      </Button>
-    </section>
-  );
-}
 
 function Header({ meeting }: { meeting: Meeting }) {
   const platform = PLATFORM_NAME[meeting.platform] ?? meeting.platform;
@@ -61,8 +71,8 @@ function Header({ meeting }: { meeting: Meeting }) {
         <Video className="size-5" />
       </span>
       <div className="grid min-w-0 gap-0.5">
-        <h1 className="text-2xl font-semibold tracking-tight" data-testid="meeting-title">
-          {platform} meeting
+        <h1 className="text-2xl font-semibold tracking-tight break-words" data-testid="meeting-title">
+          {meeting.title?.trim() || `${platform} meeting`}
         </h1>
         <p className="truncate text-sm text-muted-foreground" data-testid="meeting-host">
           {[host, language].filter(Boolean).join(" · ")}
@@ -72,13 +82,45 @@ function Header({ meeting }: { meeting: Meeting }) {
   );
 }
 
+function Meta({ meeting }: { meeting: Meeting }) {
+  const when = meetingWhen(meeting.started_at ?? meeting.created_at, meeting.ended_at);
+  const shared = (meeting.shared_with ?? []).map((s) => s.name).filter(Boolean);
+  const parts = [
+    when,
+    meeting.team?.name,
+    meeting.requested_by_name ? `Added by ${meeting.requested_by_name}` : null,
+    shared.length > 0 ? `Shared with ${shared.join(", ")}` : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return (
+    <p className="flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted-foreground" data-testid="meeting-meta">
+      {parts.map((part, index) => (
+        <span key={index} className="inline-flex min-w-0 gap-2 [overflow-wrap:anywhere]">
+          {index > 0 && <span aria-hidden="true">·</span>}
+          {part}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function MeetingView({ id }: { id: string }) {
+  const { me } = useSession();
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
   const [segments, setSegments] = useState<Segment[]>([]);
+  const [minutes, setMinutes] = useState<MomDocument | null>(null);
+  // Whether the stored transcript and the minutes have both been read: the layout is final, so a
+  // line can be scrolled to without the minutes arriving above it and pushing it away.
+  const [settled, setSettled] = useState(false);
   const [mode, setMode] = useState<LiveMode>("live");
   const [changedAt, setChangedAt] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
+  // Kept here, not in the transcript, so the choice survives the live view giving way to the stored one.
+  const [script, setScript] = useState<ScriptChoice>("original");
+  const [target, setTarget] = useState<SegmentTarget | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   // The newest status the live stream (or a poll) reported. The stored meeting can trail the
   // stream by a reconcile cycle, so a re-read takes everything from it except these fields.
   const latest = useRef<StatusUpdate | null>(null);
@@ -95,11 +137,11 @@ export function MeetingView({ id }: { id: string }) {
     };
   }, []);
 
-  // After a status change: the consent record and times that came with it.
+  // After a status or share change: the consent record, times and shares that came with it.
   const refresh = useCallback(async () => {
     try {
       const fresh = await getMeeting(id);
-      setLoaded({ state: "ready", meeting: withLatestStatus(fresh) });
+      setLoaded((current) => (current.state === "ready" ? { state: "ready", meeting: withLatestStatus(fresh) } : current));
     } catch {
       // the next status or poll brings it
     }
@@ -126,6 +168,23 @@ export function MeetingView({ id }: { id: string }) {
     };
   }, [id]);
 
+  // The line the URL names (`#seg-<id>`, e.g. from a search result), now and whenever it changes.
+  useEffect(() => {
+    const fromHash = () => {
+      const segment = segmentFromHash(window.location.hash);
+      if (segment) setTarget((current) => ({ id: segment, n: (current?.n ?? 0) + 1 }));
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  // An evidence link: name the line in the URL (without a new history entry) and show it.
+  const showSegment = useCallback((segment: string) => {
+    window.history.replaceState(window.history.state, "", `#${segmentAnchor(segment)}`);
+    setTarget((current) => ({ id: segment, n: (current?.n ?? 0) + 1 }));
+  }, []);
+
   // Follow the meeting until it ends (a finished meeting needs no stream).
   const follow = loaded.state === "ready" && !isTerminal(loaded.meeting.status);
   useEffect(() => {
@@ -139,22 +198,26 @@ export function MeetingView({ id }: { id: string }) {
       },
       onSegments: setSegments,
       // A poll's meeting is the source of its own status (the poll reports it as onStatus too).
-      onMeeting: (fresh) => setLoaded({ state: "ready", meeting: fresh }),
+      onMeeting: (fresh) => setLoaded((current) => (current.state === "ready" ? { state: "ready", meeting: fresh } : current)),
       onMode: setMode,
     });
     return stop;
   }, [follow, id, refresh, withLatestStatus]);
 
-  // Once the meeting has ended: the stored transcript, now and once more a little later, merged by id
-  // (the platform can deliver a meeting's last lines after its final status).
   const ended = loaded.state === "ready" && isTerminal(loaded.meeting.status);
+  const transcriptState = loaded.state === "ready" ? loaded.meeting.transcript_state : null;
+  const stored = ended && transcriptState === "stored";
+  const storing = ended && (transcriptState === "none" || transcriptState === "pending");
+
+  // Ended, not stored by andai yet: the platform's transcript, now and once more a little later,
+  // merged by id (the platform can deliver a meeting's last lines after its final status).
   useEffect(() => {
-    if (!ended) return;
+    if (!ended || stored) return;
     let active = true;
     const read = async () => {
       try {
-        const stored = await getTranscript(id);
-        if (active) setSegments((current) => mergeSegments(current, stored));
+        const platform = await getTranscript(id);
+        if (active) setSegments((current) => mergeSegments(current, platform));
       } catch {
         // what is on screen stays
       }
@@ -165,7 +228,58 @@ export function MeetingView({ id }: { id: string }) {
       active = false;
       clearTimeout(again);
     };
-  }, [ended, id]);
+  }, [ended, stored, id]);
+
+  // ...and the meeting again until andai has stored its transcript (or gives up).
+  useEffect(() => {
+    if (!storing) return;
+    let active = true;
+    let polls = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      polls += 1;
+      try {
+        const fresh = await getMeeting(id);
+        if (!active) return;
+        setLoaded((current) => (current.state === "ready" ? { state: "ready", meeting: fresh } : current));
+        if (fresh.transcript_state !== "none" && fresh.transcript_state !== "pending") return;
+      } catch (err) {
+        if (!active) return;
+        if (err instanceof ApiError && err.status === 404) {
+          setLoaded({ state: "missing" });
+          return;
+        }
+      }
+      if (active && polls < STORE_POLLS) timer = setTimeout(() => void poll(), STORE_POLL_MS);
+    };
+    timer = setTimeout(() => void poll(), STORE_POLL_MS);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [storing, id]);
+
+  // Stored: andai's copy replaces whatever was on screen (same ids, with both scripts), and the
+  // minutes, which cite its lines, are read with it.
+  useEffect(() => {
+    if (!stored) return;
+    let active = true;
+    setSettled(false);
+    void Promise.allSettled([
+      getTranscript(id).then((copy) => {
+        if (active) setSegments(copy);
+      }),
+      getMinutes(id).then((doc) => {
+        if (active) setMinutes(doc);
+      }),
+    ]).then(() => {
+      // A failed read leaves what is on screen (no minutes shown; a reload tries again).
+      if (active) setSettled(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [stored, id]);
 
   async function onStop() {
     setStopping(true);
@@ -188,11 +302,12 @@ export function MeetingView({ id }: { id: string }) {
       </p>
     );
   }
-  if (loaded.state === "missing") return <NotFound />;
+  if (loaded.state === "missing") return <MeetingNotFound />;
   if (loaded.state === "error") return <FormAlert>{loaded.message}</FormAlert>;
 
   const m = loaded.meeting;
   const ending = endText(m.end_reason);
+  const allowed = m.permissions;
   return (
     <div className="grid gap-6" data-testid="meeting-page" data-meeting-id={m.id}>
       <Link
@@ -204,13 +319,28 @@ export function MeetingView({ id }: { id: string }) {
       </Link>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <Header meeting={m} />
-        {!ended && (
-          <Button type="button" variant="outline" onClick={() => void onStop()} disabled={stopping} aria-busy={stopping}>
-            <Square aria-hidden="true" />
-            {stopping ? "Stopping…" : "Stop the bot"}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {allowed?.can_share && (
+            <Button type="button" variant="outline" size="lg" onClick={() => setShareOpen(true)}>
+              <Share2 aria-hidden="true" />
+              Share
+            </Button>
+          )}
+          {ended && allowed?.can_delete && (
+            <Button type="button" variant="ghost" size="lg" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}>
+              <Trash2 aria-hidden="true" />
+              Delete
+            </Button>
+          )}
+          {!ended && allowed?.can_stop !== false && (
+            <Button type="button" variant="outline" size="lg" onClick={() => void onStop()} disabled={stopping} aria-busy={stopping}>
+              <Square aria-hidden="true" />
+              {stopping ? "Stopping…" : "Stop the bot"}
+            </Button>
+          )}
+        </div>
       </div>
+      <Meta meeting={m} />
       <StatusBadge status={m.status} changedAt={changedAt ?? m.updated_at} />
       {stopError && <FormAlert>{stopError}</FormAlert>}
       {m.status === "failed" && <FailurePanel reason={m.failure_reason} />}
@@ -220,10 +350,45 @@ export function MeetingView({ id }: { id: string }) {
           {ending}
         </p>
       )}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-        <LiveTranscript segments={segments} mode={ended ? "ended" : mode} waiting={!ended} />
-        <ConsentNote botName={m.bot_name} consent={m.consent} />
-      </div>
+      {ended ? (
+        <>
+          {stored && <Attendees attendees={m.attendees ?? []} />}
+          <div className="flex flex-wrap items-start gap-6">
+            {minutes && <MinutesView minutes={minutes} segments={segments} onEvidence={showSegment} />}
+            <TranscriptView segments={segments} script={script} onScriptChange={setScript} target={target} ready={stored ? settled : !storing} preparing={storing} />
+          </div>
+          <div className="max-w-xl">
+            <ConsentNote botName={m.bot_name} consent={m.consent} />
+          </div>
+        </>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+          <LiveTranscript segments={segments} mode={mode} waiting />
+          <ConsentNote botName={m.bot_name} consent={m.consent} />
+        </div>
+      )}
+      {allowed?.can_share && (
+        <ShareDialog
+          meetingId={m.id}
+          orgName={me.org.name}
+          hidden={[me.user.id, m.requested_by]}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          onChanged={() => void refresh()}
+        />
+      )}
+      {allowed?.can_delete && (
+        <DeleteDialog
+          meetingId={m.id}
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          onDeleted={() => {
+            setMinutes(null);
+            setSegments([]);
+            setLoaded({ state: "missing" });
+          }}
+        />
+      )}
     </div>
   );
 }
