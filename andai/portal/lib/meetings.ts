@@ -1,5 +1,10 @@
-// Meetings through andai-core (same-origin /api/v1/meetings/*): send the bot, read one meeting,
-// stop it, read its transcript, and follow it live.
+// Meetings through andai-core (same-origin /api/v1/meetings/* and /api/v1/search): list the
+// meetings the caller may open, search them, send the bot, read one meeting, stop it, read its
+// transcript, and follow it live.
+//
+// `listMeetings` and `searchMeetings` return andai-core's pages as they are: andai-core decides
+// which meetings a caller may see, so the portal never filters, merges or caches other people's
+// meetings. Their cursors are opaque; the next page comes from passing one back unchanged.
 //
 // `subscribeLive` reads the transcript so far and opens the meeting's event stream (EventSource on
 // /live) for what follows. When the stream fails — andai-core's `error` event, a dropped
@@ -115,6 +120,93 @@ export function stopMeeting(id: string): Promise<Meeting> {
 export async function getTranscript(id: string): Promise<Segment[]> {
   const answer = await api<{ segments: Segment[] }>(`/meetings/${encodeURIComponent(id)}/transcript`);
   return answer.segments;
+}
+
+// ─── the list and search ───────────────────────────────────────────────────────────────────────
+
+export type Section = "live" | "upcoming" | "past";
+export const SECTIONS: readonly Section[] = ["live", "upcoming", "past"];
+
+/** `all`, `mine` (requested by me), `shared` (reaching me through a share) or `team:<id>`. */
+export type ListFilter = "all" | "mine" | "shared" | `team:${string}`;
+
+export type TeamRef = { id: string; name: string | null };
+
+/** One row of the dashboard list (`GET /meetings`). */
+export type MeetingItem = {
+  id: string;
+  title: string | null;
+  platform: Platform;
+  status: MeetingStatus;
+  failure_reason: JoinFailureReason | null;
+  end_reason: string | null;
+  team: TeamRef | null;
+  requested_by: string;
+  requested_by_name: string;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  duration_s: number | null;
+  shared: boolean;
+  has_minutes: boolean;
+};
+
+export type MeetingPage = { items: MeetingItem[]; next_cursor: string | null };
+export type MeetingSections = Partial<Record<Section, MeetingPage>>;
+
+export const LIST_LIMIT = 25;
+
+/**
+ * One page of each section (no `section`), or of one section. With `cursor` (a `next_cursor` from
+ * an earlier page) the answer is the page after it; the cursor carries its own section and filter.
+ */
+export async function listMeetings(
+  options: { section?: Section; filter?: ListFilter; cursor?: string | null; limit?: number; signal?: AbortSignal } = {},
+): Promise<MeetingSections> {
+  const params = new URLSearchParams({ limit: String(options.limit ?? LIST_LIMIT) });
+  if (options.section) params.set("section", options.section);
+  if (options.cursor) params.set("cursor", options.cursor);
+  else if (options.filter && options.filter !== "all") params.set("filter", options.filter);
+  const answer = await api<{ sections: MeetingSections }>(`/meetings?${params}`, { signal: options.signal });
+  return answer.sections;
+}
+
+/** `[start, end)` character offsets of the matched words in a hit's text. */
+export type Mark = [number, number];
+
+export type SearchHit =
+  | { source: "title" | "minutes"; text: string; marks: Mark[] }
+  | {
+      source: "transcript";
+      segment_id: string;
+      speaker: string;
+      start: number | null;
+      /** The segment in Roman Hinglish (what search matched). */
+      text: string;
+      marks: Mark[];
+      /** The segment as it was said (its original script). */
+      text_raw: string;
+      raw_marks: Mark[];
+    };
+
+export type SearchResult = {
+  id: string;
+  title: string | null;
+  platform: Platform;
+  status: MeetingStatus;
+  team: TeamRef | null;
+  started_at: string | null;
+  created_at: string;
+  hits: SearchHit[];
+};
+
+export type SearchPage = { query: string; total: number; results: SearchResult[]; next_cursor: string | null };
+
+/** Meetings the caller may open whose title, transcript or minutes match `q`, best first. */
+export function searchMeetings(q: string, options: { cursor?: string | null; signal?: AbortSignal } = {}): Promise<SearchPage> {
+  const params = new URLSearchParams({ q });
+  if (options.cursor) params.set("cursor", options.cursor);
+  return api<SearchPage>(`/search?${params}`, { signal: options.signal });
 }
 
 // ─── segments ──────────────────────────────────────────────────────────────────────────────────

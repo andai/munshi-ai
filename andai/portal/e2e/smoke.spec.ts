@@ -5,7 +5,8 @@ test("the owner signs in to the portal shell and signs out", async ({ page }) =>
   await signIn(page, account);
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "Meetings", exact: true })).toBeVisible();
-  await expect(page.getByTestId("dashboard-empty")).toContainText("No meetings yet");
+  // The org's meetings (other specs add some), or the empty dashboard when there are none yet.
+  await expect(page.getByTestId("meeting-list").or(page.getByTestId("dashboard-empty"))).toBeVisible();
   await expectNoOverflow(page);
   const cookie = await sessionCookie(page);
   expect(await sessionStatus(cookie)).toBe(200);

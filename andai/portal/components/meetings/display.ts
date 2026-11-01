@@ -1,7 +1,7 @@
 // Words for andai-core's meeting values. The portal decides nothing here: every map is keyed by an
 // andai enum, and a value this file does not know is shown in a neutral form rather than guessed.
 
-import type { JoinFailureReason, Language, MeetingStatus, Platform } from "@/lib/meetings";
+import type { JoinFailureReason, Language, MeetingStatus, Platform, Section } from "@/lib/meetings";
 
 export const PLATFORM_NAME: Record<Platform, string> = {
   google_meet: "Google Meet",
@@ -120,4 +120,58 @@ export function offset(seconds: number | null): string {
   const m = Math.floor((total % 3600) / 60);
   const s = String(total % 60).padStart(2, "0");
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${String(m).padStart(2, "0")}:${s}`;
+}
+
+// ─── the dashboard list ─────────────────────────────────────────────────────────────────────────
+
+export const SECTION_COPY: Record<Section, { title: string; empty: string }> = {
+  live: { title: "Live now", empty: "No meeting is being recorded right now." },
+  upcoming: { title: "Upcoming", empty: "Nothing scheduled" },
+  past: { title: "Past", empty: "No past meetings yet." },
+};
+
+const dayFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+const whenFormat = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function parsed(iso: string | null): Date | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** A meeting's title, or "<Platform> meeting · <date>" when it has none. */
+export function meetingTitle(title: string | null, platform: string, at: string | null): string {
+  if (title?.trim()) return title.trim();
+  const name = PLATFORM_NAME[platform as Platform] ?? "Online";
+  const date = parsed(at);
+  return date ? `${name} meeting · ${dayFormat.format(date)}` : `${name} meeting`;
+}
+
+/** Weekday, date and time, e.g. "Fri, 23 Oct, 11:00". */
+export function whenText(iso: string | null): string {
+  const date = parsed(iso);
+  return date ? whenFormat.format(date) : "";
+}
+
+const shortTimeFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+
+/** Hours and minutes, e.g. "10:30". */
+export function shortTime(iso: string | null): string {
+  const date = parsed(iso);
+  return date ? shortTimeFormat.format(date) : "";
+}
+
+/** A duration in seconds as "38 min" or "1 h 04 min"; under a minute, "under 1 min". */
+export function durationText(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return "";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 1) return "under 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }

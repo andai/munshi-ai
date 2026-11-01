@@ -1,7 +1,8 @@
 // Shared e2e helpers: the Mailpit reader, a TOTP generator that never reuses a time step, unique
 // test addresses, account setup through the API (a second organisation too), mock-bot meeting
-// links, status timing, and a `test` whose pages are watched for unexpected console errors and
-// requests that leave the portal's origin.
+// links, status timing, seeded meetings (rows written inside the stack's andai-core container),
+// and a `test` whose pages are watched for unexpected console errors and requests that leave the
+// portal's origin.
 
 import {
   expect,
@@ -119,6 +120,17 @@ export async function enrollByApi(api: APIRequestContext): Promise<{ secret: str
   return { secret, codes: (await confirmed.json()).recovery_codes };
 }
 
+/** The e2e stack's andai-core container (only ever compose project andai-e2e). */
+function coreContainer(): string {
+  const container = execFileSync(
+    "docker",
+    ["ps", "-q", "--filter", `label=com.docker.compose.project=${PROJECT}`, "--filter", "label=com.docker.compose.service=andai-core"],
+    { encoding: "utf8" },
+  ).trim();
+  if (!container) throw new Error(`no andai-core container in compose project ${PROJECT}`);
+  return container;
+}
+
 /**
  * A second organisation, made inside the stack's andai-core the way bootstrap makes the first (with
  * its platform principal and an owner invite by mail), and its owner signed up through the invite.
@@ -127,13 +139,7 @@ export async function enrollByApi(api: APIRequestContext): Promise<{ secret: str
 export async function createOtherOrg(testInfo: TestInfo): Promise<Account & { org: string }> {
   const email = uniqueEmail("other-owner", testInfo);
   const org = `Other Org ${testInfo.project.name} ${Date.now() % 100000}`;
-  const container = execFileSync(
-    "docker",
-    ["ps", "-q", "--filter", `label=com.docker.compose.project=${PROJECT}`, "--filter", "label=com.docker.compose.service=andai-core"],
-    { encoding: "utf8" },
-  ).trim();
-  if (!container) throw new Error(`no andai-core container in compose project ${PROJECT}`);
-  execFileSync("docker", ["exec", "-i", container, "python", "-", email, org], {
+  execFileSync("docker", ["exec", "-i", coreContainer(), "python", "-", email, org], {
     input: OTHER_ORG_SCRIPT,
     stdio: ["pipe", "ignore", "inherit"],
   });
@@ -176,6 +182,166 @@ try:
     )
 finally:
     engine.dispose()
+`;
+
+// ─── seeded meetings ────────────────────────────────────────────────────────────────────────────
+
+/** One meeting to write straight into andai's database (no platform, no bot). */
+export type SeedMeeting = {
+  /** The name the answer gives this meeting's id under. */
+  key: string;
+  requestedBy: string;
+  status: "scheduled" | "recording" | "awaiting_admission" | "processing" | "done" | "failed" | "cancelled";
+  platform?: "google_meet" | "teams" | "zoom";
+  title?: string | null;
+  teamId?: string | null;
+  /** Minutes before now the meeting started (none: not started). */
+  startedMinAgo?: number | null;
+  /** Minutes the meeting lasted (terminal meetings). */
+  durationMin?: number | null;
+  failureReason?: string | null;
+  shares?: { type: "user" | "team"; id: string }[];
+  /** Transcript lines, stored the way ingest stores them (raw, canonical, script, folded). */
+  segments?: { speaker: string; text: string }[];
+  /** Store a SPEC MomDocument (version 1) citing the first segments. */
+  minutes?: boolean;
+};
+
+/** Many look-alike past meetings ("<titlePrefix> 0001" …), one per `stepMin` back from now. */
+export type SeedBulk = {
+  count: number;
+  requestedBy: string;
+  titlePrefix: string;
+  teamId?: string | null;
+  shares?: { type: "user" | "team"; id: string }[];
+  startMinAgo: number;
+  stepMin: number;
+};
+
+export type Seeded = { meetings: Record<string, { id: string; segments: string[] }>; bulk: number };
+
+/**
+ * Write meetings, shares, stored transcript segments and minutes into `orgId`, inside the e2e
+ * stack's andai-core container (its own models, `text` normaliser, `set_title` and
+ * `mom.seed_version`, under the org's row-level security context). Terminal meetings are marked
+ * `stored`, so the ingest worker leaves them alone; live ones carry no platform id, so the
+ * reconciler does too.
+ */
+export function seedMeetings(orgId: string, meetings: SeedMeeting[], bulk: SeedBulk[] = []): Seeded {
+  const output = execFileSync("docker", ["exec", "-i", coreContainer(), "python", "-c", SEED_SCRIPT], {
+    input: JSON.stringify({ org_id: orgId, meetings, bulk }),
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "inherit"],
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return JSON.parse(output.trim().split("\n").pop() ?? "{}");
+}
+
+const SEED_SCRIPT = `
+import json, sys, uuid
+from datetime import UTC, datetime, timedelta
+from sqlalchemy import insert
+from andai_core.db.models import Meeting, MeetingShare, TranscriptSegment
+from andai_core.db.session import create_app_engine, transaction
+from andai_core.meetings.mom import seed_version
+from andai_core.meetings.title import set_title
+from andai_core.settings import get_settings
+from andai_core.text import canonical, fold, script_of
+
+spec = json.load(sys.stdin)
+org_id = uuid.UUID(spec["org_id"])
+now = datetime.now(UTC)
+TERMINAL = {"done", "failed", "cancelled"}
+
+def times(started_min_ago, duration_min, status):
+    started = None if started_min_ago is None else now - timedelta(minutes=started_min_ago)
+    ended = None
+    if started is not None and status in TERMINAL and duration_min is not None:
+        ended = started + timedelta(minutes=duration_min)
+    return started, ended
+
+def link(meeting_id):
+    return f"https://zoom.us/j/{meeting_id.int % 10**11}?pwd=seed", f"zoom.us/j/seed-{meeting_id.hex}"
+
+def minutes_body(evidence):
+    return {
+        "templateId": "standard", "outputLanguage": "hinglish",
+        "summary": "Dispatch plan review; the vendor list is due tomorrow.",
+        "decisions": [{"text": "Night shift starts next week", "evidence": evidence[:1]}],
+        "actionItems": [{"id": str(uuid.uuid4()), "text": "Share the vendor list", "owner": "Sample Speaker", "evidence": evidence[:1]}],
+        "topics": [{"title": "Dispatch", "evidence": evidence[:1]}],
+        "risks": [],
+        "llmProfileId": str(uuid.uuid4()), "model": "seed-model",
+        "generatedAt": now.isoformat(),
+    }
+
+engine = create_app_engine(settings=get_settings())
+answer = {"meetings": {}, "bulk": 0}
+try:
+    with transaction(engine, org_id=org_id) as tx:
+        for m in spec["meetings"]:
+            meeting_id = uuid.uuid4()
+            status = m["status"]
+            started, ended = times(m.get("startedMinAgo"), m.get("durationMin"), status)
+            url, key = link(meeting_id)
+            meeting = Meeting(
+                id=meeting_id, org_id=org_id, team_id=m.get("teamId"), requested_by=uuid.UUID(m["requestedBy"]),
+                platform=m.get("platform") or "zoom", join_url=url, join_url_key=key, status=status,
+                failure_reason=(m.get("failureReason") or "internal_error") if status == "failed" else None,
+                settings_snapshot={"bot_name": "munshi.ai (recording)"},
+                started_at=started, ended_at=ended,
+                transcript_state="stored" if status in TERMINAL else "none",
+                created_at=started or now,
+            )
+            set_title(tx, meeting, m.get("title"))
+            tx.flush()
+            for share in m.get("shares") or []:
+                tx.add(MeetingShare(org_id=org_id, meeting_id=meeting_id, grantee_type=share["type"],
+                                    grantee_id=uuid.UUID(share["id"]), granted_by=meeting.requested_by))
+            ids = []
+            for seq, line in enumerate(m.get("segments") or []):
+                segment_id = f"seg_{meeting_id.hex[:12]}_{seq:04d}"
+                roman = canonical(line["text"])
+                tx.add(TranscriptSegment(
+                    meeting_id=meeting_id, id=segment_id, org_id=org_id, seq=seq,
+                    start_s=seq * 7.0 + 3.0, end_s=seq * 7.0 + 9.0, speaker=line["speaker"],
+                    text_raw=line["text"], text_canonical=roman, script=script_of(line["text"]),
+                    language=None, search_text=fold(roman),
+                ))
+                ids.append(segment_id)
+            tx.flush()
+            if m.get("minutes"):
+                if not ids:
+                    raise SystemExit(f"{m['key']}: minutes need transcript segments to cite")
+                seed_version(tx, org_id, meeting_id, minutes_body(ids))
+            answer["meetings"][m["key"]] = {"id": str(meeting_id), "segments": ids}
+        for b in spec["bulk"]:
+            rows, shares = [], []
+            for i in range(b["count"]):
+                meeting_id = uuid.uuid4()
+                started = now - timedelta(minutes=b["startMinAgo"] + i * b["stepMin"])
+                url, key = link(meeting_id)
+                meeting = Meeting(
+                    id=meeting_id, org_id=org_id, team_id=b.get("teamId"),
+                    requested_by=uuid.UUID(b["requestedBy"]), platform=("google_meet", "teams", "zoom")[i % 3],
+                    join_url=url, join_url_key=key, status="done",
+                    settings_snapshot={"bot_name": "munshi.ai (recording)"},
+                    started_at=started, ended_at=started + timedelta(minutes=25 + i % 40),
+                    created_at=started, transcript_state="stored",
+                )
+                set_title(tx, meeting, f"{b['titlePrefix']} {i + 1:04d}")
+                rows.append(meeting)
+                for share in b.get("shares") or []:
+                    shares.append({"id": uuid.uuid4(), "org_id": org_id, "meeting_id": meeting_id,
+                                   "grantee_type": share["type"], "grantee_id": uuid.UUID(share["id"]),
+                                   "granted_by": uuid.UUID(b["requestedBy"])})
+            tx.flush()
+            if shares:
+                tx.execute(insert(MeetingShare), shares)
+            answer["bulk"] += len(rows)
+finally:
+    engine.dispose()
+print(json.dumps(answer))
 `;
 
 // ─── meetings ───────────────────────────────────────────────────────────────────────────────────
