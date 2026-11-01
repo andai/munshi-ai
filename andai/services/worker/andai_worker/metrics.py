@@ -1,8 +1,10 @@
-"""Join metrics in Prometheus text format, computed from andai's own rows on every scrape.
+"""Join and deletion metrics in Prometheus text format, computed from andai's own rows on every
+scrape.
 
 The worker connects as `andai_app` and reads meetings across orgs only through
 `andai_join_stats(since)` (migration 0005), which returns `(platform, source, outcome, reason,
-count)` aggregates and nothing else; canary runs come from the org-less `canary_runs` table.
+count)` aggregates and nothing else, and `andai_deletion_backlog()` (0009), which returns a count
+and a time; canary runs come from the org-less `canary_runs` table.
 
 Exported series (labels are enums only: no link, name, email, org or id ever becomes a label):
 
@@ -15,6 +17,10 @@ Exported series (labels are enums only: no link, name, email, org or id ever bec
 * `munshi_canary_consecutive_failures{platform}` — canary failures in a row up to the latest run.
 * `munshi_canary_last_run_timestamp_seconds{platform,outcome}` — start of the latest canary run
   with that outcome.
+* `munshi_deletions_pending` — deleted meetings not yet purged from the platform and andai
+  (`pending`, or `failed` after the purge spent its attempts).
+* `munshi_deletion_oldest_pending_seconds` — how long ago the oldest of them was deleted (0 when
+  there is none); above 900 the 15-minute purge target (PORT-04) is missed.
 
 `join_counts`, `rates` and `canary_summary` are shared with the alert evaluator, so a mail and the
 metrics never disagree about the numbers.
@@ -178,9 +184,52 @@ class JoinCollector:
         yield last
 
 
+@dataclass(frozen=True)
+class DeletionBacklog:
+    pending: int
+    oldest_deleted_at: datetime | None
+
+
+def deletion_backlog(engine: Engine) -> DeletionBacklog:
+    """`andai_deletion_backlog()` as `andai_app` with no org context."""
+    with transaction(engine) as tx:
+        row = tx.execute(
+            text("SELECT pending, oldest_deleted_at FROM andai_deletion_backlog()")
+        ).one()
+    return DeletionBacklog(int(row.pending), row.oldest_deleted_at)
+
+
+class DeletionCollector:
+    """Deleted meetings still waiting for their purge, read on every scrape."""
+
+    def __init__(self, engine: Engine, clock: Callable[[], datetime]) -> None:
+        self.engine = engine
+        self.clock = clock
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def collect(self) -> Iterator[Metric]:
+        backlog = deletion_backlog(self.engine)
+        yield GaugeMetricFamily(
+            "munshi_deletions_pending",
+            "Deleted meetings not yet purged from the platform and andai (pending or failed).",
+            value=backlog.pending,
+        )
+        age = 0.0
+        if backlog.oldest_deleted_at is not None:
+            age = max(0.0, (self.clock() - backlog.oldest_deleted_at).total_seconds())
+        yield GaugeMetricFamily(
+            "munshi_deletion_oldest_pending_seconds",
+            "Seconds since the oldest deleted, not yet purged meeting was deleted (0 when none).",
+            value=age,
+        )
+
+
 def registry_for(engine: Engine, clock: Callable[[], datetime]) -> CollectorRegistry:
     registry = CollectorRegistry(auto_describe=False)
     registry.register(JoinCollector(engine, clock))
+    registry.register(DeletionCollector(engine, clock))
     return registry
 
 

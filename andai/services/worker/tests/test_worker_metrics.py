@@ -1,5 +1,6 @@
 """andai-worker `/metrics`: join counts across orgs through `andai_join_stats`, D-39 success rates,
-canary streaks, and labels that carry no personal or customer data.
+canary streaks, the deletion backlog through `andai_deletion_backlog`, and labels that carry no
+personal or customer data.
 
 Each test that counts rows uses a brand-new database (`fresh_app_engine`), so the golden text is
 exact.
@@ -119,6 +120,12 @@ munshi_canary_last_run_timestamp_seconds{outcome="failure",platform="google_meet
 munshi_canary_last_run_timestamp_seconds{outcome="success",platform="google_meet"} 1.7908452e+09
 munshi_canary_last_run_timestamp_seconds{outcome="failure",platform="zoom"} 1.7908488e+09
 munshi_canary_last_run_timestamp_seconds{outcome="success",platform="zoom"} 1.790856e+09
+# HELP munshi_deletions_pending Deleted meetings not yet purged from the platform and andai (pending or failed).
+# TYPE munshi_deletions_pending gauge
+munshi_deletions_pending 0.0
+# HELP munshi_deletion_oldest_pending_seconds Seconds since the oldest deleted, not yet purged meeting was deleted (0 when none).
+# TYPE munshi_deletion_oldest_pending_seconds gauge
+munshi_deletion_oldest_pending_seconds 0.0
 """
 
 
@@ -170,6 +177,32 @@ def test_rates_follow_d39(fresh_app_engine: Engine) -> None:
     assert (r[("zoom", "all")].successes, r[("zoom", "all")].failures) == (5, 1)
     assert r[("google_meet", "canary")].counted == 2
     assert ("google_meet", "pending") not in r
+
+
+def _delete(engine: Engine, member, meeting_id: uuid.UUID, at: datetime, state: str) -> None:
+    with transaction(engine, org_id=member.org_id) as tx:
+        tx.execute(
+            text("UPDATE meetings SET deleted_at = :at, deletion_state = :s WHERE id = :m"),
+            {"at": at, "s": state, "m": meeting_id},
+        )
+
+
+def test_the_deletion_backlog_counts_every_org_and_ages_from_the_oldest(
+    fresh_app_engine: Engine,
+) -> None:
+    a, b = new_member(fresh_app_engine), new_member(fresh_app_engine)
+    now = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
+    m = [seed_meeting(fresh_app_engine, o.org_id, o.user_id) for o in (a, a, b, b)]
+    _delete(fresh_app_engine, a, m[0], now - timedelta(minutes=3), "pending")
+    _delete(fresh_app_engine, b, m[2], now - timedelta(minutes=20), "failed")
+    _delete(fresh_app_engine, b, m[3], now - timedelta(seconds=30), "pending")
+
+    body = metrics.render(metrics.registry_for(fresh_app_engine, lambda: now)).decode()
+
+    assert "munshi_deletions_pending 3.0" in body
+    assert "munshi_deletion_oldest_pending_seconds 1200.0" in body
+    with transaction(fresh_app_engine) as tx:  # andai_app, no app.org_id
+        assert tx.execute(text("SELECT count(*) FROM meetings")).scalar_one() == 0
 
 
 def test_join_stats_returns_aggregates_only(superuser_engine: Engine) -> None:

@@ -24,6 +24,7 @@ from andai_core.db.models import (
     ConsentRecord,
     Invite,
     Meeting,
+    MeetingRemoval,
     MeetingShare,
     MomDocument,
     Org,
@@ -51,6 +52,7 @@ READABLE = {
     "transcript_segments": "org_id",
     "meeting_shares": "org_id",
     "mom_documents": "org_id",
+    "meeting_removals": "org_id",
 }
 
 
@@ -99,6 +101,12 @@ def _seed(engine: Engine) -> SeededOrg:
             )
         )
     meeting_id = _seed_meeting(engine, org_id, owner_id, status="recording", team_id=team_id)
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(
+            MeetingRemoval(
+                org_id=org_id, join_url_key=f"zoom.us/j/{org_id.hex}", removed_at=datetime.now(UTC)
+            )
+        )
     return SeededOrg(org_id, owner_id, team_id, invite_id, token_hash, meeting_id)
 
 
@@ -326,11 +334,17 @@ def test_minutes_cannot_be_written_into_another_org(
             )
 
 
-def test_the_app_role_may_not_update_or_delete_minutes(
+def test_the_app_role_may_not_update_or_delete_minutes_or_removal_markers(
     app_engine: Engine, org_a: SeededOrg
 ) -> None:
-    """A minutes version is never changed, in any org: no UPDATE or DELETE grant at all."""
-    for statement in ("UPDATE mom_documents SET search_text = 'x'", "DELETE FROM mom_documents"):
+    """A minutes version is never changed, nor is a removal marker, in any org: no UPDATE or
+    DELETE grant at all."""
+    for statement in (
+        "UPDATE mom_documents SET search_text = 'x'",
+        "DELETE FROM mom_documents",
+        "UPDATE meeting_removals SET removed_at = now()",
+        "DELETE FROM meeting_removals",
+    ):
         with pytest.raises(ProgrammingError, match="permission denied"):
             with transaction(app_engine, org_id=org_a.org_id) as tx:
                 tx.execute(text(statement))
@@ -616,12 +630,13 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "SETOF uuid"
     assert (fn[4], fn[5]) == (False, True)
-    # 0004 (open meetings), 0005 (join statistics) and 0006 (the ingest claim) together; never
-    # the link, the title, attendees or people.
+    # 0004 (open meetings), 0005 (join statistics), 0006 (the ingest claim) and 0009 (the
+    # deletion claim and backlog) together; never the link, the title, attendees or people.
     assert readable == {
         "org_id", "status", "platform", "source", "failure_reason", "end_reason", "started_at",
         "created_at", "id", "platform_meeting_id", "transcript_state", "transcript_attempts",
-        "transcript_next_at",
+        "transcript_next_at", "deleted_at", "deletion_state", "deletion_attempts",
+        "deletion_next_at",
     }
     assert consent_columns == 0
     assert can_create is False
@@ -896,7 +911,10 @@ def test_claim_ingest_is_a_scan_owned_definer_function(superuser_engine: Engine)
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "TABLE(org_id uuid, meeting_id uuid)"
     assert (fn[4], fn[5]) == (False, True)
-    assert updatable == {"transcript_state", "transcript_attempts", "transcript_next_at"}
+    # 0006's three ingest columns and 0009's deletion lease.
+    assert updatable == {
+        "transcript_state", "transcript_attempts", "transcript_next_at", "deletion_next_at"
+    }
     assert (segments, segment_columns) == (False, 0)
 
 
@@ -914,6 +932,11 @@ def test_claim_ingest_is_a_scan_owned_definer_function(superuser_engine: Engine)
         "UPDATE meetings SET status = 'done'",
         "UPDATE meetings SET transcript_at = now()",
         "UPDATE meetings SET attendees = '[]'::jsonb",
+        "UPDATE meetings SET deletion_state = 'none'",
+        "UPDATE meetings SET deleted_at = NULL",
+        "UPDATE meetings SET deletion_attempts = 0",
+        "SELECT deleted_by FROM meetings",
+        "SELECT * FROM meeting_removals",
         "DELETE FROM meetings",
         "DELETE FROM transcript_segments",
         "INSERT INTO transcript_segments (meeting_id, id, org_id, seq, speaker, text_raw,"
@@ -947,6 +970,164 @@ def test_the_scan_role_can_do_what_the_claim_needs(
                 "UPDATE meetings SET transcript_state = 'pending', transcript_attempts = 1,"
                 " transcript_next_at = now() WHERE id = :m"
             ),
+            {"m": org_a.meeting_id},
+        ).rowcount
+    assert len(seen) == 1 and updated == 1
+
+
+# ─── deletion: the claim, the backlog and the ingest claim (migration 0009) ───────────────────────
+
+CLAIM_DELETIONS = "SELECT org_id, meeting_id FROM andai_claim_deletions(:n)"
+
+
+def _hide(engine: Engine, org: SeededOrg, meeting_id: uuid.UUID, **values: object) -> None:
+    _set_meeting(
+        engine, org, meeting_id, deleted_at=datetime.now(UTC), deletion_state="pending", **values
+    )
+
+
+def test_a_hidden_meeting_must_say_so_in_its_state(app_engine: Engine, org_a: SeededOrg) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    for values in ({"deleted_at": datetime.now(UTC)}, {"deletion_state": "pending"}):
+        with pytest.raises(IntegrityError, match="hidden_when_deleted"):
+            _set_meeting(app_engine, org_a, org_a.meeting_id, **values)
+
+
+def test_claim_deletions_returns_due_deletions_of_every_org_while_meetings_stay_hidden(
+    app_engine: Engine, superuser_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    def meeting(org: SeededOrg, **values: object) -> uuid.UUID:
+        meeting_id = _seed_meeting(app_engine, org.org_id, org.owner_id, status="done")
+        if values:
+            _set_meeting(app_engine, org, meeting_id, **values)
+        return meeting_id
+
+    due_a, due_b = meeting(org_a), meeting(org_b)
+    _hide(app_engine, org_a, due_a)
+    _hide(app_engine, org_b, due_b)
+    retry = meeting(org_a)
+    _hide(app_engine, org_a, retry, deletion_attempts=4,
+          deletion_next_at=datetime.now(UTC) - timedelta(seconds=1))
+    later = meeting(org_a)
+    _hide(app_engine, org_a, later, deletion_next_at=datetime.now(UTC) + timedelta(minutes=1))
+    failed = meeting(org_a)
+    _set_meeting(app_engine, org_a, failed, deleted_at=datetime.now(UTC), deletion_state="failed")
+    meeting(org_a)  # not deleted
+
+    with transaction(app_engine) as tx:  # andai_app, no app.org_id
+        first = tx.execute(text(CLAIM_DELETIONS), {"n": 1000}).all()
+        direct = tx.execute(text("SELECT count(*) FROM meetings")).scalar_one()
+    with transaction(app_engine) as tx:
+        again = tx.execute(text(CLAIM_DELETIONS), {"n": 1000}).all()
+
+    assert _mine(first, org_a) == {due_a, retry}
+    assert _mine(first, org_b) == {due_b}
+    assert all(set(row._fields) == {"org_id", "meeting_id"} for row in first)
+    assert direct == 0
+    assert _mine(again, org_a) | _mine(again, org_b) == set()  # leased
+    with superuser_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT deletion_state, deletion_attempts, deletion_next_at > now()"
+                " FROM meetings WHERE id = ANY(:ids)"
+            ),
+            {"ids": [due_a, retry]},
+        ).all()
+    assert sorted(rows) == [("pending", 0, True), ("pending", 4, True)]
+
+
+def test_claim_deletions_respects_the_limit_and_two_claimers_never_share(
+    app_engine: Engine, org_a: SeededOrg
+) -> None:
+    ids = set()
+    for _ in range(4):
+        meeting_id = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done")
+        _hide(app_engine, org_a, meeting_id)
+        ids.add(meeting_id)
+    with app_engine.connect() as first:
+        none = first.execute(text(CLAIM_DELETIONS), {"n": 0}).all()
+        held = first.execute(text(CLAIM_DELETIONS), {"n": 3}).all()  # locked until commit
+        with app_engine.connect() as second:
+            other = second.execute(text(CLAIM_DELETIONS), {"n": 1000}).all()
+            second.commit()
+        first.commit()
+    assert none == [] and len(held) == 3
+    assert _mine(held, org_a) | _mine(other, org_a) == ids
+    assert not _mine(held, org_a) & _mine(other, org_a)
+
+
+def test_the_backlog_counts_hidden_meetings_not_yet_purged(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    with transaction(app_engine) as tx:
+        before = tx.execute(text("SELECT * FROM andai_deletion_backlog()")).one()
+    oldest = datetime.now(UTC) - timedelta(minutes=20)
+    pending = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done")
+    _set_meeting(app_engine, org_a, pending, deleted_at=oldest, deletion_state="pending")
+    failed = _seed_meeting(app_engine, org_b.org_id, org_b.owner_id, status="done")
+    _set_meeting(app_engine, org_b, failed, deleted_at=datetime.now(UTC), deletion_state="failed")
+
+    with transaction(app_engine) as tx:
+        after = tx.execute(text("SELECT * FROM andai_deletion_backlog()")).one()
+
+    assert set(after._fields) == {"pending", "oldest_deleted_at"}
+    assert after.pending == before.pending + 2
+    assert after.oldest_deleted_at <= oldest
+
+
+def test_claim_ingest_skips_hidden_meetings(app_engine: Engine, org_a: SeededOrg) -> None:
+    kept = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done")
+    hidden = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done")
+    _hide(app_engine, org_a, hidden)
+
+    with transaction(app_engine) as tx:
+        claimed = tx.execute(text(CLAIM), {"n": 1000}).all()
+
+    assert kept in _mine(claimed, org_a)
+    assert hidden not in _mine(claimed, org_a)
+
+
+def test_the_deletion_functions_are_scan_owned_definer_functions(
+    superuser_engine: Engine,
+) -> None:
+    with superuser_engine.connect() as conn:
+        rows = {
+            name: tuple(rest)
+            for name, *rest in conn.execute(
+                text(
+                    "SELECT p.proname, p.prosecdef, r.rolname, p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner"
+                    " WHERE p.proname IN ('andai_claim_deletions', 'andai_deletion_backlog',"
+                    " 'andai_claim_ingest')"
+                )
+            ).all()
+        }
+    path = ["search_path=public, pg_temp"]
+    claim = "TABLE(org_id uuid, meeting_id uuid)"
+    assert rows["andai_claim_deletions"] == (True, "andai_scan", path, claim, False, True)
+    assert rows["andai_claim_ingest"] == (True, "andai_scan", path, claim, False, True)
+    backlog = "TABLE(pending bigint, oldest_deleted_at timestamp with time zone)"
+    assert rows["andai_deletion_backlog"] == (True, "andai_scan", path, backlog, False, True)
+
+
+def test_the_scan_role_can_do_what_the_deletion_claim_needs(
+    superuser_engine: Engine, org_a: SeededOrg
+) -> None:
+    with superuser_engine.connect() as conn:  # rolled back on close
+        conn.execute(text("SET LOCAL ROLE andai_scan"))
+        seen = conn.execute(
+            text(
+                "SELECT id, org_id, deleted_at, deletion_state, deletion_attempts,"
+                " deletion_next_at FROM meetings WHERE id = :m"
+            ),
+            {"m": org_a.meeting_id},
+        ).all()
+        updated = conn.execute(
+            text("UPDATE meetings SET deletion_next_at = now() WHERE id = :m"),
             {"m": org_a.meeting_id},
         ).rowcount
     assert len(seen) == 1 and updated == 1

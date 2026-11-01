@@ -18,7 +18,7 @@ row, so it runs on titles and minutes only. Transcript spelling variants come fr
 
 **Access.** `meetings/access.accessible(actor)` is part of every arm of the SQL, before grouping,
 ranking, counting and the page limit, so neither a result nor the total ever includes a meeting the
-caller may not open.
+caller may not open, nor a deleted one (its segments and minutes stay until the purge, unread).
 
 **Ranking.** Each match scores 1 + `ts_rank` for a whole-word match (2 + `ts_rank` for a title)
 and its strict word similarity (< 1) for a variant match; a meeting ranks by its best match, then

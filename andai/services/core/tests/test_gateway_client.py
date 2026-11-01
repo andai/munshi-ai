@@ -165,6 +165,32 @@ def test_get_transcript_reads_by_platform_meeting_id_with_the_org_key() -> None:
     assert caught.value.status == 404 and KEY not in str(caught.value)
 
 
+def test_delete_meeting_deletes_by_platform_meeting_id_with_the_org_key() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    assert run(gateway(handler).delete_meeting(KEY, 41)) is None
+
+    [request] = seen
+    assert (request.method, request.url.path) == ("DELETE", "/meetings/41")
+    assert request.headers[API_KEY_HEADER] == KEY
+
+
+@pytest.mark.parametrize("status", [404, 409, 500, 503])
+def test_delete_meeting_refusals_carry_the_status(status: int) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"detail": f"no {KEY}"})
+
+    with pytest.raises(GatewayError) as caught:
+        run(gateway(handler).delete_meeting(KEY, 41))
+
+    assert (caught.value.what, caught.value.status) == ("delete meeting", status)
+    assert KEY not in str(caught.value)
+
+
 def test_get_participants_reads_by_platform_and_native_id_with_the_org_key() -> None:
     seen = []
     answer = {

@@ -2,7 +2,8 @@
 
 Only meetings the caller may read are listed: `access.accessible(actor)` is part of the SQL, before
 the page limit, so a page never holds a row the caller may not open and nothing is counted across
-rows they may not see (the list carries no totals).
+rows they may not see (the list carries no totals). A deleted meeting is never readable, so it
+leaves the list in the transaction that deletes it.
 
 * Sections, by andai status: `live` (dispatching, awaiting admission, recording, processing),
   `upcoming` (scheduled) and `past` (done, failed, cancelled). Without `section` the answer holds

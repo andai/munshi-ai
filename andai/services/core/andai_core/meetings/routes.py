@@ -11,6 +11,11 @@
   consent summary, team and requester names, and the caller's `permissions`. Whoever may read it
   (`access.py`: requester, a lead of the meeting's team, admins and owners, and the users and team
   members it is shared with); 404 for anyone else.
+* `DELETE /meetings/{id}` — delete the meeting's audio, transcript and minutes (`deletion.py`).
+  Requester, admins and owners (not team leads or grantees: 404). 202 `{id, purge_by}`: the
+  meeting is hidden from every read path at once and audited (`meeting.delete`); andai-worker
+  purges it from the platform and andai within 15 minutes. 409 `meeting_live` while the bot is
+  still in the meeting; a second delete is 404.
 * `POST /meetings/{id}/stop` — take the bot out. Requester, team lead, admins and owners (not
   grantees: 404). Before admission the meeting ends `cancelled`; after it, the platform's own end
   moves it to `done`.
@@ -41,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from andai_core.auth.deps import Services, client_ip, get_services
 from andai_core.auth.roles import Caller, require_role
 from andai_core.db.session import transaction
-from andai_core.meetings import listing, mom, shares
+from andai_core.meetings import deletion, listing, mom, shares
 from andai_core.meetings.live import open_stream
 from andai_core.meetings.service import Actor, MeetingError, Meetings
 from andai_core.meetings.transcript import read_transcript
@@ -117,6 +122,19 @@ def get_meeting(
     services: Services = Depends(get_services),
 ) -> dict:
     return meetings(services).get(actor(caller), meeting_id)
+
+
+@router.delete("/meetings/{meeting_id}")
+def delete_meeting(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+    ip: str | None = Depends(client_ip),
+) -> JSONResponse:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        accepted = deletion.request_delete(tx, who, meeting_id, now=services.clock(), ip=ip)
+    return JSONResponse(accepted, status_code=202)
 
 
 @router.post("/meetings/{meeting_id}/stop")

@@ -13,8 +13,10 @@ A meeting of the caller's org is readable by:
 * a member of a team it is shared with, as the team is at the time of the read.
 
 Anyone else, and anyone of another org, reads nothing: the routes answer 404 as if the meeting did
-not exist. Shares give read access only. Stopping and sharing stay with the requester, the
-meeting's team lead, admins and owners; deleting with the requester, admins and owners.
+not exist. A deleted meeting (`deleted_at` set, `deletion.py`) does not exist for anyone, from the
+transaction that deleted it on. Shares give read access only. Stopping and sharing stay with the
+requester, the meeting's team lead, admins and owners; deleting with the requester, admins and
+owners.
 
 Every check names the org first, so an admin of one org is nobody in another.
 """
@@ -77,8 +79,8 @@ def shared_with(actor: Actor) -> ColumnElement[bool]:
 
 
 def accessible(actor: Actor) -> ColumnElement[bool]:
-    """The meetings `actor` may read, as a condition on `Meeting`."""
-    in_org = Meeting.org_id == actor.org_id
+    """The meetings `actor` may read, as a condition on `Meeting`; never a deleted one."""
+    in_org = and_(Meeting.org_id == actor.org_id, Meeting.deleted_at.is_(None))
     if actor.is_admin:
         return in_org
     return and_(
@@ -104,8 +106,12 @@ def _leads(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
     )
 
 
+def _visible(actor: Actor, meeting: Meeting) -> bool:
+    return meeting.org_id == actor.org_id and meeting.deleted_at is None
+
+
 def can_read(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
-    if meeting.org_id != actor.org_id:
+    if not _visible(actor, meeting):
         return False
     if actor.is_admin or meeting.requested_by == actor.user_id:
         return True
@@ -115,7 +121,7 @@ def can_read(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
 
 
 def can_stop(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
-    if meeting.org_id != actor.org_id:
+    if not _visible(actor, meeting):
         return False
     return actor.is_admin or meeting.requested_by == actor.user_id or _leads(tx, actor, meeting)
 
@@ -125,7 +131,7 @@ def can_share(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
 
 
 def can_delete(tx: Tx, actor: Actor, meeting: Meeting) -> bool:  # noqa: ARG001 - one signature
-    if meeting.org_id != actor.org_id:
+    if not _visible(actor, meeting):
         return False
     return actor.is_admin or meeting.requested_by == actor.user_id
 

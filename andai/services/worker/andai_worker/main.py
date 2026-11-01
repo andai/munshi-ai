@@ -1,10 +1,12 @@
-"""andai-worker: transcript ingest, canary joins, join metrics and operator alerts (BOT-04, D-34).
+"""andai-worker: transcript ingest, meeting deletion, canary joins, join metrics and operator alerts
+(BOT-04, D-34, PORT-04).
 
 * `GET /healthz` — liveness.
-* `GET /metrics` — join metrics in Prometheus text format (`metrics.py`), read from the andai
-  database on every scrape; 503 while the worker has no database URL.
+* `GET /metrics` — join and deletion metrics in Prometheus text format (`metrics.py`), read from
+  the andai database on every scrape; 503 while the worker has no database URL.
 * Background loops, started by the lifespan:
   - transcript ingest (`ingest.py`), always: andai's own copy of every finished meeting;
+  - deletion (`deletion.py`), always: the purge of every meeting its users deleted;
   - canaries (`canary.py`) when at least one `ANDAI_CANARY_*_URL` is set;
   - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set.
 
@@ -34,7 +36,7 @@ from andai_core.db.session import create_app_engine
 from andai_core.mail import Mailer, SmtpMailer
 from andai_core.meetings.service import Meetings
 from andai_core.platform.gateway_client import HttpPlatformGateway
-from andai_worker import alerts, canary, ingest, metrics
+from andai_worker import alerts, canary, deletion, ingest, metrics
 from andai_worker.settings import WorkerSettings, get_worker_settings
 
 SERVICE_NAME = "andai-worker"
@@ -84,6 +86,14 @@ def jobs(services: WorkerServices) -> list[asyncio.Task]:
     )
     tasks.append(asyncio.create_task(ingester.run(ingest.TICK_S)))
     log.info("transcript ingest every %s s", ingest.TICK_S)
+    purger = deletion.DeletionRunner(
+        services.engine,
+        services.meetings.keyring,
+        services.meetings.gateway,
+        clock=services.clock,
+    )
+    tasks.append(asyncio.create_task(purger.run(deletion.TICK_S)))
+    log.info("meeting deletion every %s s", deletion.TICK_S)
     urls = settings.canary_urls
     if urls:
         runner = canary.CanaryRunner(

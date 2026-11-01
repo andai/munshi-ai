@@ -11,8 +11,9 @@
 3. In one transaction it replaces the meeting's segments and stores the de-duplicated attendees,
    then sets `transcript_state = stored`.
 
-It works only on a terminal meeting that has a platform id; for any other it does nothing and
-returns None. Running it again is safe: the rows are replaced, so a re-run of the same transcript
+It works only on a terminal meeting that has a platform id and is not deleted; for any other it
+does nothing and returns None. A meeting deleted while its transcript was being read is checked
+again under the row lock before anything is stored, so nothing is written for it. Running it again is safe: the rows are replaced, so a re-run of the same transcript
 leaves the same rows.
 
 **Retries.**
@@ -98,6 +99,7 @@ def _target(engine: Engine, keyring: Keyring, org_id: uuid.UUID, meeting_id: uui
             meeting is None
             or meeting.status not in TERMINAL_STATUSES
             or meeting.platform_meeting_id is None
+            or meeting.deleted_at is not None
         ):
             return None
         key = principals.open_key(tx, keyring, org_id)
@@ -196,13 +198,13 @@ def _store(
     segments: list[dict],
     attendees: list[dict],
     now: datetime,
-) -> None:
+) -> bool:
     with transaction(engine, org_id=org_id) as tx:
         meeting = tx.scalar(
             select(Meeting).where(Meeting.id == meeting_id).with_for_update()
         )
-        if meeting is None:  # removed while the platform was being read
-            return
+        if meeting is None or meeting.deleted_at is not None:  # deleted meanwhile
+            return False
         tx.execute(delete(TranscriptSegment).where(TranscriptSegment.meeting_id == meeting_id))
         if segments:
             tx.execute(
@@ -213,6 +215,7 @@ def _store(
         meeting.transcript_state = "stored"
         meeting.transcript_next_at = None
         meeting.transcript_at = now
+    return True
 
 
 def _retry(
@@ -223,7 +226,7 @@ def _retry(
         meeting = tx.scalar(
             select(Meeting).where(Meeting.id == meeting_id).with_for_update()
         )
-        if meeting is None:
+        if meeting is None or meeting.deleted_at is not None:
             return "pending"
         attempts = meeting.transcript_attempts + 1
         meeting.transcript_attempts = attempts
@@ -246,7 +249,7 @@ async def ingest(
     clock: Callable[[], datetime] = utcnow,
 ) -> IngestResult | None:
     """Copy one finished meeting's transcript and attendees into andai. None when the meeting is
-    not (or no longer) a terminal meeting of `org_id` with a platform id."""
+    not (or no longer) a terminal, undeleted meeting of `org_id` with a platform id."""
     target = await anyio.to_thread.run_sync(
         lambda: _target(engine, keyring, org_id, meeting_id)
     )
@@ -275,9 +278,11 @@ async def ingest(
         if state != "stored":
             return IngestResult(state=state, segments=0, attendees=0)
     attendees = attendees_of(participants, segments, target.platform_meeting_id)
-    await anyio.to_thread.run_sync(
+    stored = await anyio.to_thread.run_sync(
         lambda: _store(engine, org_id, meeting_id, segments, attendees, now)
     )
+    if not stored:
+        return None
     return IngestResult(state="stored", segments=len(segments), attendees=len(attendees))
 
 
