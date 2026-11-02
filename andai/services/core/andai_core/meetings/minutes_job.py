@@ -137,15 +137,11 @@ def _load(
                 TranscriptSegment.speaker,
                 TranscriptSegment.text_raw,
             )
-            .where(
-                TranscriptSegment.org_id == org_id, TranscriptSegment.meeting_id == meeting_id
-            )
+            .where(TranscriptSegment.org_id == org_id, TranscriptSegment.meeting_id == meeting_id)
             .order_by(TranscriptSegment.seq)
         ).all()
         request = dict(meeting.mom_request) if isinstance(meeting.mom_request, dict) else None
-        template_id, language = _choose(
-            request, meeting.settings_snapshot or {}, default_language
-        )
+        template_id, language = _choose(request, meeting.settings_snapshot or {}, default_language)
         names = [
             str(a["name"]).strip()
             for a in meeting.attendees or []
@@ -297,6 +293,7 @@ async def run_one(
             job.meeting_date,
             context_tokens=llm.config.context_tokens,
             max_output_tokens=llm.config.max_output_tokens,
+            part_tokens=llm.config.part_tokens,
         )
     except LlmError as exc:
         code = exc.code

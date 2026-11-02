@@ -47,8 +47,8 @@ from andai_core.meetings.mom import Document
 from andai_core.meetings.mom_writer import build_document
 from andai_core.meetings.transcript import segment_id
 from andai_core.minutes import dates, templates
-from andai_core.minutes.chunking import Segment, ids_in, pack
-from andai_core.minutes.generate import Draft, budget, generate
+from andai_core.minutes.chunking import Segment, pack, refs, refs_in
+from andai_core.minutes.generate import PART_TOKENS, Draft, budget, generate
 from andai_core.minutes.owners import UNASSIGNED
 from andai_core.text import fold
 
@@ -590,6 +590,7 @@ async def run_fixture(
     model: str,
     context_tokens: int,
     max_output_tokens: int,
+    part_tokens: int = PART_TOKENS,
     template_id: str = templates.DEFAULT_TEMPLATE,
     clock: Callable[[], float] = time.monotonic,
 ) -> MeetingRun:
@@ -603,15 +604,16 @@ async def run_fixture(
     room = budget(
         template, language, fixture.attendees, fixture.meeting_date,  # type: ignore[arg-type]
         context_tokens=context_tokens, max_output_tokens=max_output_tokens,
+        part_tokens=part_tokens,
     )  # fmt: skip
-    packed = {i for part in pack(segments, room) for i in ids_in(part)}
-    run.coverage_ok = packed == {s.id for s in segments}
+    packed = {n for part in pack(segments, room) for n in refs_in(part)}
+    run.coverage_ok = packed == set(refs(segments))
     started = clock()
     try:
         generation = await generate(
             llm, segments, fixture.attendees, template, language,  # type: ignore[arg-type]
             fixture.meeting_date, context_tokens=context_tokens,
-            max_output_tokens=max_output_tokens,
+            max_output_tokens=max_output_tokens, part_tokens=part_tokens,
         )  # fmt: skip
     except LlmError as exc:
         run.seconds = clock() - started
@@ -892,6 +894,7 @@ async def run_all(
     model: str,
     context_tokens: int,
     max_output_tokens: int,
+    part_tokens: int = PART_TOKENS,
     on_meeting: Callable[[MeetingRun], None] | None = None,
     min_calls_for_stop: int = 10,
 ) -> tuple[list[MeetingRun], CallStats, bool]:
@@ -903,7 +906,7 @@ async def run_all(
     for fixture in fixtures:
         run = await run_fixture(
             counted, fixture, model=model, context_tokens=context_tokens,
-            max_output_tokens=max_output_tokens,
+            max_output_tokens=max_output_tokens, part_tokens=part_tokens,
         )  # fmt: skip
         runs.append(run)
         if on_meeting is not None:

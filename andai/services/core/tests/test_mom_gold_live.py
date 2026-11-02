@@ -65,6 +65,7 @@ def test_the_gold_set_through_the_live_route() -> None:
             model=config.model,
             context_tokens=config.context_tokens,
             max_output_tokens=config.max_output_tokens,
+            part_tokens=config.part_tokens,
             on_meeting=progress,
         )
     )
@@ -75,6 +76,7 @@ def test_the_gold_set_through_the_live_route() -> None:
         "model": config.model,
         "context_tokens": config.context_tokens,
         "max_output_tokens": config.max_output_tokens,
+        "part_tokens": config.part_tokens,
         "template": "standard",
         "stopped_for_schema_failures": stopped,
         "claim_limit": (

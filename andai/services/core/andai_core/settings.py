@@ -78,7 +78,9 @@ class Settings(BaseSettings):
     smtp_port: int = Field(default=1025, validation_alias="SMTP_PORT")
     smtp_user: str | None = Field(default=None, validation_alias="SMTP_USER")
     smtp_password: SecretStr | None = Field(default=None, validation_alias="SMTP_PASSWORD")
-    smtp_from: str = Field(default="munshi.ai <no-reply@munshi.invalid>", validation_alias="SMTP_FROM")
+    smtp_from: str = Field(
+        default="munshi.ai <no-reply@munshi.invalid>", validation_alias="SMTP_FROM"
+    )
     smtp_starttls: bool = Field(default=False, validation_alias="SMTP_STARTTLS")
 
     # The language model minutes are written with (MOM-01, D-47): one deployment-wide
@@ -87,11 +89,16 @@ class Settings(BaseSettings):
     llm_base_url_raw: str = Field(default="", validation_alias="ANDAI_LLM_BASE_URL")
     llm_api_key: SecretStr | None = Field(default=None, validation_alias="ANDAI_LLM_API_KEY")
     llm_model: str = Field(default="", validation_alias="ANDAI_LLM_MODEL")
-    llm_context_tokens: int = Field(default=32000, gt=0, validation_alias="ANDAI_LLM_CONTEXT_TOKENS")
+    llm_context_tokens: int = Field(
+        default=32000, gt=0, validation_alias="ANDAI_LLM_CONTEXT_TOKENS"
+    )
     llm_max_output_tokens: int = Field(
         default=4000, gt=0, validation_alias="ANDAI_LLM_MAX_OUTPUT_TOKENS"
     )
     llm_timeout_s: float = Field(default=120.0, gt=0, validation_alias="ANDAI_LLM_TIMEOUT_S")
+    # The most transcript (estimated tokens) one minutes call carries; longer transcripts are
+    # summarised in parts and merged, so that no call runs long enough for the route to cut it off.
+    llm_part_tokens: int = Field(default=5000, ge=1000, validation_alias="ANDAI_LLM_PART_TOKENS")
     # The zone a meeting's local date is taken in (relative due dates resolve against it).
     default_timezone: str = Field(default="Asia/Kolkata", validation_alias="ANDAI_DEFAULT_TIMEZONE")
 

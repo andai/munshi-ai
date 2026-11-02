@@ -17,15 +17,17 @@ import pytest
 
 from andai_core.llm.client import ChatResult, LlmInvalidOutput, Usage
 from andai_core.minutes import eval as gold
+from andai_core.minutes.chunking import refs
 from andai_core.minutes.generate import Merged
 from andai_core.minutes.owners import UNASSIGNED
 
 ROOT = Path(__file__).resolve().parent / "mom_gold"
 FIXTURES = gold.load_all(ROOT)
-LINE_ID = re.compile(r"^\[(seg_[0-9a-f]+)\] ")
+LINE_NUMBER = re.compile(r"^\[(\d+)\] ")
 CONTEXT = 32000
 MAX_OUTPUT = 4000
-BOGUS = "seg_bogus"
+BOGUS = "seg_bogus"  # a label evidence marker: the fake cites a line number no line has
+UNKNOWN_LINE = "99999"
 
 
 def _build_long():
@@ -145,25 +147,19 @@ def perfect(
 
 class Answering:
     """A fake `chat_json`: map calls answer the items whose evidence is in the part (evidence cut
-    to the part); reduce calls keep every partial item as its own merged item."""
+    to the part, cited by line number); reduce calls group nothing, so every item is kept."""
 
-    def __init__(self, items: list[tuple[str, dict]]) -> None:
+    def __init__(self, items: list[tuple[str, dict]], fixture: gold.Fixture) -> None:
         self.items = items
+        self.numbers = {i: n for n, i in refs(fixture.transcript()).items()}
         self.invented: set[int] = set()
 
     async def __call__(self, messages: list[dict], schema, *, name: str) -> ChatResult:
         user = messages[-1]["content"]
         if schema is Merged:
-            partials = json.loads(user.split("Partial minutes:\n", 1)[1])
-            data: dict = {"summary": "merged", "topics": [], "risks": []}
-            for key in ("decisions", "actionItems"):
-                data[key] = [
-                    {**{k: v for k, v in item.items() if k != "ref"}, "sources": [item["ref"]]}
-                    for p in partials
-                    for item in p[key]
-                ]
+            data: dict = {"summary": "merged", "groups": []}
             return ChatResult(data, Usage(prompt_tokens=10, completion_tokens=5, calls=1))
-        present = {m.group(1) for m in map(LINE_ID.match, user.splitlines()) if m}
+        present = {m.group(1) for m in map(LINE_NUMBER.match, user.splitlines()) if m}
         data = {
             "summary": "a meeting",
             "decisions": [],
@@ -172,9 +168,9 @@ class Answering:
             "risks": [],
         }
         for index, (section, item) in enumerate(self.items):
-            cited = [e for e in item["evidence"] if e in present]
+            cited = [self.numbers[e] for e in item["evidence"] if self.numbers.get(e) in present]
             if item["evidence"] == [BOGUS] and index not in self.invented:
-                cited = [BOGUS]  # an invented id, cited once
+                cited = [UNKNOWN_LINE]  # a number no line has, cited once
                 self.invented.add(index)
             if cited:
                 key = "decisions" if section == "decisions" else "actionItems"
@@ -183,7 +179,7 @@ class Answering:
 
 
 def run(f: gold.Fixture, items, stats: gold.CallStats | None = None) -> gold.MeetingRun:
-    llm = Answering(items)
+    llm = Answering(items, f)
     if stats is not None:
         llm = gold.Counting(llm, stats)
     return asyncio.run(
@@ -227,7 +223,7 @@ def test_a_long_meeting_beyond_the_context_is_map_reduced_and_still_scores_100()
     for f in [f for f in FIXTURES if f.kind == "long"]:
         result = asyncio.run(
             gold.run_fixture(
-                gold.Counting(Answering(perfect(f)), stats), f, model="fake",
+                gold.Counting(Answering(perfect(f), f), stats), f, model="fake",
                 context_tokens=9000, max_output_tokens=MAX_OUTPUT,
             )
         )  # fmt: skip

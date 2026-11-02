@@ -50,7 +50,7 @@ async def _probe(env_file: Path) -> list[str]:
     try:
         result = await client.chat_json(
             messages(
-                [line(s) for s in SYNTHETIC],
+                [line(s, str(n)) for n, s in enumerate(SYNTHETIC, start=1)],
                 attendees=["Asha", "Ravi"],
                 template=TEMPLATES["standard"],
                 language="hinglish",
@@ -62,7 +62,7 @@ async def _probe(env_file: Path) -> list[str]:
     except LlmError as exc:
         return [*report, "schema_valid: false", f"error: {exc.code}"]
     draft = Draft.model_validate(result.data)
-    known = {s.id for s in SYNTHETIC}
+    known = {str(n) for n in range(1, len(SYNTHETIC) + 1)}  # the line numbers the prompt shows
     cited = [
         e
         for section in (draft.decisions, draft.action_items, draft.topics, draft.risks)
