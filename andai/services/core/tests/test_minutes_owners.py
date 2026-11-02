@@ -1,5 +1,6 @@
 """The owner rule (MOM-02, D-49): a named owner stays only when the model's confidence is at least
-0.6 and the name matches exactly one attendee (fold-normalised); otherwise `unassigned`."""
+0.6 and the name matches exactly one attendee (fold-normalised, then on the consonant skeleton);
+otherwise `unassigned`."""
 
 from __future__ import annotations
 
@@ -13,6 +14,9 @@ ATTENDEES = [
     {"name": "अमित कुमार", "source": "speaker"},
     {"name": "Deepak Verma", "source": "invite"},
     {"name": "Deepak Singh", "source": "invite"},
+    {"name": "Arvind Kulkarni", "source": "invite"},
+    {"name": "Suresh Iyer", "source": "invite"},
+    {"name": "Rima Das", "source": "invite"},
 ]
 
 
@@ -32,6 +36,14 @@ ATTENDEES = [
         ("Amit", 0.9, "अमित कुमार"),
         ("Amit Kumar", 0.9, "अमित कुमार"),
         ("Deepak Verma", 0.9, "Deepak Verma"),
+        # the consonant skeleton, when the folded names differ only in vowels
+        ("अरविंद कुलकर्णी", 0.9, "Arvind Kulkarni"),
+        ("कुलकर्णी", 0.9, "Arvind Kulkarni"),
+        ("Aravind Kulkarni", 0.9, "Arvind Kulkarni"),
+        ("Aravind", 0.9, "Arvind Kulkarni"),
+        ("सुरेश अय्यर", 0.9, "Suresh Iyer"),
+        ("Ram", 0.9, UNASSIGNED),  # a skeleton under three letters: Ram is not Rima
+        ("Kulkarni Arvind", 0.9, "Arvind Kulkarni"),
         # not confident enough
         ("Priya Sharma", 0.59, UNASSIGNED),
         ("Rahul", 0.0, UNASSIGNED),
@@ -65,6 +77,12 @@ def test_no_attendees_means_no_owner() -> None:
 
 def test_attendees_may_be_plain_names() -> None:
     assert resolve("priya", 0.9, ["Priya Sharma", "Rahul"]) == "Priya Sharma"
+
+
+def test_a_skeleton_shared_by_two_attendees_is_not_a_match() -> None:
+    people = ["Mohan Rao", "Mahan Rao"]
+    assert resolve("Mohan", 0.9, people) == "Mohan Rao"  # the folded name decides first
+    assert resolve("Muhan", 0.9, people) == UNASSIGNED  # m_h_n: both
 
 
 def test_unknown_speaker_is_never_an_owner() -> None:

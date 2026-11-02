@@ -1,0 +1,72 @@
+{
+ "id": "06-hiring-backend",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "Backend hiring panel debrief",
+ "meeting_date": "2026-11-05",
+ "duration_min": 6,
+ "attendees": ["Arpita Sen", "Nikhil Arora", "Zoya Khan", "Tarun Malik"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Arpita Sen", "text": "Hi everyone, aaj senior backend role ka debrief hai, teen candidates final round tak aaye the."},
+  {"id": "s002", "start_s": 9, "speaker": "Nikhil Arora", "text": "Haan, maine teenon ka system design round liya tha, notes sheet mein daal diye hain."},
+  {"id": "s003", "start_s": 18, "speaker": "Arpita Sen", "text": "Pehle Siddharth se shuru karte hain. Nikhil, tumhara kya feel hai?"},
+  {"id": "s004", "start_s": 25, "speaker": "Nikhil Arora", "text": "Siddharth strong hai. Caching aur queue design pe bahut clear tha, trade-offs bhi khud bole."},
+  {"id": "s005", "start_s": 34, "speaker": "Tarun Malik", "text": "Coding round mein bhi achha tha, bas tests likhne mein thoda slow tha."},
+  {"id": "s006", "start_s": 42, "speaker": "Zoya Khan", "text": "HR round mein bhi theek tha. Uski expectation 26 LPA hai, abhi 20 pe hai."},
+  {"id": "s007", "start_s": 51, "speaker": "Arpita Sen", "text": "26 thoda upar hai hamare band ke liye. Band ka top 24 hai."},
+  {"id": "s008", "start_s": 59, "speaker": "Tarun Malik", "text": "Mujhe lagta hai 24 pe maan jayega, usko product company mein aana hai."},
+  {"id": "s009", "start_s": 67, "speaker": "Zoya Khan", "text": "Haan, call pe usne bola tha ki role zyada important hai, paisa thoda flexible hai."},
+  {"id": "s010", "start_s": 76, "speaker": "Arpita Sen", "text": "Theek hai, decide karte hain, Siddharth ko 24 LPA ka offer denge."},
+  {"id": "s011", "start_s": 83, "speaker": "Nikhil Arora", "text": "Agreed, achha hire hoga."},
+  {"id": "s012", "start_s": 87, "speaker": "Arpita Sen", "text": "Doosri candidate Meenal ke baare mein?"},
+  {"id": "s013", "start_s": 92, "speaker": "Tarun Malik", "text": "Meenal ka coding achha tha par system design mein bahut generic answers the."},
+  {"id": "s014", "start_s": 100, "speaker": "Nikhil Arora", "text": "Haan, mujhe nahi lagta woh senior role ke liye ready hai, mid-level ke liye consider kar sakte hain."},
+  {"id": "s015", "start_s": 110, "speaker": "Arpita Sen", "text": "Theek, usko mid-level pipeline mein move karte hain, abhi reject nahi karenge."},
+  {"id": "s016", "start_s": 117, "speaker": "Zoya Khan", "text": "Teesra candidate ne interview ke beech mein hi withdraw kar liya, counter offer mil gaya usko."},
+  {"id": "s017", "start_s": 126, "speaker": "Arpita Sen", "text": "Chalo. Zoya, Siddharth ka offer letter kab tak nikal sakta hai?"},
+  {"id": "s018", "start_s": 133, "speaker": "Zoya Khan", "text": "Approval chahiye finance se, phir letter banta hai. Agle Tuesday tak offer letter bhej dungi."},
+  {"id": "s019", "start_s": 142, "speaker": "Arpita Sen", "text": "Agle Tuesday theek hai. Uska notice period kitna hai?"},
+  {"id": "s020", "start_s": 148, "speaker": "Zoya Khan", "text": "Notice period 15 December tak hai, uske company mein buyout nahi hota."},
+  {"id": "s021", "start_s": 155, "speaker": "Nikhil Arora", "text": "Matlab joining January ke start mein hogi, theek hai, project bhi tab tak start hoga."},
+  {"id": "s022", "start_s": 164, "speaker": "Tarun Malik", "text": "Ek process wali baat bolun? Take-home assignment pe candidates bahut drop ho rahe hain."},
+  {"id": "s023", "start_s": 172, "speaker": "Nikhil Arora", "text": "Haan, chaar din ka assignment koi nahi karta jab doosri jagah ek round mein ho jata hai."},
+  {"id": "s024", "start_s": 182, "speaker": "Arpita Sen", "text": "Toh kya karein, assignment hata dein?"},
+  {"id": "s025", "start_s": 187, "speaker": "Tarun Malik", "text": "Uski jagah ek ghante ka live pairing round rakhte hain, saath mein code karenge."},
+  {"id": "s026", "start_s": 195, "speaker": "Nikhil Arora", "text": "Pairing mein actually zyada pata chalta hai banda kaise sochta hai."},
+  {"id": "s027", "start_s": 202, "speaker": "Arpita Sen", "text": "Theek hai, take-home band, ab se live pairing round hoga."},
+  {"id": "s028", "start_s": 208, "speaker": "Zoya Khan", "text": "Main candidates ko bhejne wala email template update kar dungi uske hisaab se."},
+  {"id": "s029", "start_s": 216, "speaker": "Tarun Malik", "text": "Referral bonus ka bhi socho, abhi sirf pachees hazaar hai, pachas kar dein toh referrals badhenge."},
+  {"id": "s030", "start_s": 225, "speaker": "Arpita Sen", "text": "Pachas hazaar abhi possible nahi hai, is quarter budget already tight hai."},
+  {"id": "s031", "start_s": 232, "speaker": "Zoya Khan", "text": "Haan, finance ne pichhle hafte hi mana kiya tha. Referral wala baad mein dekhte hain."},
+  {"id": "s032", "start_s": 241, "speaker": "Arpita Sen", "text": "Haan, referral bonus abhi park karte hain, next quarter mein baat karenge."},
+  {"id": "s033", "start_s": 248, "speaker": "Nikhil Arora", "text": "Ek aur cheez, careers page pe JD bahut purana hai, abhi bhi purana tech stack likha hai."},
+  {"id": "s034", "start_s": 258, "speaker": "Tarun Malik", "text": "Haan, ek candidate ne bola bhi ki JD aur interview match nahi karte."},
+  {"id": "s035", "start_s": 266, "speaker": "Arpita Sen", "text": "JD update karna padega. Koi bhi kar le, mujhe bas ek draft chahiye review ke liye."},
+  {"id": "s036", "start_s": 275, "speaker": "Nikhil Arora", "text": "Main is hafte on-call hoon, mujhse nahi ho payega."},
+  {"id": "s037", "start_s": 281, "speaker": "Arpita Sen", "text": "Theek hai, koi kar lega, bas careers page pe naya JD jaldi aana chahiye."},
+  {"id": "s038", "start_s": 289, "speaker": "Zoya Khan", "text": "Interview panel mein aur log chahiye, sirf Nikhil aur Tarun pe load hai."},
+  {"id": "s039", "start_s": 297, "speaker": "Arpita Sen", "text": "Haan, main engineering managers se baat karti hoon, do log aur add karenge."},
+  {"id": "s040", "start_s": 305, "speaker": "Tarun Malik", "text": "Shukriya, ek hafte mein paanch interview ho gaye the pichhli baar."},
+  {"id": "s041", "start_s": 312, "speaker": "Nikhil Arora", "text": "Aur scorecard bhi simple karo, das columns bahut zyada hain."},
+  {"id": "s042", "start_s": 318, "speaker": "Arpita Sen", "text": "Scorecard pe alag se baat karte hain, aaj ka agenda ho gaya."},
+  {"id": "s043", "start_s": 325, "speaker": "Zoya Khan", "text": "Main Siddharth ko aaj ek informal call kar deti hoon ki offer aa raha hai."},
+  {"id": "s044", "start_s": 334, "speaker": "Arpita Sen", "text": "Haan, kar do, par number abhi mat batana jab tak approval nahi aata."},
+  {"id": "s045", "start_s": 342, "speaker": "Zoya Khan", "text": "Bilkul, sirf heads-up dungi."},
+  {"id": "s046", "start_s": 346, "speaker": "Arpita Sen", "text": "Thanks all, achha debrief tha."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "Siddharth is offered the senior backend role at 24 LPA.", "match": [["siddharth"], ["24"]], "evidence": ["s010"]},
+   {"id": "D2", "fact": "The take-home assignment is replaced by a one-hour live pairing round.", "match": [["pairing", "live coding"]], "evidence": ["s025", "s027"]},
+   {"id": "D3", "fact": "Meenal moves to the mid-level pipeline instead of being rejected.", "match": [["meenal"], ["mid level", "mid"]], "evidence": ["s015"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Zoya sends Siddharth's offer letter after finance approval.", "match": [["offer letter", "offer"]], "owner": "Zoya Khan", "due": "2026-11-10", "due_phrase": "Agle Tuesday tak", "evidence": ["s017", "s018"]},
+   {"id": "A2", "fact": "Someone drafts an updated JD for the careers page; nobody named.", "match": [["jd", "job description"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s035", "s037"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "Raising the referral bonus to Rs 50,000 was suggested and parked.", "match": [["referral"]], "evidence": ["s029", "s032"]},
+   {"id": "X2", "kind": "other_date", "fact": "15 December is the end of Siddharth's notice period, not the offer letter's date.", "match": [["notice"]], "evidence": ["s020"]}
+  ]
+ }
+}

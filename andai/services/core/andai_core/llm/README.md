@@ -3,7 +3,7 @@
 The language model andai writes minutes with (MOM-01, D-47): one deployment-wide OpenAI-compatible
 route inside the perimeter, configured only from env (`ANDAI_LLM_BASE_URL` without `/v1`,
 `ANDAI_LLM_API_KEY`, `ANDAI_LLM_MODEL`, `ANDAI_LLM_CONTEXT_TOKENS`, `ANDAI_LLM_MAX_OUTPUT_TOKENS`,
-`ANDAI_LLM_TIMEOUT_S`). There is no default host; an empty base URL turns minutes off. Plain
+`ANDAI_LLM_TIMEOUT_S`, `ANDAI_LLM_PART_TOKENS`). There is no default host; an empty base URL turns minutes off. Plain
 `httpx`, no SDK.
 
 - `client.py` — `LlmClient.chat_json(messages, schema, *, name)`: `POST <base>/v1/chat/completions`

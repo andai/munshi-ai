@@ -1,0 +1,72 @@
+{
+ "id": "08-winter-sale-campaign",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "Winter sale campaign planning",
+ "meeting_date": "2026-11-18",
+ "duration_min": 6,
+ "attendees": ["Ishita Kapoor", "Varun Sinha", "Pallavi Ghosh", "Rakesh Yadav"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Ishita Kapoor", "text": "Hi team, winter sale ka plan aaj close karna hai, time kam hai."},
+  {"id": "s002", "start_s": 8, "speaker": "Varun Sinha", "text": "Haan, pichhle saal hum late ho gaye the, competitors pehle hi discount daal chuke the."},
+  {"id": "s003", "start_s": 17, "speaker": "Ishita Kapoor", "text": "Isliye is baar jaldi start karna hai. Main 4 December soch rahi hoon."},
+  {"id": "s004", "start_s": 25, "speaker": "Rakesh Yadav", "text": "4 December ko stock ready hoga? Woollens ka naya consignment abhi raaste mein hai."},
+  {"id": "s005", "start_s": 33, "speaker": "Ishita Kapoor", "text": "Rakesh, consignment kab tak aa jayega?"},
+  {"id": "s006", "start_s": 38, "speaker": "Rakesh Yadav", "text": "Transporter bol raha hai 30 November tak, ek-do din upar neeche."},
+  {"id": "s007", "start_s": 45, "speaker": "Pallavi Ghosh", "text": "Toh 4 December safe hai, beech mein teen-chaar din ka buffer hai."},
+  {"id": "s008", "start_s": 52, "speaker": "Ishita Kapoor", "text": "Theek hai, final: winter sale 4 December se start hogi aur saat din chalegi."},
+  {"id": "s009", "start_s": 60, "speaker": "Varun Sinha", "text": "सात दिन ठीक है, उससे लंबी sale में लोग बोर हो जाते हैं।"},
+  {"id": "s010", "start_s": 68, "speaker": "Ishita Kapoor", "text": "Ab influencers. Varun, pichhli campaign mein kya result aaya tha?"},
+  {"id": "s011", "start_s": 74, "speaker": "Varun Sinha", "text": "Bade influencers pe aadha budget gaya, par conversion bahut kam tha. Micro wale achhe chale."},
+  {"id": "s012", "start_s": 83, "speaker": "Pallavi Ghosh", "text": "Haan, chhote creators ki audience zyada trust karti hai, comments bhi genuine the."},
+  {"id": "s013", "start_s": 91, "speaker": "Ishita Kapoor", "text": "Toh is baar sirf micro influencers ke saath jaayenge, bade naam nahi."},
+  {"id": "s014", "start_s": 98, "speaker": "Varun Sinha", "text": "Agreed. Main das-baarah micro creators ki list bana leta hoon."},
+  {"id": "s015", "start_s": 104, "speaker": "Rakesh Yadav", "text": "Ek idea, radio pe ek jingle chala dete hain, local FM pe, sardiyon mein log sunte hain."},
+  {"id": "s016", "start_s": 114, "speaker": "Varun Sinha", "text": "Radio ka tracking hi nahi hota, pata hi nahi chalega kitni sale usse aayi."},
+  {"id": "s017", "start_s": 122, "speaker": "Ishita Kapoor", "text": "Haan Rakesh, radio abhi nahi. Woh idea is sale ke liye drop kar dete hain."},
+  {"id": "s018", "start_s": 131, "speaker": "Rakesh Yadav", "text": "ठीक है, कोई बात नहीं, बस एक सुझाव था।"},
+  {"id": "s019", "start_s": 137, "speaker": "Ishita Kapoor", "text": "Creatives ka kya status hai? Pallavi?"},
+  {"id": "s020", "start_s": 142, "speaker": "Pallavi Ghosh", "text": "Banner ka pehla draft ready hai, par colours abhi final nahi hain. Do options hain."},
+  {"id": "s021", "start_s": 151, "speaker": "Ishita Kapoor", "text": "Pallavi, saare creatives final karke shukravar tak bhej do, banners aur reels dono."},
+  {"id": "s022", "start_s": 159, "speaker": "Pallavi Ghosh", "text": "हाँ, शुक्रवार तक सारे creatives भेज दूँगी।"},
+  {"id": "s023", "start_s": 164, "speaker": "Rakesh Yadav", "text": "Waise warehouse ka stock count 28 November ko hai, us din main available nahi rahunga."},
+  {"id": "s024", "start_s": 173, "speaker": "Ishita Kapoor", "text": "Theek hai, stock count wala alag schedule hai, creatives se uska lena dena nahi."},
+  {"id": "s025", "start_s": 181, "speaker": "Varun Sinha", "text": "Ad budget ka split bhi chahiye, kitna search pe, kitna social pe."},
+  {"id": "s026", "start_s": 188, "speaker": "Ishita Kapoor", "text": "Varun, tum channel wise split bana do, mujhe numbers ke saath chahiye."},
+  {"id": "s027", "start_s": 195, "speaker": "Varun Sinha", "text": "Haan, main channel wise split bana ke sheet share karta hoon."},
+  {"id": "s028", "start_s": 202, "speaker": "Pallavi Ghosh", "text": "Email campaign bhi chalega na? Hamari mailing list mein bahut saare bounce aate hain."},
+  {"id": "s029", "start_s": 210, "speaker": "Varun Sinha", "text": "Haan, pichhli baar pachchis percent bounce tha, sender score kharab ho raha hai."},
+  {"id": "s030", "start_s": 218, "speaker": "Ishita Kapoor", "text": "Toh email list saaf karni padegi pehle. Team dekh legi, jo bhi free ho."},
+  {"id": "s031", "start_s": 226, "speaker": "Rakesh Yadav", "text": "Mere team mein koi email tool nahi samajhta, main nahi le paunga."},
+  {"id": "s032", "start_s": 233, "speaker": "Ishita Kapoor", "text": "Koi baat nahi, team mein se koi kar lega, bas sale se pehle email list clean honi chahiye."},
+  {"id": "s033", "start_s": 243, "speaker": "Pallavi Ghosh", "text": "Discount kitna rakhenge? Flat ya slab?"},
+  {"id": "s034", "start_s": 248, "speaker": "Ishita Kapoor", "text": "Slab rakhte hain, pehle bhi wahi chala tha. Exact numbers finance ke saath baat karke."},
+  {"id": "s035", "start_s": 257, "speaker": "Varun Sinha", "text": "Free shipping ka threshold bhi neeche karein? Abhi 999 hai."},
+  {"id": "s036", "start_s": 263, "speaker": "Ishita Kapoor", "text": "Woh finance ke saath discuss karungi, aaj decide nahi kar sakte."},
+  {"id": "s037", "start_s": 270, "speaker": "Rakesh Yadav", "text": "Return policy sale mein bhi same rahegi na? Customers puchhte hain."},
+  {"id": "s038", "start_s": 277, "speaker": "Ishita Kapoor", "text": "Haan, same rahegi, koi badlaav nahi."},
+  {"id": "s039", "start_s": 282, "speaker": "Pallavi Ghosh", "text": "Website pe countdown timer laga dein? Pichhli baar achha response tha."},
+  {"id": "s040", "start_s": 289, "speaker": "Varun Sinha", "text": "Haan, tech team ko bol denge, chhota kaam hai."},
+  {"id": "s041", "start_s": 295, "speaker": "Ishita Kapoor", "text": "Okay. Kuch aur?"},
+  {"id": "s042", "start_s": 299, "speaker": "Rakesh Yadav", "text": "पैकिंग के लिए extra लोग चाहिए होंगे sale के हफ़्ते में।"},
+  {"id": "s043", "start_s": 306, "speaker": "Ishita Kapoor", "text": "Woh Rakesh, tum HR se baat karo temporary staff ke liye, sale ke hafte ke liye."},
+  {"id": "s044", "start_s": 315, "speaker": "Rakesh Yadav", "text": "Theek hai, main HR se baat kar leta hoon."},
+  {"id": "s045", "start_s": 321, "speaker": "Ishita Kapoor", "text": "Great, thank you sab. Bahut kaam hai, chaliye lag jaate hain."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "The winter sale starts on 4 December and runs for seven days.", "match": [["sale"], ["4"]], "evidence": ["s008"]},
+   {"id": "D2", "fact": "The campaign uses only micro influencers, no big names.", "match": [["micro"]], "evidence": ["s013"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Pallavi finalises and sends all creatives, banners and reels.", "match": [["creatives", "creative", "banner"]], "owner": "Pallavi Ghosh", "due": "2026-11-20", "due_phrase": "shukravar tak", "evidence": ["s021", "s022"]},
+   {"id": "A2", "fact": "The email list is cleaned before the sale; nobody named.", "match": [["email", "mailing"], ["list"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s030", "s032"]},
+   {"id": "A3", "fact": "Varun prepares a channel-wise split of the ad budget.", "match": [["channel"], ["split", "breakup"]], "owner": "Varun Sinha", "due": null, "due_phrase": null, "evidence": ["s026", "s027"]},
+   {"id": "A4", "fact": "Rakesh speaks to HR about temporary packing staff for sale week.", "match": [["hr"], ["staff", "temporary", "packing"]], "owner": "Rakesh Yadav", "due": null, "due_phrase": null, "evidence": ["s043", "s044"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "A radio jingle on local FM was suggested and dropped.", "match": [["radio", "jingle"]], "evidence": ["s015", "s017"]},
+   {"id": "X2", "kind": "other_date", "fact": "28 November is the warehouse stock count, not the creatives' due date.", "match": [["stock count", "stock"]], "evidence": ["s023"]}
+  ]
+ }
+}

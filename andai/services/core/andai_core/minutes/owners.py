@@ -7,11 +7,18 @@ attendee; otherwise the owner is `unassigned`. Names are compared in their folde
 variants do not matter. A part of a name matches when it picks out one attendee (`Priya` for
 `Priya Sharma`); honorifics (`ji`, `sir`, `Mr` ...) are ignored; groups (`team`, `we`, `sab` ...)
 are never owners. The owner kept is the attendee's name as the meeting lists it.
+
+When the folded names match no attendee, they are compared once more on their consonant skeleton:
+a leading vowel becomes one mark and every other vowel is dropped, so the vowels a transliteration
+or a spelling adds or leaves out do not matter (`अय्यर`/`Iyer`, `Aravind`/`Arvind`). A word whose
+skeleton is shorter than three letters keeps its folded form (`Ram` never meets `Rima`), and the
+skeleton match too must pick out exactly one attendee.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import re
+from collections.abc import Callable, Iterable, Mapping
 
 from andai_core.text import fold
 
@@ -37,10 +44,40 @@ _GROUPS = {
 }  # fmt: skip
 _JOINT = {fold(w) for w in ("and", "aur", "और", "or", "ya", "या", "with", "saath")}
 _LISTED = set(",&/+")
+_VOWELS = re.compile(r"[aeiou]")
+MIN_SKELETON = 3
 
 
 def _tokens(name: str) -> tuple[str, ...]:
     return tuple(t for t in fold(name).split() if t not in _HONORIFICS)
+
+
+def _skeleton(token: str) -> str:
+    """A folded word's consonants: a leading vowel becomes `_`, every other vowel is dropped."""
+    lead = "_" if token[:1] in "aeiou" else ""
+    skeleton = lead + _VOWELS.sub("", token)
+    return skeleton if len(skeleton) >= MIN_SKELETON else token
+
+
+def _pick(
+    wanted: tuple[str, ...],
+    names: list[tuple[str, tuple[str, ...]]],
+    key: Callable[[str], str],
+) -> str | None:
+    """The one attendee whose name matches `wanted` (whole, else in part) compared through `key`;
+    `UNASSIGNED` when two attendees match equally; None when none does."""
+    want = tuple(key(t) for t in wanted)
+    keyed = [(name, tuple(key(t) for t in tokens)) for name, tokens in names if tokens]
+    exact = {name for name, tokens in keyed if tokens == want}
+    if len(exact) == 1:
+        return exact.pop()
+    if exact:
+        return UNASSIGNED  # two attendees with the same name
+    w = set(want)
+    partial = {name for name, tokens in keyed if w <= set(tokens) or set(tokens) <= w}
+    if len(partial) == 1:
+        return partial.pop()
+    return UNASSIGNED if partial else None
 
 
 def _names(attendees: Iterable[Mapping | str]) -> list[str]:
@@ -62,16 +99,10 @@ def resolve(owner: str | None, confidence: float | None, attendees: Iterable[Map
     if not wanted or " ".join(wanted) in _GROUPS or _JOINT & set(wanted) or _LISTED & set(owner):
         return UNASSIGNED  # a group, or several people
     names = [(name, _tokens(name)) for name in _names(attendees)]
-    exact = {name for name, tokens in names if tokens and tokens == wanted}
-    if len(exact) == 1:
-        return exact.pop()
-    if exact:
-        return UNASSIGNED  # two attendees with the same name
-    want = set(wanted)
-    partial = {
-        name for name, tokens in names if tokens and (want <= set(tokens) or set(tokens) <= want)
-    }
-    return partial.pop() if len(partial) == 1 else UNASSIGNED
+    picked = _pick(wanted, names, str)
+    if picked is None:
+        picked = _pick(wanted, names, _skeleton)
+    return picked or UNASSIGNED
 
 
 __all__ = ["THRESHOLD", "UNASSIGNED", "resolve"]

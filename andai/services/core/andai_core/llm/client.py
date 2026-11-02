@@ -91,6 +91,7 @@ class LlmConfig:
     context_tokens: int = 32000
     max_output_tokens: int = 4000
     timeout_s: float = 120.0
+    part_tokens: int = 5000
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", _base(self.base_url))
@@ -117,6 +118,7 @@ class LlmConfig:
             context_tokens=settings.llm_context_tokens,
             max_output_tokens=settings.llm_max_output_tokens,
             timeout_s=settings.llm_timeout_s,
+            part_tokens=settings.llm_part_tokens,
         )
 
 
@@ -162,6 +164,7 @@ def load_live_settings(env_file: str | Path) -> LlmConfig:
         context_tokens=number("CONTEXT_TOKENS", "llm_context_tokens", int),
         max_output_tokens=number("MAX_OUTPUT_TOKENS", "llm_max_output_tokens", int),
         timeout_s=number("TIMEOUT_S", "llm_timeout_s", float),
+        part_tokens=number("PART_TOKENS", "llm_part_tokens", int),
     )
     if not config.configured:
         raise LlmNotConfigured("the env file names no LLM route (base URL and model)")

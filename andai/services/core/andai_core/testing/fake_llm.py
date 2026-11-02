@@ -5,10 +5,11 @@ minutes prompt andai sends (`minutes/prompt.py`) and answers one schema-valid JS
 what it sees there, never from a model:
 
 * **minutes / minutes_part** (a `Draft`): a summary; one decision, one topic and one risk citing
-  segment ids from the transcript lines; one action item owned by the first attendee the prompt
+  line numbers from the transcript; one action item owned by the first attendee the prompt
   names (`ownerConfidence` 0.9, `dueText` "kal"), and one with no owner (`ownerConfidence` 0.2),
   which andai's owner rule turns into `unassigned`.
-* **minutes_merge** (a `Merged`): every partial item kept as one merged item naming its reference.
+* **minutes_merge** (a `Merged`): a summary and one group per text that more than one partial item
+  of a kind carries, naming those items' references.
 
 Texts are in the output language the system message asks for: English, Hindi in Devanagari, or
 Roman Hinglish. Nothing is logged.
@@ -31,6 +32,7 @@ from fastapi.responses import JSONResponse
 from andai_core.minutes.templates import LANGUAGE_INSTRUCTION
 
 SEGMENT_LINE = re.compile(r"^\[([^\]\s]+)\] ", re.MULTILINE)
+ITEM_LINE = re.compile(r"^([DATR])(\d+\.\d+) (.*)$", re.MULTILINE)
 ATTENDEES_LINE = re.compile(r"^Attendees: (.*)$", re.MULTILINE)
 NOT_KNOWN = "(not known)"
 
@@ -116,25 +118,15 @@ def draft(system: str, user: str) -> dict[str, Any]:
 
 
 def merged(system: str, user: str) -> dict[str, Any]:
-    """A `Merged` (by alias): every partial item kept, naming its own reference."""
+    """A `Merged` (by alias): items of one kind with the same text grouped by reference."""
     text = TEXTS[language_of(system)]
-    body = user.split("Partial minutes:\n", 1)[-1]
-    try:
-        partials = json.loads(body)
-    except ValueError:
-        partials = []
-    out: dict[str, Any] = {"decisions": [], "actionItems": [], "topics": [], "risks": []}
-    count = 0
-    for part in partials if isinstance(partials, list) else []:
-        for section in out:
-            for item in part.get(section, []) if isinstance(part, dict) else []:
-                fields = {k: v for k, v in item.items() if k != "ref"}
-                if section == "actionItems":
-                    for key in ("owner", "ownerConfidence", "dueText", "due"):
-                        fields.setdefault(key, None)
-                out[section].append({**fields, "sources": [item.get("ref", "")]})
-                count += 1
-    return {"summary": text["summary"].format(n=count), **out}
+    body = user.split("Partial minutes:", 1)[-1]
+    by_text: dict[tuple[str, str], list[str]] = {}
+    for letter, number, item in ITEM_LINE.findall(body):
+        by_text.setdefault((letter, item), []).append(f"{letter}{number}")
+    groups = [{"sources": refs} for refs in by_text.values() if len(refs) > 1]
+    count = sum(len(refs) for refs in by_text.values())
+    return {"summary": text["summary"].format(n=count), "groups": groups}
 
 
 def completion(body: dict) -> dict[str, Any]:

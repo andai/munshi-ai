@@ -68,6 +68,7 @@ services:
       - ANDAI_LLM_CONTEXT_TOKENS=${ANDAI_LLM_CONTEXT_TOKENS:-32000}
       - ANDAI_LLM_MAX_OUTPUT_TOKENS=${ANDAI_LLM_MAX_OUTPUT_TOKENS:-4000}
       - ANDAI_LLM_TIMEOUT_S=${ANDAI_LLM_TIMEOUT_S:-120}
+      - ANDAI_LLM_PART_TOKENS=${ANDAI_LLM_PART_TOKENS:-5000}
       - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
       # The secret meeting-api signs its system webhook with (POST /internal/platform-events);
       # meeting-api gets the same value below. gen-secrets.sh mints it.
@@ -137,6 +138,7 @@ services:
       - ANDAI_LLM_CONTEXT_TOKENS=${ANDAI_LLM_CONTEXT_TOKENS:-32000}
       - ANDAI_LLM_MAX_OUTPUT_TOKENS=${ANDAI_LLM_MAX_OUTPUT_TOKENS:-4000}
       - ANDAI_LLM_TIMEOUT_S=${ANDAI_LLM_TIMEOUT_S:-120}
+      - ANDAI_LLM_PART_TOKENS=${ANDAI_LLM_PART_TOKENS:-5000}
       - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
       - SMTP_HOST=${SMTP_HOST:-mailpit}
       - SMTP_PORT=${SMTP_PORT:-1025}

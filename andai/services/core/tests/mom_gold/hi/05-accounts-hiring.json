@@ -1,0 +1,73 @@
+{
+ "id": "05-accounts-hiring",
+ "language": "hi",
+ "kind": "short",
+ "title": "अकाउंट्स एग्ज़ीक्यूटिव भर्ती चर्चा",
+ "meeting_date": "2026-11-03",
+ "duration_min": 6,
+ "attendees": ["Alok Srivastava", "Shalini Kapoor", "Gaurav Mehta", "Nisha Bansal"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Alok Srivastava", "text": "चलिए शुरू करते हैं। अकाउंट्स एग्ज़ीक्यूटिव की पोस्ट तीन हफ्ते से खाली है, काम रुक रहा है।"},
+  {"id": "s002", "start_s": 10, "speaker": "Shalini Kapoor", "text": "जी सर। अब तक 62 आवेदन आए हैं, निशा ने पहली छँटनी कर ली है।"},
+  {"id": "s003", "start_s": 19, "speaker": "Nisha Bansal", "text": "पहली छँटनी के बाद 11 बचे थे, फ़ोन पर बात करने के बाद 7 ठीक लगे।"},
+  {"id": "s004", "start_s": 28, "speaker": "Gaurav Mehta", "text": "मैंने उन सातों के बायोडाटा देखे हैं। दो के पास जीएसटी फाइलिंग का असली अनुभव है।"},
+  {"id": "s005", "start_s": 37, "speaker": "Alok Srivastava", "text": "बाकी पाँच?"},
+  {"id": "s006", "start_s": 41, "speaker": "Gaurav Mehta", "text": "तीन ठीक-ठाक हैं, दो बिल्कुल नए हैं, उन्हें बहुत सिखाना पड़ेगा।"},
+  {"id": "s007", "start_s": 48, "speaker": "Shalini Kapoor", "text": "तो फाइनल राउंड में कितने बुलाएँ? सातों को बुलाना समय की बर्बादी होगी।"},
+  {"id": "s008", "start_s": 56, "speaker": "Gaurav Mehta", "text": "मेरे हिसाब से दो अनुभवी और दो ठीक-ठाक वाले, कुल चार।"},
+  {"id": "s009", "start_s": 63, "speaker": "Alok Srivastava", "text": "ठीक है, चार उम्मीदवार फाइनल राउंड में जाएँगे, बाकी को मना कर दीजिए।"},
+  {"id": "s010", "start_s": 71, "speaker": "Nisha Bansal", "text": "जी सर, बाकी तीन को मना करने वाला मेल सिस्टम से अपने आप चला जाता है।"},
+  {"id": "s011", "start_s": 80, "speaker": "Gaurav Mehta", "text": "एक बात कहूँ? कैंपस से दो फ्रेशर ले लें, सस्ते पड़ेंगे और लंबे समय तक रुकेंगे।"},
+  {"id": "s012", "start_s": 89, "speaker": "Alok Srivastava", "text": "अभी तो क्लोज़िंग का सीज़न आ रहा है, फ्रेशर को सिखाने का समय किसके पास है?"},
+  {"id": "s013", "start_s": 98, "speaker": "Shalini Kapoor", "text": "और कैंपस प्लेसमेंट तो फरवरी में होते हैं, अभी कोई मिलेगा भी नहीं।"},
+  {"id": "s014", "start_s": 106, "speaker": "Alok Srivastava", "text": "नहीं, फ्रेशर वाली बात अभी नहीं। इस बार एक अनुभवी आदमी ही चाहिए।"},
+  {"id": "s015", "start_s": 114, "speaker": "Gaurav Mehta", "text": "ठीक है सर, बस एक विचार था।"},
+  {"id": "s016", "start_s": 119, "speaker": "Shalini Kapoor", "text": "वेतन की बात कर लें? पिछले वाले को 32 हज़ार महीना मिल रहा था।"},
+  {"id": "s017", "start_s": 127, "speaker": "Nisha Bansal", "text": "दोनों अनुभवी उम्मीदवार 38 के आसपास माँग रहे हैं।"},
+  {"id": "s018", "start_s": 133, "speaker": "Alok Srivastava", "text": "38 ज़्यादा है। बाज़ार में इस काम का रेट 33 से 36 के बीच है।"},
+  {"id": "s019", "start_s": 142, "speaker": "Gaurav Mehta", "text": "35 तक दें तो अच्छा आदमी मिल जाएगा, उससे कम में मुश्किल है।"},
+  {"id": "s020", "start_s": 150, "speaker": "Alok Srivastava", "text": "ठीक है, वेतन की ऊपरी सीमा 35 हज़ार महीना रहेगी, इससे ऊपर नहीं जाएँगे।"},
+  {"id": "s021", "start_s": 158, "speaker": "Shalini Kapoor", "text": "समझ गई, ऑफर लेटर में यही रखेंगे।"},
+  {"id": "s022", "start_s": 163, "speaker": "Alok Srivastava", "text": "निशा, चारों के फाइनल इंटरव्यू कब तक हो सकते हैं?"},
+  {"id": "s023", "start_s": 169, "speaker": "Nisha Bansal", "text": "दो लोग नोटिस पीरियड में हैं, उन्हें शाम का समय चाहिए होगा।"},
+  {"id": "s024", "start_s": 176, "speaker": "Alok Srivastava", "text": "फिर भी, अगले बुधवार तक चारों इंटरव्यू हो जाने चाहिए।"},
+  {"id": "s025", "start_s": 182, "speaker": "Nisha Bansal", "text": "जी सर, अगले बुधवार तक चारों के इंटरव्यू शेड्यूल करके आपको कैलेंडर भेज दूँगी।"},
+  {"id": "s026", "start_s": 190, "speaker": "Shalini Kapoor", "text": "और 20 नवंबर को जीएसटी रिटर्न की आखिरी तारीख है, उससे पहले गौरव उसमें फँसे रहेंगे।"},
+  {"id": "s027", "start_s": 199, "speaker": "Alok Srivastava", "text": "रिटर्न का काम अपनी जगह चलेगा, इंटरव्यू उससे पहले निपट जाएँगे।"},
+  {"id": "s028", "start_s": 206, "speaker": "Gaurav Mehta", "text": "इंटरव्यू में एक छोटा प्रैक्टिकल टेस्ट भी रखें, सिर्फ़ बातों से पता नहीं चलता।"},
+  {"id": "s029", "start_s": 214, "speaker": "Alok Srivastava", "text": "बिल्कुल। गौरव, टेस्ट आप ही बनाइए। बैंक रिकंसिलिएशन और एक जीएसटी का सवाल डालिए।"},
+  {"id": "s030", "start_s": 222, "speaker": "Gaurav Mehta", "text": "जी सर, शुक्रवार तक प्रैक्टिकल टेस्ट तैयार कर दूँगा, एक घंटे का होगा।"},
+  {"id": "s031", "start_s": 230, "speaker": "Shalini Kapoor", "text": "टेस्ट का पेपर एचआर के पास भी रहे, ताकि हर कैंडिडेट को एक जैसा मिले।"},
+  {"id": "s032", "start_s": 239, "speaker": "Gaurav Mehta", "text": "हाँ, मैं आपको भी कॉपी भेज दूँगा।"},
+  {"id": "s033", "start_s": 244, "speaker": "Shalini Kapoor", "text": "रेफरेंस चेक का क्या करना है? पिछली बार हमने छोड़ दिया था और पछताए थे।"},
+  {"id": "s034", "start_s": 253, "speaker": "Alok Srivastava", "text": "इस बार रेफरेंस चेक ज़रूर होगा, फाइनल ऑफर से पहले।"},
+  {"id": "s035", "start_s": 259, "speaker": "Nisha Bansal", "text": "मेरे पास इंटरव्यू शेड्यूल का काम है, मैं शायद न कर पाऊँ।"},
+  {"id": "s036", "start_s": 266, "speaker": "Shalini Kapoor", "text": "मैं भी अगले हफ्ते दो दिन छुट्टी पर हूँ।"},
+  {"id": "s037", "start_s": 272, "speaker": "Alok Srivastava", "text": "तो कोई न कोई देख लेगा, पर रेफरेंस चेक के बिना ऑफर नहीं जाएगा, ये याद रखिए।"},
+  {"id": "s038", "start_s": 282, "speaker": "Gaurav Mehta", "text": "पुराने एग्ज़ीक्यूटिव का हैंडओवर भी अधूरा है, कई फाइलें इधर-उधर हैं।"},
+  {"id": "s039", "start_s": 289, "speaker": "Alok Srivastava", "text": "वो नए आदमी के आने के बाद देखेंगे, अभी इस पर समय नहीं लगाना।"},
+  {"id": "s040", "start_s": 297, "speaker": "Shalini Kapoor", "text": "जॉइनिंग की तारीख कब तक मान कर चलें?"},
+  {"id": "s041", "start_s": 303, "speaker": "Alok Srivastava", "text": "दिसंबर के पहले हफ्ते तक कोई आ जाए तो अच्छा, पर नोटिस पीरियड पर निर्भर है।"},
+  {"id": "s042", "start_s": 312, "speaker": "Nisha Bansal", "text": "ऑफर लेटर का टेम्पलेट पिछली भर्ती वाला ही इस्तेमाल करें?"},
+  {"id": "s043", "start_s": 318, "speaker": "Shalini Kapoor", "text": "हाँ, बस वेतन और पद बदल देना।"},
+  {"id": "s044", "start_s": 323, "speaker": "Gaurav Mehta", "text": "सर, इस बीच पेमेंट एंट्री का काम मैं और रमन मिल कर संभाल रहे हैं।"},
+  {"id": "s045", "start_s": 332, "speaker": "Alok Srivastava", "text": "ठीक है, थोड़ा और खींच लीजिए, जल्द ही मदद मिल जाएगी।"},
+  {"id": "s046", "start_s": 339, "speaker": "Shalini Kapoor", "text": "मेरी तरफ़ से इतना ही।"},
+  {"id": "s047", "start_s": 343, "speaker": "Alok Srivastava", "text": "धन्यवाद। इंटरव्यू शेड्यूल आते ही मुझे बता देना।"}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "चार उम्मीदवारों को फाइनल राउंड में बुलाया जाएगा।", "match": [["चार", "4", "four"], ["उम्मीदवार", "उम्मीदवारों", "कैंडिडेट", "candidate", "candidates"]], "evidence": ["s008", "s009"]},
+   {"id": "D2", "fact": "वेतन की ऊपरी सीमा 35 हज़ार रुपये महीना रहेगी।", "match": [["35"], ["वेतन", "सैलरी", "salary"]], "evidence": ["s020"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "निशा चारों उम्मीदवारों के फाइनल इंटरव्यू शेड्यूल करेंगी।", "match": [["इंटरव्यू", "interview", "interviews", "साक्षात्कार"]], "owner": "Nisha Bansal", "due": "2026-11-11", "due_phrase": "अगले बुधवार तक", "evidence": ["s024", "s025"]},
+   {"id": "A2", "fact": "गौरव एक घंटे का प्रैक्टिकल टेस्ट तैयार करेंगे।", "match": [["टेस्ट", "test", "परीक्षा"]], "owner": "Gaurav Mehta", "due": "2026-11-06", "due_phrase": "शुक्रवार तक", "evidence": ["s029", "s030"]},
+   {"id": "A3", "fact": "फाइनल ऑफर से पहले रेफरेंस चेक होगा; किसी का नाम तय नहीं।", "match": [["रेफरेंस", "reference", "references"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s034", "s037"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "कैंपस से दो फ्रेशर लेने का सुझाव नहीं माना गया।", "match": [["फ्रेशर", "fresher", "freshers"]], "evidence": ["s011", "s014"]},
+   {"id": "X2", "kind": "other_date", "fact": "20 नवंबर जीएसटी रिटर्न की तारीख है, इंटरव्यू की नहीं।", "match": [["रिटर्न", "return"]], "evidence": ["s026"]}
+  ]
+ }
+}

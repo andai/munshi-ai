@@ -108,8 +108,8 @@ def test_app_role_grants(migrated: Postgres) -> None:
         engine.dispose()
 
     crud = {"SELECT", "INSERT", "UPDATE", "DELETE"}
-    for table in ALL_TABLES - {"audit_events", "mom_documents", "meeting_removals"} - set(
-        SYSTEM_TABLES
+    for table in (
+        ALL_TABLES - {"audit_events", "mom_documents", "meeting_removals"} - set(SYSTEM_TABLES)
     ):
         assert granted[table] == crud, table
     assert granted["audit_events"] == {"INSERT"}
@@ -177,7 +177,10 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
         command.downgrade(config, "0005")
         assert _revision(engine) == "0005"
         assert _tables(engine) == ALL_TABLES - {
-            "transcript_segments", "meeting_shares", "mom_documents", "meeting_removals",
+            "transcript_segments",
+            "meeting_shares",
+            "mom_documents",
+            "meeting_removals",
             "platform_webhook_events",
         }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
@@ -212,7 +215,10 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
         command.downgrade(config, "0006")
         assert _revision(engine) == "0006"
         assert _tables(engine) == ALL_TABLES - {
-            "meeting_shares", "mom_documents", "meeting_removals", "platform_webhook_events"
+            "meeting_shares",
+            "mom_documents",
+            "meeting_removals",
+            "platform_webhook_events",
         }
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
@@ -263,7 +269,9 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
         command.downgrade(config, "0007")
         assert _revision(engine) == "0007"
         assert _tables(engine) == ALL_TABLES - {
-            "mom_documents", "meeting_removals", "platform_webhook_events"
+            "mom_documents",
+            "meeting_removals",
+            "platform_webhook_events",
         }
         assert _search_state(engine) == (set(), False, False)
 
@@ -275,7 +283,11 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
 
 
 DELETION_COLUMNS = {
-    "deleted_at", "deleted_by", "deletion_state", "deletion_attempts", "deletion_next_at"
+    "deleted_at",
+    "deleted_by",
+    "deletion_state",
+    "deletion_attempts",
+    "deletion_next_at",
 }
 DELETION_FUNCTIONS = ("andai_claim_deletions", "andai_deletion_backlog")
 
@@ -331,7 +343,10 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
         command.upgrade(config, "head")
         assert _tables(engine) == ALL_TABLES
         assert _deletion_state(engine)[:4] == (
-            True, 2, DELETION_COLUMNS - {"deleted_by"}, {"deletion_next_at"}
+            True,
+            2,
+            DELETION_COLUMNS - {"deleted_by"},
+            {"deletion_next_at"},
         )
         assert _deletion_state(engine)[4] == head_body
     finally:
@@ -341,11 +356,25 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
 # ─── 0010: the minutes pipeline ───────────────────────────────────────────────────────────────────
 
 MOM_COLUMNS = {
-    "mom_state", "mom_attempts", "mom_next_at", "mom_at", "mom_error", "mom_request", "mom_lease",
-    "mom_lease_until", "recap_state", "recap_attempts", "recap_next_at", "recap_lease", "recap_at",
+    "mom_state",
+    "mom_attempts",
+    "mom_next_at",
+    "mom_at",
+    "mom_error",
+    "mom_request",
+    "mom_lease",
+    "mom_lease_until",
+    "recap_state",
+    "recap_attempts",
+    "recap_next_at",
+    "recap_lease",
+    "recap_at",
 }
 MOM_FUNCTIONS = (
-    "andai_claim_mom", "andai_claim_recap", "andai_platform_completed", "andai_mom_stats"
+    "andai_claim_mom",
+    "andai_claim_recap",
+    "andai_platform_completed",
+    "andai_mom_stats",
 )
 
 
@@ -442,8 +471,15 @@ def test_meetings_over_before_0010_never_get_minutes_or_a_recap(migrated: Postgr
                         " join_url_key, status, failure_reason)"
                         " VALUES (:m, :o, :u, 'zoom', :j, :k, :s, :r)"
                     ),
-                    {"m": ids[label], "o": org, "u": user, "j": f"https://zoom.us/j/{label}",
-                     "k": f"zoom.us/j/{ids[label].hex}", "s": status, "r": reason},
+                    {
+                        "m": ids[label],
+                        "o": org,
+                        "u": user,
+                        "j": f"https://zoom.us/j/{label}",
+                        "k": f"zoom.us/j/{ids[label].hex}",
+                        "s": status,
+                        "r": reason,
+                    },
                 )
             conn.execute(
                 text(
@@ -478,6 +514,101 @@ def test_meetings_over_before_0010_never_get_minutes_or_a_recap(migrated: Postgr
         for label in ("recording", "dispatching"):  # still running: minutes when it ends
             assert rows[ids[label]] == ("none", "none", False), label
         assert forced == {"meetings": True, "mom_documents": True}
+    finally:
+        superuser.dispose()
+        _drop_database(migrated, name)
+
+
+# ─── 0011: stored Devanagari forms re-normalised ──────────────────────────────────────────────────
+
+
+def test_stored_devanagari_forms_are_refolded(migrated: Postgres) -> None:
+    import json
+    import uuid
+
+    from andai_core.text import canonical, fold
+
+    name, superuser = _fresh_database(migrated)
+    try:
+        owner_url = migrated.url("andai_owner", migrated.owner_password, name)
+        command.upgrade(alembic_config(owner_url), "0010")
+        org, user, meeting = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        body = {
+            "templateId": "standard", "outputLanguage": "hi", "summary": "कुलकर्णी जी से नमस्ते",
+            "decisions": [], "actionItems": [], "topics": [], "risks": [],
+            "llmProfileId": str(uuid.uuid4()), "model": "m",
+            "generatedAt": "2026-11-02T10:00:00Z",
+        }  # fmt: skip
+        with superuser.begin() as conn:  # the superuser is not bound by row-level security
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, email, display_name, status)"
+                    " VALUES (:u, :e, 'U', 'active')"
+                ),
+                {"u": user, "e": f"{user.hex}@example.test"},
+            )
+            conn.execute(
+                text("INSERT INTO orgs (id, name, slug) VALUES (:o, 'O', :s)"),
+                {"o": org, "s": f"o-{org.hex}"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO meetings (id, org_id, requested_by, platform, join_url,"
+                    " join_url_key, status, title, title_search)"
+                    " VALUES (:m, :o, :u, 'zoom', 'https://zoom.us/j/1', :k, 'done',"
+                    " 'सुरक्षा समीक्षा', 'surksha samiksha')"
+                ),
+                {"m": meeting, "o": org, "u": user, "k": f"zoom.us/j/{meeting.hex}"},
+            )
+            for seq, (seg, raw, script, roman) in enumerate(
+                [
+                    ("seg_a", "कुलकर्णी जी report bhejenge", "mixed", "kulakrni ji report bhejenge"),
+                    ("seg_b", "plain English only", "latn", "plain English only"),
+                ]
+            ):
+                conn.execute(
+                    text(
+                        "INSERT INTO transcript_segments (meeting_id, id, org_id, seq, speaker,"
+                        " text_raw, text_canonical, script, search_text)"
+                        " VALUES (:m, :i, :o, :q, 'A', :r, :c, :s, :f)"
+                    ),
+                    {"m": meeting, "i": seg, "o": org, "q": seq, "r": raw, "c": roman,
+                     "s": script, "f": roman.lower()},
+                )  # fmt: skip
+            conn.execute(
+                text(
+                    "INSERT INTO mom_documents (meeting_id, version, org_id, template_id,"
+                    " output_language, body, search_text)"
+                    " VALUES (:m, 1, :o, 'standard', 'hi', CAST(:b AS jsonb), 'kulakrni ji se namste')"
+                ),
+                {"m": meeting, "o": org, "b": json.dumps(body, ensure_ascii=False)},
+            )
+
+        command.upgrade(alembic_config(owner_url), "0011")
+
+        with superuser.connect() as conn:
+            segments = dict(
+                conn.execute(
+                    text("SELECT id, text_canonical || '|' || search_text FROM transcript_segments")
+                ).all()
+            )
+            document = conn.execute(text("SELECT search_text FROM mom_documents")).scalar_one()
+            title = conn.execute(text("SELECT title_search FROM meetings")).scalar_one()
+            forced = dict(
+                conn.execute(
+                    text(
+                        "SELECT relname, relforcerowsecurity FROM pg_class"
+                        " WHERE relname IN ('transcript_segments', 'mom_documents', 'meetings')"
+                    )
+                ).all()
+            )
+        roman = canonical("कुलकर्णी जी report bhejenge")
+        assert roman == "kulkarni ji report bhejenge"
+        assert segments["seg_a"] == f"{roman}|{fold(roman)}"
+        assert segments["seg_b"] == "plain English only|plain english only"  # not Devanagari
+        assert document == "kulkarni ji se namaste"
+        assert title == fold("सुरक्षा समीक्षा") == "suraksha samiksha"
+        assert forced == {"transcript_segments": True, "mom_documents": True, "meetings": True}
     finally:
         superuser.dispose()
         _drop_database(migrated, name)
