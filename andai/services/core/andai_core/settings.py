@@ -9,8 +9,9 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +81,20 @@ class Settings(BaseSettings):
     smtp_from: str = Field(default="munshi.ai <no-reply@munshi.invalid>", validation_alias="SMTP_FROM")
     smtp_starttls: bool = Field(default=False, validation_alias="SMTP_STARTTLS")
 
+    # The language model minutes are written with (MOM-01, D-47): one deployment-wide
+    # OpenAI-compatible route inside the perimeter. The base URL has no `/v1` (the client appends
+    # `/v1/chat/completions`); empty turns minutes off. There is no default host.
+    llm_base_url_raw: str = Field(default="", validation_alias="ANDAI_LLM_BASE_URL")
+    llm_api_key: SecretStr | None = Field(default=None, validation_alias="ANDAI_LLM_API_KEY")
+    llm_model: str = Field(default="", validation_alias="ANDAI_LLM_MODEL")
+    llm_context_tokens: int = Field(default=32000, gt=0, validation_alias="ANDAI_LLM_CONTEXT_TOKENS")
+    llm_max_output_tokens: int = Field(
+        default=4000, gt=0, validation_alias="ANDAI_LLM_MAX_OUTPUT_TOKENS"
+    )
+    llm_timeout_s: float = Field(default=120.0, gt=0, validation_alias="ANDAI_LLM_TIMEOUT_S")
+    # The zone a meeting's local date is taken in (relative due dates resolve against it).
+    default_timezone: str = Field(default="Asia/Kolkata", validation_alias="ANDAI_DEFAULT_TIMEZONE")
+
     redis_url: str = Field(default="redis://redis:6379/1", validation_alias="REDIS_URL")
 
     # The only origin allowed to make state-changing browser requests.
@@ -125,6 +140,15 @@ class Settings(BaseSettings):
     @property
     def trusted_proxies(self) -> list[str]:
         return [p.strip() for p in self.trusted_proxies_raw.split(",") if p.strip()]
+
+    @field_validator("default_timezone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("ANDAI_DEFAULT_TIMEZONE is not an IANA time zone") from None
+        return value
 
 
 @lru_cache(maxsize=1)
