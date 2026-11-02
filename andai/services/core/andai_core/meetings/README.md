@@ -36,6 +36,14 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   minutes) and `recap_state = pending` for the first version; a regenerate written meanwhile leaves
   it `pending` for the next claim. Typed failures go to `mom_error` and back off (30 s doubling,
   at most 30 min); `failed` after 8 attempts.
+- `recap.py` — the recap mail of a meeting's first minutes, for each recap `andai_claim_recap()`
+  hands andai-worker with a lease token: one plain-text mail (summary, decisions, action items with
+  owner and due date, "None recorded" for an empty section, the portal link `/meetings/<id>`) in the
+  minutes' output language with the template's headings, always of version 1, to the requester and
+  the active members of the meeting's team and nobody else (D-48). `send_one` re-checks the lease
+  under the row lock, sends before the commit that marks it `sent` (at-least-once only across a
+  crash in between); relay errors back off (30 s doubling), `failed` after 5; a deleted meeting, no
+  minutes or no recipient end `skipped`. Regenerated and edited versions never send.
 - `title.py` — `set_title`, the only writer of a meeting's title: it stores the title and its fold
   (`title_search`) together.
 - `shares.py` — grant and revoke read access to a user or team of the caller's org, each with its

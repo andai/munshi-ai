@@ -375,6 +375,6 @@ def test_the_worker_always_starts_the_deletion_loop(
     with caplog.at_level(logging.INFO, logger="andai_worker.main"):
         started = asyncio.run(main())
 
-    assert started == 2  # ingest and deletion: no canary links, no alert address
+    assert started == 3  # ingest, recap mail and deletion: no canary links, no alert address
     assert world.rows(superuser, meeting_id) == GONE
     assert any("meeting deletion every" in r.getMessage() for r in caplog.records)

@@ -1,5 +1,5 @@
-"""andai-worker: transcript ingest, minutes of meeting, meeting deletion, canary joins, metrics and
-operator alerts (BOT-04, D-34, PORT-04, MOM-01).
+"""andai-worker: transcript ingest, minutes of meeting and their recap mail, meeting deletion, canary
+joins, metrics and operator alerts (BOT-04, D-34, PORT-04, MOM-01, MOM-05).
 
 * `GET /healthz` — liveness.
 * `GET /metrics` — join, deletion and minutes metrics in Prometheus text format (`metrics.py`),
@@ -8,6 +8,7 @@ operator alerts (BOT-04, D-34, PORT-04, MOM-01).
   - transcript ingest (`ingest.py`), always: andai's own copy of every finished meeting;
   - minutes (`minutes.py`) when the LLM route is configured (`ANDAI_LLM_BASE_URL` and
     `ANDAI_LLM_MODEL`): the minutes of every finished meeting with a stored transcript;
+  - recap mail (`recap.py`), always: the first minutes to the requester and the meeting's team;
   - deletion (`deletion.py`), always: the purge of every meeting its users deleted;
   - canaries (`canary.py`) when at least one `ANDAI_CANARY_*_URL` is set;
   - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set.
@@ -39,7 +40,7 @@ from andai_core.llm.client import LlmClient, LlmConfig
 from andai_core.mail import Mailer, SmtpMailer
 from andai_core.meetings.service import Meetings
 from andai_core.platform.gateway_client import HttpPlatformGateway
-from andai_worker import alerts, canary, deletion, ingest, metrics, minutes
+from andai_worker import alerts, canary, deletion, ingest, metrics, minutes, recap
 from andai_worker.settings import WorkerSettings, get_worker_settings
 
 SERVICE_NAME = "andai-worker"
@@ -102,6 +103,15 @@ def jobs(services: WorkerServices) -> list[asyncio.Task]:
         log.info("minutes every %s s", minutes.TICK_S)
     else:
         log.info("ANDAI_LLM_BASE_URL or ANDAI_LLM_MODEL is empty: minutes off")
+    mailer = recap.RecapRunner(
+        services.engine,
+        services.mailer,
+        portal_origin=settings.portal_origin,
+        timezone=settings.default_timezone,
+        clock=services.clock,
+    )
+    tasks.append(asyncio.create_task(mailer.run(recap.TICK_S)))
+    log.info("recap mail every %s s", recap.TICK_S)
     purger = deletion.DeletionRunner(
         services.engine,
         services.meetings.keyring,
