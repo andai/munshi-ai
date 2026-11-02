@@ -62,9 +62,7 @@ WORDS: dict[str, dict[str, str]] = {
         "owner": "Owner",
         "due": "due",
         "link": "Read the full minutes and the transcript in munshi.ai:",
-        "why": (
-            "You get this mail because you sent munshi.ai to this meeting or are on its team."
-        ),
+        "why": ("You get this mail because you sent munshi.ai to this meeting or are on its team."),
     },
     "hi": {
         "subject": "कार्यवृत्त: {name}",
@@ -74,8 +72,7 @@ WORDS: dict[str, dict[str, str]] = {
         "due": "नियत तिथि",
         "link": "पूरा कार्यवृत्त और ट्रांसक्रिप्ट munshi.ai में देखें:",
         "why": (
-            "यह मेल आपको इसलिए मिला क्योंकि आपने munshi.ai को इस मीटिंग में भेजा था या आप "
-            "इसकी टीम में हैं।"
+            "यह मेल आपको इसलिए मिला क्योंकि आपने munshi.ai को इस मीटिंग में भेजा था या आप इसकी टीम में हैं।"
         ),
     },
     "hinglish": {
@@ -168,9 +165,7 @@ def body(meeting: Meeting, doc: Document, portal_link: str, meeting_date: date) 
 
     actions = []
     for item in doc.action_items:
-        owner = (
-            templates.UNASSIGNED_LABEL[language] if item.owner == UNASSIGNED else item.owner
-        )
+        owner = templates.UNASSIGNED_LABEL[language] if item.owner == UNASSIGNED else item.owner
         detail = f"{words['owner']}: {owner}"
         if item.due is not None:
             detail += f"; {words['due']} {item.due.isoformat()}"

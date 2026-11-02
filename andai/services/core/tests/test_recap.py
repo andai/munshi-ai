@@ -112,7 +112,9 @@ class World:
                         " FROM meetings WHERE id = :m"
                     ),
                     {"m": meeting_id},
-                ).mappings().one()
+                )
+                .mappings()
+                .one()
             )
 
     def send(self, meeting_id: uuid.UUID, lease: uuid.UUID, mailer) -> str:
@@ -179,7 +181,9 @@ def test_a_disabled_requester_gets_nothing(world: World) -> None:
     team = new_team(world.engine, world.org_id, {member.user_id: "member"})
     meeting_id = world.meeting(team)
     with transaction(world.engine) as tx:
-        tx.execute(text("UPDATE users SET status = 'disabled' WHERE id = :u"), {"u": world.requester})
+        tx.execute(
+            text("UPDATE users SET status = 'disabled' WHERE id = :u"), {"u": world.requester}
+        )
 
     assert world.recipients(meeting_id) == [member.email]
 

@@ -46,7 +46,9 @@ class World:
         with transaction(self.engine, org_id=org_id) as tx:
             seed_version(tx, org_id, meeting_id, support.mom_body(ids))
             tx.execute(
-                text("UPDATE meetings SET mom_state = 'stored', recap_state = 'pending' WHERE id = :m"),
+                text(
+                    "UPDATE meetings SET mom_state = 'stored', recap_state = 'pending' WHERE id = :m"
+                ),
                 {"m": meeting_id},
             )
         return meeting_id
