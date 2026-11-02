@@ -8,8 +8,10 @@ version's `body` is the SPEC `MomDocument`, its evidence lists naming andai tran
   (`GET /api/v1/meetings/{id}/mom`): 404 `no_such_meeting` for anyone else, 404 `no_minutes` when
   the meeting has none.
 * `seed_version(tx, org_id, meeting_id, body)` — validate a `MomDocument` against the SPEC schema
-  and the meeting's stored segments, and store it as the next version. In this phase only tests and
-  seeds call it; the MoM pipeline (Phase 6) will write through it.
+  and the meeting's stored segments, and store it as the next version (tests and seeds).
+* `next_version(tx, meeting_id)` and `insert_version(tx, org_id, meeting_id, doc, version)` — the
+  one insert of a version, shared by `seed_version` and `meetings/mom_writer.py` (the writer of
+  generated and edited minutes).
 * `search_text(body)` — the folded text search reads: summary, decisions, action items, topics and
   risks, the SPEC `MomDocument` text fields and nothing else.
 """
@@ -134,7 +136,7 @@ def read(tx: Tx, actor: Actor, meeting_id: uuid.UUID) -> dict:
     return row.body
 
 
-# ─── write (tests and seeds in this phase) ────────────────────────────────────────────────────────
+# ─── write ────────────────────────────────────────────────────────────────────────────────────────
 
 
 def seed_version(
@@ -169,12 +171,24 @@ def seed_version(
             raise MomError(
                 f"evidence names {len(missing)} id(s) that are not segments of the meeting"
             )
-    version = (
+    return insert_version(tx, org_id, meeting_id, doc, next_version(tx, meeting_id))
+
+
+def next_version(tx: Tx, meeting_id: uuid.UUID) -> int:
+    """One more than the meeting's newest version (1 for the first)."""
+    return (
         tx.scalar(
             select(func.max(MomDocument.version)).where(MomDocument.meeting_id == meeting_id)
         )
         or 0
     ) + 1
+
+
+def insert_version(
+    tx: Tx, org_id: uuid.UUID, meeting_id: uuid.UUID, doc: Document, version: int
+) -> MomDocument:
+    """Insert `doc` as `version` of the meeting's minutes (the caller has checked it). A version
+    that already exists raises the database's unique violation at the flush."""
     doc.meeting_id, doc.version = meeting_id, version
     row = MomDocument(
         meeting_id=meeting_id,
@@ -190,4 +204,14 @@ def seed_version(
     return row
 
 
-__all__ = ["NO_MINUTES", "Document", "MomError", "latest", "read", "search_text", "seed_version"]
+__all__ = [
+    "NO_MINUTES",
+    "Document",
+    "MomError",
+    "insert_version",
+    "latest",
+    "next_version",
+    "read",
+    "search_text",
+    "seed_version",
+]

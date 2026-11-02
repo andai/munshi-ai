@@ -10,6 +10,9 @@ principal on the meeting platform, provisioned through its admin-api, key sealed
 the gateway client that dispatches and reads bots with that key), `meetings/` (paste-link
 dispatch, meeting status and typed failure reasons, the consent record, the reconciler, the
 transcript and the live status and transcript relay),
+`llm/` (the minutes language model: one env-configured OpenAI-compatible route, schema-constrained
+calls with typed errors, and a live probe), `minutes/` (minutes templates, prompts, transcript
+packing, draft generation with map-reduce, and the owner and due-date rules),
 `mail.py` (settings-only SMTP), `__main__.py` (operator CLI: `python -m andai_core bootstrap | principals-sync | canary-setup`),
 `db/` (schema and RLS-scoped transactions), `crypto.py` (envelope encryption of stored secrets
 under the KEK) and `audit.py` (append-only audit events).

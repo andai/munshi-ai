@@ -17,11 +17,17 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
 - `listing.py` — the dashboard list: Live / Upcoming / Past sections by status, newest first,
   filters `all | mine | shared | team:<id>`, keyset pages with an opaque cursor; access filtered in
   SQL before the limit, no totals. `has_minutes` says whether a minutes version exists.
-- `mom.py` — minutes of meeting, read only in this phase: the latest version of a meeting's SPEC
+- `mom.py` — minutes of meeting: the latest version of a meeting's SPEC
   `MomDocument` for its readers (404 `no_minutes` when there is none). Its evidence ids are
   transcript segment ids. `seed_version` validates a document against the schema and the meeting's
-  stored segments before storing the next version; tests and seeds call it, and Phase 6's pipeline
-  will. Versions are never changed (the app role may only SELECT and INSERT `mom_documents`).
+  stored segments before storing the next version (tests and seeds). Versions are never changed (the app role may only SELECT and INSERT `mom_documents`).
+- `mom_writer.py` — the one write path for minutes versions, generated or edited:
+  `build_document` (no database) keeps only items citing segments of the meeting (generated drafts
+  drop the rest and count them; edits are refused with the section and index), applies the owner
+  rule and resolves due dates for generated drafts, and fills ids, version, profile, model and
+  times; `write_version` stores the result as the next version under the org transaction, through
+  the same insert as `seed_version`, retrying once on a concurrent version and refusing a stale
+  `base_version` (`VersionConflict`).
 - `title.py` — `set_title`, the only writer of a meeting's title: it stores the title and its fold
   (`title_search`) together.
 - `shares.py` — grant and revoke read access to a user or team of the caller's org, each with its
