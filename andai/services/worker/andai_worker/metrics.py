@@ -1,10 +1,11 @@
-"""Join and deletion metrics in Prometheus text format, computed from andai's own rows on every
-scrape.
+"""Join, deletion and minutes metrics in Prometheus text format, computed from andai's own rows on
+every scrape.
 
 The worker connects as `andai_app` and reads meetings across orgs only through
 `andai_join_stats(since)` (migration 0005), which returns `(platform, source, outcome, reason,
-count)` aggregates and nothing else, and `andai_deletion_backlog()` (0009), which returns a count
-and a time; canary runs come from the org-less `canary_runs` table.
+count)` aggregates and nothing else, `andai_deletion_backlog()` (0009), which returns a count
+and a time, and `andai_mom_stats(since)` (0010), which returns two counts and a list of durations;
+canary runs come from the org-less `canary_runs` table.
 
 Exported series (labels are enums only: no link, name, email, org or id ever becomes a label):
 
@@ -21,6 +22,11 @@ Exported series (labels are enums only: no link, name, email, org or id ever bec
   (`pending`, or `failed` after the purge spent its attempts).
 * `munshi_deletion_oldest_pending_seconds` — how long ago the oldest of them was deleted (0 when
   there is none); above 900 the 15-minute purge target (PORT-04) is missed.
+* `munshi_mom_pending` — finished meetings with a stored transcript whose minutes are still owed
+  (`none` or `pending`: not yet claimed, running, retrying or waiting for a regenerate).
+* `munshi_mom_failed_total` — meetings whose minutes failed after every attempt (`failed`).
+* `munshi_mom_latency_seconds` — histogram of meeting end → first minutes stored, over the meetings
+  whose first minutes were stored in the last 24 h (SC2's p95 is read from it).
 
 `join_counts`, `rates` and `canary_summary` are shared with the alert evaluator, so a mail and the
 metrics never disagree about the numbers.
@@ -34,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from prometheus_client import CollectorRegistry, generate_latest
-from prometheus_client.core import GaugeMetricFamily, Metric
+from prometheus_client.core import GaugeMetricFamily, HistogramMetricFamily, Metric
 from sqlalchemy import Engine, text
 
 from andai_core.db.session import transaction
@@ -226,10 +232,68 @@ class DeletionCollector:
         )
 
 
+# End → first minutes, in seconds (SC2: p95 at most 10 minutes).
+MOM_LATENCY_BUCKETS = (30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0)
+
+
+@dataclass(frozen=True)
+class MomStats:
+    pending: int
+    failed: int
+    latencies: list[float]
+
+
+def mom_stats(engine: Engine, since: datetime) -> MomStats:
+    """`andai_mom_stats(since)` as `andai_app` with no org context."""
+    with transaction(engine) as tx:
+        row = tx.execute(
+            text("SELECT pending, failed, latencies FROM andai_mom_stats(:since)"),
+            {"since": since},
+        ).one()
+    return MomStats(int(row.pending), int(row.failed), [float(v) for v in row.latencies or []])
+
+
+class MomCollector:
+    """Minutes still owed, failed, and how long they took, read on every scrape."""
+
+    def __init__(self, engine: Engine, clock: Callable[[], datetime]) -> None:
+        self.engine = engine
+        self.clock = clock
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def collect(self) -> Iterator[Metric]:
+        stats = mom_stats(self.engine, self.clock() - WINDOW)
+        yield GaugeMetricFamily(
+            "munshi_mom_pending",
+            "Finished meetings with a stored transcript whose minutes are still owed.",
+            value=stats.pending,
+        )
+        yield GaugeMetricFamily(
+            "munshi_mom_failed_total",
+            "Meetings whose minutes failed after every attempt.",
+            value=stats.failed,
+        )
+        buckets = [
+            (str(bound), sum(1 for v in stats.latencies if v <= bound))
+            for bound in MOM_LATENCY_BUCKETS
+        ]
+        buckets.append(("+Inf", len(stats.latencies)))
+        yield HistogramMetricFamily(
+            "munshi_mom_latency_seconds",
+            "Seconds from meeting end to its first minutes stored, for minutes stored in the last"
+            " 24 hours.",
+            buckets=buckets,
+            sum_value=sum(stats.latencies),
+        )
+
+
 def registry_for(engine: Engine, clock: Callable[[], datetime]) -> CollectorRegistry:
     registry = CollectorRegistry(auto_describe=False)
     registry.register(JoinCollector(engine, clock))
     registry.register(DeletionCollector(engine, clock))
+    registry.register(MomCollector(engine, clock))
     return registry
 
 

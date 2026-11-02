@@ -28,6 +28,14 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   times; `write_version` stores the result as the next version under the org transaction, through
   the same insert as `seed_version`, retrying once on a concurrent version and refusing a stale
   `base_version` (`VersionConflict`).
+- `minutes_job.py` — one run of a meeting's minutes job, for each meeting `andai_claim_mom()` hands
+  andai-worker with a lease token: load the stored transcript (`text_raw`), attendees, local date and
+  dispatch language (or a pending regenerate's `mom_request`); an empty transcript ends `skipped`;
+  otherwise generate the draft and store it through `write_version` under the row lock, only while
+  the meeting is undeleted and still holds the lease. Sets `mom_state = stored`, `mom_at` (first
+  minutes) and `recap_state = pending` for the first version; a regenerate written meanwhile leaves
+  it `pending` for the next claim. Typed failures go to `mom_error` and back off (30 s doubling,
+  at most 30 min); `failed` after 8 attempts.
 - `title.py` — `set_title`, the only writer of a meeting's title: it stores the title and its fold
   (`title_search`) together.
 - `shares.py` — grant and revoke read access to a user or team of the caller's org, each with its
@@ -36,7 +44,7 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
 - `service.py` — link family check, one live bot per link per org, dispatch with the org's key and
   its fixed defaults (bot name, language, lobby and alone timeouts, recording notice), the 12-hour
   no-rejoin rule after a removal (D-38, from consent records and removal markers), stop, and the API view (passcode only for the requester
-  and admins; also `title`, `attendees`, `transcript_state`, team and requester names, the
+  and admins; also `title`, `attendees`, `transcript_state`, `mom_state` and `mom_error`, team and requester names, the
   caller's `permissions`, and `shared_with` for those who may share). Source `canary` only from the
   canary org, which sends nothing else; `canary_actor` is how andai-worker acts as that org.
 - `deletion.py` — `request_delete` (requester, admins, owners; 409 `meeting_live` while the bot is

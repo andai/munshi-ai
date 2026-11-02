@@ -1,6 +1,6 @@
 """andai-worker `/metrics`: join counts across orgs through `andai_join_stats`, D-39 success rates,
-canary streaks, the deletion backlog through `andai_deletion_backlog`, and labels that carry no
-personal or customer data.
+canary streaks, the deletion backlog through `andai_deletion_backlog`, the minutes pipeline through
+`andai_mom_stats`, and labels that carry no personal or customer data.
 
 Each test that counts rows uses a brand-new database (`fresh_app_engine`), so the golden text is
 exact.
@@ -126,6 +126,25 @@ munshi_deletions_pending 0.0
 # HELP munshi_deletion_oldest_pending_seconds Seconds since the oldest deleted, not yet purged meeting was deleted (0 when none).
 # TYPE munshi_deletion_oldest_pending_seconds gauge
 munshi_deletion_oldest_pending_seconds 0.0
+# HELP munshi_mom_pending Finished meetings with a stored transcript whose minutes are still owed.
+# TYPE munshi_mom_pending gauge
+munshi_mom_pending 0.0
+# HELP munshi_mom_failed_total Meetings whose minutes failed after every attempt.
+# TYPE munshi_mom_failed_total gauge
+munshi_mom_failed_total 0.0
+# HELP munshi_mom_latency_seconds Seconds from meeting end to its first minutes stored, for minutes stored in the last 24 hours.
+# TYPE munshi_mom_latency_seconds histogram
+munshi_mom_latency_seconds_bucket{le="30.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="60.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="120.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="300.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="600.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="900.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="1800.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="3600.0"} 0.0
+munshi_mom_latency_seconds_bucket{le="+Inf"} 0.0
+munshi_mom_latency_seconds_count 0.0
+munshi_mom_latency_seconds_sum 0.0
 """
 
 
@@ -150,7 +169,7 @@ def test_metrics_carry_no_links_names_emails_or_ids(fresh_app_engine: Engine) ->
     assert "http" not in body and "@" not in body and "secret" not in body
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", body)
     labels = set(re.findall(r'(\w+)="', body))
-    assert labels == {"platform", "source", "outcome", "reason"}
+    assert labels == {"platform", "source", "outcome", "reason", "le"}  # le: histogram bounds
 
 
 def test_collector_sees_every_org_while_the_app_role_sees_no_meeting(
@@ -272,3 +291,56 @@ def test_canary_setup_flags_one_org_and_customer_orgs_stay_unflagged(
     with transaction(fresh_app_engine) as tx:
         flagged = tx.execute(text("SELECT andai_canary_org_id()")).scalar_one()
     assert flagged == canary_org
+
+
+def _set(engine: Engine, org_id: uuid.UUID, meeting_id: uuid.UUID, **values) -> None:
+    assignments = ", ".join(f"{column} = :{column}" for column in values)
+    with transaction(engine, org_id=org_id) as tx:
+        tx.execute(
+            text(f"UPDATE meetings SET {assignments} WHERE id = :m"), {"m": meeting_id, **values}
+        )
+
+
+def _value(text_body: str, series: str) -> float:
+    match = re.search(rf"^{re.escape(series)} (\S+)$", text_body, re.MULTILINE)
+    assert match, series
+    return float(match.group(1))
+
+
+def test_the_minutes_metrics_count_every_org_and_measure_end_to_stored(
+    fresh_app_engine: Engine,
+) -> None:
+    engine = fresh_app_engine
+    a, b = new_member(engine), new_member(engine)
+    now = datetime.now(UTC)
+    ended = now - timedelta(minutes=20)
+
+    def m(member, **values):
+        meeting_id = seed_meeting(engine, member.org_id, member.user_id)
+        _set(engine, member.org_id, meeting_id, **values)
+        return meeting_id
+
+    m(a, transcript_state="stored")                                        # owed, never claimed
+    m(b, transcript_state="stored", mom_state="pending", mom_attempts=2)   # owed, retrying
+    m(a, transcript_state="pending")                                       # not owed yet
+    m(b, transcript_state="stored", mom_state="failed", mom_error="llm_unavailable")
+    for seconds in (20, 45, 400):                                          # stored, 3 latencies
+        m(a, transcript_state="stored", mom_state="stored", ended_at=ended,
+          mom_at=ended + timedelta(seconds=seconds))
+    m(b, transcript_state="stored", mom_state="stored", ended_at=now - timedelta(days=3),
+      mom_at=now - timedelta(days=2))                                      # out of the window
+    m(a, transcript_state="stored", deleted_at=now, deletion_state="pending")  # hidden
+
+    scraped = _scrape(engine)
+
+    assert _value(scraped, "munshi_mom_pending") == 2
+    assert _value(scraped, "munshi_mom_failed_total") == 1
+    assert _value(scraped, 'munshi_mom_latency_seconds_bucket{le="30.0"}') == 1
+    assert _value(scraped, 'munshi_mom_latency_seconds_bucket{le="60.0"}') == 2
+    assert _value(scraped, 'munshi_mom_latency_seconds_bucket{le="300.0"}') == 2
+    assert _value(scraped, 'munshi_mom_latency_seconds_bucket{le="600.0"}') == 3
+    assert _value(scraped, 'munshi_mom_latency_seconds_bucket{le="+Inf"}') == 3
+    assert _value(scraped, "munshi_mom_latency_seconds_count") == 3
+    assert abs(_value(scraped, "munshi_mom_latency_seconds_sum") - 465) < 0.01
+    for leaked in (a.org_id, b.org_id, a.email, b.email):
+        assert str(leaked) not in scraped
