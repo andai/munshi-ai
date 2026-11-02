@@ -1,0 +1,71 @@
+{
+ "id": "11-app-release-standup",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "Mobile app release stand-up",
+ "meeting_date": "2026-12-11",
+ "duration_min": 6,
+ "attendees": ["Siddhi Rane", "Faisal Mirza", "Gitanjali Das", "Prateek Sharma"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Siddhi Rane", "text": "Morning sab. Friday hai, toh jaldi khatam karte hain. Release ka status batao."},
+  {"id": "s002", "start_s": 8, "speaker": "Faisal Mirza", "text": "Mera update: cart wala refactor merge ho gaya, bas ek login crash bacha hai."},
+  {"id": "s003", "start_s": 16, "speaker": "Siddhi Rane", "text": "Login crash? Woh kab se aa raha hai?"},
+  {"id": "s004", "start_s": 22, "speaker": "Faisal Mirza", "text": "Kal raat se, purane phones pe jab session expire hota hai tab app band ho jata hai."},
+  {"id": "s005", "start_s": 32, "speaker": "Gitanjali Das", "text": "QA mein bhi dikha, das mein se teen baar reproduce hua purane devices pe."},
+  {"id": "s006", "start_s": 40, "speaker": "Siddhi Rane", "text": "Ye toh blocker hai. Bina iske release nahi jaa sakti."},
+  {"id": "s007", "start_s": 46, "speaker": "Faisal Mirza", "text": "Root cause mil gaya hai, token refresh mein null check missing hai. Fix chhota hai."},
+  {"id": "s008", "start_s": 55, "speaker": "Siddhi Rane", "text": "Faisal, login crash ka fix Monday tak chahiye, uske baad hi build banega."},
+  {"id": "s009", "start_s": 63, "speaker": "Faisal Mirza", "text": "Haan Monday tak fix aur test dono ho jayega, weekend pe nahi karna padega shayad."},
+  {"id": "s010", "start_s": 72, "speaker": "Prateek Sharma", "text": "Waise office ki year-end party 24 December ko hai, uske pehle sab release ho jana chahiye."},
+  {"id": "s011", "start_s": 81, "speaker": "Siddhi Rane", "text": "Party ki date alag hai Prateek, uska release se koi lena dena nahi."},
+  {"id": "s012", "start_s": 89, "speaker": "Prateek Sharma", "text": "Haha theek hai, bas yaad dila raha tha."},
+  {"id": "s013", "start_s": 95, "speaker": "Siddhi Rane", "text": "Dark mode ka kya status hai?"},
+  {"id": "s014", "start_s": 100, "speaker": "Gitanjali Das", "text": "Dark mode mein abhi bhi teen screens pe text dikh nahi raha, contrast issue hai."},
+  {"id": "s015", "start_s": 109, "speaker": "Prateek Sharma", "text": "Design team ne naye colours bheje hain par unko lagane mein do din aur lagenge."},
+  {"id": "s016", "start_s": 118, "speaker": "Siddhi Rane", "text": "Mujhe lagta hai dark mode is release se bahar karte hain, adha-adhura nahi bhejna."},
+  {"id": "s017", "start_s": 126, "speaker": "Faisal Mirza", "text": "Haan, feature flag ke peeche rakh dete hain, agle release mein on karenge."},
+  {"id": "s018", "start_s": 134, "speaker": "Siddhi Rane", "text": "Final: dark mode is release mein nahi jayega, agli release mein."},
+  {"id": "s019", "start_s": 141, "speaker": "Gitanjali Das", "text": "Theek hai, main uske test cases next sprint mein move kar deti hoon."},
+  {"id": "s020", "start_s": 149, "speaker": "Siddhi Rane", "text": "Release date pe aate hain. Login fix Monday ko aaya toh Tuesday ko QA, Wednesday release?"},
+  {"id": "s021", "start_s": 158, "speaker": "Gitanjali Das", "text": "Ek din QA kam hai, payments flow ka regression bhi karna hai."},
+  {"id": "s022", "start_s": 165, "speaker": "Prateek Sharma", "text": "Toh Wednesday 16 December ko release rakhte hain, Tuesday poora QA ke liye."},
+  {"id": "s023", "start_s": 173, "speaker": "Siddhi Rane", "text": "Haan, release 16 December, Wednesday ko final. Store submission subah karenge."},
+  {"id": "s024", "start_s": 180, "speaker": "Gitanjali Das", "text": "Payments ka regression main kar lungi, Tuesday ko poora din usi pe."},
+  {"id": "s025", "start_s": 187, "speaker": "Siddhi Rane", "text": "Gitanjali, regression mein wallet aur card dono flow cover karna."},
+  {"id": "s026", "start_s": 193, "speaker": "Gitanjali Das", "text": "Haan, dono cover karungi, pichhli baar card wale mein hi bug nikla tha."},
+  {"id": "s027", "start_s": 201, "speaker": "Prateek Sharma", "text": "Ek idea tha, release ke saath sab users ko push notification campaign bhej dein, naye features ke baare mein."},
+  {"id": "s028", "start_s": 212, "speaker": "Siddhi Rane", "text": "Naye features hain kahan, dark mode toh hata diya. Notification campaign abhi nahi."},
+  {"id": "s029", "start_s": 220, "speaker": "Faisal Mirza", "text": "Haan, bina feature ke notification bhejenge toh log uninstall karenge."},
+  {"id": "s030", "start_s": 226, "speaker": "Prateek Sharma", "text": "Theek hai, notification wala idea drop."},
+  {"id": "s031", "start_s": 231, "speaker": "Siddhi Rane", "text": "Release notes bhi likhne hain, store pe aur blog pe dono."},
+  {"id": "s032", "start_s": 238, "speaker": "Faisal Mirza", "text": "Mujhse mat likhwana, meri English notes mein bahut technical ho jaati hai."},
+  {"id": "s033", "start_s": 245, "speaker": "Siddhi Rane", "text": "Koi likh dega, jisko time mile. Agle hafte ke end tak release notes ready chahiye."},
+  {"id": "s034", "start_s": 254, "speaker": "Gitanjali Das", "text": "Main dekhti hoon agar Tuesday ke baad time mila, par promise nahi."},
+  {"id": "s035", "start_s": 261, "speaker": "Siddhi Rane", "text": "Theek hai, koi na koi likh dega, bas tracker mein ticket bana do."},
+  {"id": "s036", "start_s": 269, "speaker": "Prateek Sharma", "text": "Crash reporting tool ka dashboard bhi koi nahi dekh raha aajkal."},
+  {"id": "s037", "start_s": 276, "speaker": "Faisal Mirza", "text": "Haan, alerts sab ek channel mein aate hain jo sabne mute kar rakha hai."},
+  {"id": "s038", "start_s": 284, "speaker": "Siddhi Rane", "text": "Woh retro mein uthaate hain, abhi release pe focus."},
+  {"id": "s039", "start_s": 290, "speaker": "Prateek Sharma", "text": "Backend ka naya API version deploy ho gaya hai, purana bhi chalu hai ek mahine ke liye."},
+  {"id": "s040", "start_s": 300, "speaker": "Faisal Mirza", "text": "Achha hai, toh purane app versions nahi tootenge."},
+  {"id": "s041", "start_s": 306, "speaker": "Siddhi Rane", "text": "Good. Kisi ko kuch aur?"},
+  {"id": "s042", "start_s": 310, "speaker": "Gitanjali Das", "text": "Mere device lab mein do phones ki battery phool gayi hai, unko replace karna hai."},
+  {"id": "s043", "start_s": 319, "speaker": "Siddhi Rane", "text": "Admin ko mail kar do, main approve kar dungi."},
+  {"id": "s044", "start_s": 325, "speaker": "Gitanjali Das", "text": "Theek hai."},
+  {"id": "s045", "start_s": 329, "speaker": "Siddhi Rane", "text": "Chalo, have a good weekend sab. Monday ko Faisal ke fix ke baad baat karte hain."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "Dark mode is left out of this release and ships in the next one.", "match": [["dark mode", "dark"]], "evidence": ["s016", "s018"]},
+   {"id": "D2", "fact": "The release goes out on Wednesday 16 December.", "match": [["release"], ["16"]], "evidence": ["s022", "s023"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Faisal fixes and tests the login crash on older phones.", "match": [["login"], ["crash"]], "owner": "Faisal Mirza", "due": "2026-12-14", "due_phrase": "Monday tak", "evidence": ["s008", "s009"]},
+   {"id": "A2", "fact": "Someone writes the release notes for the store and the blog; nobody named.", "match": [["release notes", "notes"]], "owner": "unassigned", "due": "2026-12-18", "due_phrase": "Agle hafte ke end tak", "evidence": ["s033", "s035"]},
+   {"id": "A3", "fact": "Gitanjali runs the payments regression covering wallet and card flows.", "match": [["regression"]], "owner": "Gitanjali Das", "due": null, "due_phrase": null, "evidence": ["s024", "s025"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "A push notification campaign with the release was suggested and dropped.", "match": [["notification"]], "evidence": ["s027", "s030"]},
+   {"id": "X2", "kind": "other_date", "fact": "24 December is the year-end party, not the login fix's due date.", "match": [["party"]], "evidence": ["s010"]}
+  ]
+ }
+}

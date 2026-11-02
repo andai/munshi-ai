@@ -1,0 +1,72 @@
+{
+ "id": "04-school-annual-day",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "School annual day coordination",
+ "meeting_date": "2026-10-22",
+ "duration_min": 6,
+ "attendees": ["Kavita Rawat", "Deepak Saini", "Farah Siddiqui", "Gaurav Nanda"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Kavita Rawat", "text": "Good afternoon sab ko. Annual day ki planning shuru karte hain, bas ek mahina bacha hai."},
+  {"id": "s002", "start_s": 9, "speaker": "Deepak Saini", "text": "Ma'am, date 20 November hi rahegi na? Parents puchh rahe hain."},
+  {"id": "s003", "start_s": 16, "speaker": "Kavita Rawat", "text": "Haan, 20 November Friday, woh fix hai. Aaj venue aur programme pe baat karni hai."},
+  {"id": "s004", "start_s": 25, "speaker": "Gaurav Nanda", "text": "Pichhli baar auditorium mein jagah kam pad gayi thi, log gallery mein khade the."},
+  {"id": "s005", "start_s": 33, "speaker": "Farah Siddiqui", "text": "Haan, aur AC bhi kaam nahi kar raha tha, bachche costume mein pareshaan ho gaye the."},
+  {"id": "s006", "start_s": 42, "speaker": "Deepak Saini", "text": "Is baar school ground mein karte hain, shaam ko mausam bhi achha rehta hai November mein."},
+  {"id": "s007", "start_s": 51, "speaker": "Kavita Rawat", "text": "Ground mein lighting aur stage ka kharcha alag aayega, Deepak ji."},
+  {"id": "s008", "start_s": 58, "speaker": "Deepak Saini", "text": "Ma'am stage ke liye tent wala bhaiya pehle bhi kaam kar chuka hai, rate theek deta hai."},
+  {"id": "s009", "start_s": 68, "speaker": "Gaurav Nanda", "text": "Main ground ke favour mein hoon, kam se kam baithne ki jagah toh hogi."},
+  {"id": "s010", "start_s": 76, "speaker": "Kavita Rawat", "text": "Theek hai, decide karte hain, annual day is baar school ground mein hoga, auditorium mein nahi."},
+  {"id": "s011", "start_s": 85, "speaker": "Farah Siddiqui", "text": "Achha decision hai ma'am."},
+  {"id": "s012", "start_s": 89, "speaker": "Gaurav Nanda", "text": "Ek suggestion hai, parents se ticket le lete hain, sau rupaye, kharcha nikal jayega."},
+  {"id": "s013", "start_s": 97, "speaker": "Kavita Rawat", "text": "Nahi Gaurav ji, management fees ke upar extra charge allow nahi karega, complaint aayegi."},
+  {"id": "s014", "start_s": 105, "speaker": "Deepak Saini", "text": "Haan, pichhle saal PTA meeting mein fees ko leke pehle hi kaafi bahas hui thi."},
+  {"id": "s015", "start_s": 114, "speaker": "Kavita Rawat", "text": "Ticket wala idea chhod dete hain, entry free hi rahegi."},
+  {"id": "s016", "start_s": 120, "speaker": "Gaurav Nanda", "text": "Theek hai ma'am, bas ek option bataya tha."},
+  {"id": "s017", "start_s": 126, "speaker": "Kavita Rawat", "text": "Ab invitation. Pichhli baar printed cards pe kaafi paisa gaya tha."},
+  {"id": "s018", "start_s": 133, "speaker": "Farah Siddiqui", "text": "Aur aadhe cards toh bachchon ke bag mein hi reh gaye, parents tak pahunche hi nahi."},
+  {"id": "s019", "start_s": 142, "speaker": "Deepak Saini", "text": "Class groups pe digital invitation bhej dete hain, ek PDF aur ek chhota video."},
+  {"id": "s020", "start_s": 150, "speaker": "Kavita Rawat", "text": "Haan, is baar sirf digital invitation jayega, printed card nahi chhapenge."},
+  {"id": "s021", "start_s": 157, "speaker": "Gaurav Nanda", "text": "Chief guest ke liye ek printed card bana lenge, woh alag baat hai."},
+  {"id": "s022", "start_s": 165, "speaker": "Kavita Rawat", "text": "Haan, woh ek-do card theek hain. Programme pe aate hain. Farah, dance ka kya status hai?"},
+  {"id": "s023", "start_s": 174, "speaker": "Farah Siddiqui", "text": "Class 5 se 8 tak teen group dance honge, par abhi naam final nahi hue."},
+  {"id": "s024", "start_s": 183, "speaker": "Kavita Rawat", "text": "Naam jaldi chahiye, costume ka order dena hai, tailor time leta hai."},
+  {"id": "s025", "start_s": 190, "speaker": "Farah Siddiqui", "text": "Main sab class teachers se naam le leti hoon, dance ki final list bana dungi."},
+  {"id": "s026", "start_s": 199, "speaker": "Kavita Rawat", "text": "Farah, list parso tak de do, Saturday hai lekin half day school hai."},
+  {"id": "s027", "start_s": 207, "speaker": "Farah Siddiqui", "text": "Haan ma'am, parso tak list aapki table pe hogi."},
+  {"id": "s028", "start_s": 213, "speaker": "Deepak Saini", "text": "Ma'am yaad rahe, half-yearly exams 2 November se shuru ho rahe hain, practice usse pehle karni hogi."},
+  {"id": "s029", "start_s": 223, "speaker": "Kavita Rawat", "text": "Haan exams wali date alag hai, practice timetable usi hisaab se banayenge."},
+  {"id": "s030", "start_s": 230, "speaker": "Gaurav Nanda", "text": "Sound system ka kya? School wala system ground ke liye kaafi nahi hoga."},
+  {"id": "s031", "start_s": 238, "speaker": "Deepak Saini", "text": "Bahar se rent pe lena padega, do teen vendors se quote lene padenge."},
+  {"id": "s032", "start_s": 246, "speaker": "Kavita Rawat", "text": "Sound ka quote koi bhi teacher le aaye, jiske paas free period ho."},
+  {"id": "s033", "start_s": 254, "speaker": "Farah Siddiqui", "text": "Mere paas toh dance ki practice hai, mujhe chhod do."},
+  {"id": "s034", "start_s": 260, "speaker": "Kavita Rawat", "text": "Koi na koi le aayega, bas agle somvar tak sound ke quotes mere paas hone chahiye."},
+  {"id": "s035", "start_s": 269, "speaker": "Gaurav Nanda", "text": "Ma'am, chief guest kaun hoga is baar?"},
+  {"id": "s036", "start_s": 274, "speaker": "Kavita Rawat", "text": "Woh management decide karega, unhone do naam diye hain, abhi confirm nahi hai."},
+  {"id": "s037", "start_s": 282, "speaker": "Deepak Saini", "text": "Parking ka bhi sochna padega, ground use hoga toh gaadiyan kahan khadi hongi?"},
+  {"id": "s038", "start_s": 290, "speaker": "Gaurav Nanda", "text": "Saamne wali gali mein ho sakta hai. Kavita ma'am, traffic police se aap hi baat kar lo, aapki baat sunte hain."},
+  {"id": "s039", "start_s": 301, "speaker": "Kavita Rawat", "text": "Haan woh main khud dekh lungi, principal ke letter se kaam jaldi hota hai."},
+  {"id": "s040", "start_s": 309, "speaker": "Farah Siddiqui", "text": "Ma'am refreshments ka kya, pichhli baar samose kam pad gaye the."},
+  {"id": "s041", "start_s": 316, "speaker": "Kavita Rawat", "text": "Haha, haan yaad hai. Woh canteen wale se baad mein baat karenge, abhi budget aana baaki hai."},
+  {"id": "s042", "start_s": 326, "speaker": "Deepak Saini", "text": "Photographer bhi wahi purana rakhein?"},
+  {"id": "s043", "start_s": 330, "speaker": "Kavita Rawat", "text": "Haan, unka kaam achha tha, unko hi bulayenge."},
+  {"id": "s044", "start_s": 336, "speaker": "Gaurav Nanda", "text": "Theek hai ma'am, mere side se sab clear hai."},
+  {"id": "s045", "start_s": 342, "speaker": "Farah Siddiqui", "text": "Mere bhi, main dance list pe lag jaati hoon."},
+  {"id": "s046", "start_s": 348, "speaker": "Kavita Rawat", "text": "Chaliye, thank you sab ko. Agle hafte phir baithte hain."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "The annual day is held on the school ground instead of the auditorium.", "match": [["ground", "maidan"]], "evidence": ["s010"]},
+   {"id": "D2", "fact": "Invitations to parents go out only digitally; no printed cards.", "match": [["invitation", "invite", "card", "nimantran"], ["digital", "online"]], "evidence": ["s019", "s020"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Farah collects names from class teachers and prepares the final dance list.", "match": [["dance"], ["list", "names", "naam"]], "owner": "Farah Siddiqui", "due": "2026-10-24", "due_phrase": "parso tak", "evidence": ["s025", "s026", "s027"]},
+   {"id": "A2", "fact": "A teacher gets quotes for renting a sound system; nobody named.", "match": [["sound"], ["quote", "quotes", "quotation"]], "owner": "unassigned", "due": "2026-10-26", "due_phrase": "agle somvar tak", "evidence": ["s032", "s034"]},
+   {"id": "A3", "fact": "Kavita speaks to the traffic police about parking near the ground.", "match": [["parking", "traffic"]], "owner": "Kavita Rawat", "due": null, "due_phrase": null, "evidence": ["s038", "s039"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "Charging parents Rs 100 for tickets was suggested and dropped.", "match": [["ticket", "tickets"]], "evidence": ["s012", "s015"]},
+   {"id": "X2", "kind": "other_date", "fact": "2 November is when half-yearly exams start, not the dance list's due date.", "match": [["exam", "exams", "pariksha"]], "evidence": ["s028"]}
+  ]
+ }
+}

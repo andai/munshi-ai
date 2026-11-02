@@ -1,0 +1,71 @@
+{
+ "id": "03-packaging-vendor",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "Packaging vendor negotiation",
+ "meeting_date": "2026-10-14",
+ "duration_min": 6,
+ "attendees": ["Neha Bhatt", "Aman Khurana", "Suresh Patil"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Neha Bhatt", "text": "Namaste Suresh ji, aaj boxes ke rate aur delivery pe baat final karni hai."},
+  {"id": "s002", "start_s": 8, "speaker": "Suresh Patil", "text": "Namaste madam. Haan, maine pichhle hafte jo quote bheja tha woh aapne dekha?"},
+  {"id": "s003", "start_s": 16, "speaker": "Aman Khurana", "text": "Dekha, aapne 5-ply box ka 21 rupaye per piece bola hai. Ye bahut zyada hai."},
+  {"id": "s004", "start_s": 25, "speaker": "Suresh Patil", "text": "Madam kraft paper ka rate badh gaya hai, पिछले महीने से बारह प्रतिशत ऊपर है।"},
+  {"id": "s005", "start_s": 34, "speaker": "Neha Bhatt", "text": "Woh samajh rahe hain, par hum quantity bhi double kar rahe hain, bees hazaar boxes."},
+  {"id": "s006", "start_s": 43, "speaker": "Aman Khurana", "text": "Doosre supplier ne 17 bola hai, bas unki quality pe bharosa nahi hai."},
+  {"id": "s007", "start_s": 51, "speaker": "Suresh Patil", "text": "Sattrah mein toh main 3-ply hi de paunga, 5-ply nahi."},
+  {"id": "s008", "start_s": 57, "speaker": "Neha Bhatt", "text": "Toh beech ka rasta nikalte hain. 18 rupaye pe aap ready ho?"},
+  {"id": "s009", "start_s": 64, "speaker": "Suresh Patil", "text": "Bees hazaar ka order pakka hai toh 18 chal jayega, par payment thirty days mein chahiye."},
+  {"id": "s010", "start_s": 73, "speaker": "Aman Khurana", "text": "Thirty days theek hai, hamara standard bhi wahi hai."},
+  {"id": "s011", "start_s": 79, "speaker": "Neha Bhatt", "text": "Theek hai, toh final: bees hazaar 5-ply boxes, 18 rupaye per box."},
+  {"id": "s012", "start_s": 86, "speaker": "Suresh Patil", "text": "Done madam, मैं आज ही PO के लिए proforma भेज दूँगा।"},
+  {"id": "s013", "start_s": 93, "speaker": "Aman Khurana", "text": "Ek baat aur, poore bees hazaar ek saath rakhne ki jagah nahi hai hamare paas."},
+  {"id": "s014", "start_s": 102, "speaker": "Neha Bhatt", "text": "Haan, delivery do lot mein chahiye. Das hazaar abhi, das hazaar November ke end mein."},
+  {"id": "s015", "start_s": 111, "speaker": "Suresh Patil", "text": "दो lot में कोई problem नहीं, बस दूसरी lot की date पहले बता देना।"},
+  {"id": "s016", "start_s": 119, "speaker": "Neha Bhatt", "text": "Toh woh bhi final, delivery do lot mein hogi, das das hazaar."},
+  {"id": "s017", "start_s": 126, "speaker": "Aman Khurana", "text": "Pehli lot ke liye bhi godown mein jagah banani padegi, abhi wahan purana stock pada hai."},
+  {"id": "s018", "start_s": 135, "speaker": "Neha Bhatt", "text": "Haan, godown mein jagah kisi ko dekhna padega, main toh is hafte travel pe hoon."},
+  {"id": "s019", "start_s": 144, "speaker": "Aman Khurana", "text": "Mere paas bhi audit hai. Dekhte hain, koi na koi godown khaali karwa dega."},
+  {"id": "s020", "start_s": 152, "speaker": "Suresh Patil", "text": "Madam, ek suggestion hai. Aap log biodegradable tape pe shift kar lo, aajkal sab maang rahe hain."},
+  {"id": "s021", "start_s": 162, "speaker": "Aman Khurana", "text": "Uska rate kya hai?"},
+  {"id": "s022", "start_s": 166, "speaker": "Suresh Patil", "text": "Normal tape se lagbhag dedh guna."},
+  {"id": "s023", "start_s": 171, "speaker": "Neha Bhatt", "text": "Abhi nahi Suresh ji, pehle boxes settle karte hain. Tape wala idea abhi chhodo."},
+  {"id": "s024", "start_s": 179, "speaker": "Aman Khurana", "text": "Haan, tape ka budget abhi bilkul nahi hai."},
+  {"id": "s025", "start_s": 185, "speaker": "Suresh Patil", "text": "Theek hai, jaise aap kaho."},
+  {"id": "s026", "start_s": 189, "speaker": "Aman Khurana", "text": "Naye boxes ka ek sample chahiye, print ke saath, taaki hum drop test kar sakein."},
+  {"id": "s027", "start_s": 198, "speaker": "Suresh Patil", "text": "नमूना मैं भेज दूँगा, logo printing के साथ।"},
+  {"id": "s028", "start_s": 204, "speaker": "Neha Bhatt", "text": "Suresh ji, sample kab tak aa jayega?"},
+  {"id": "s029", "start_s": 209, "speaker": "Suresh Patil", "text": "Agle Friday tak sample aapke office pahunch jayega."},
+  {"id": "s030", "start_s": 215, "speaker": "Aman Khurana", "text": "Agle Friday theek hai. Waise humari GST filing 20 October ko hai, us hafte main busy rahunga."},
+  {"id": "s031", "start_s": 225, "speaker": "Neha Bhatt", "text": "Koi baat nahi, sample main receive kar lungi, GST alag cheez hai."},
+  {"id": "s032", "start_s": 232, "speaker": "Suresh Patil", "text": "Aman ji, logo ka vector file chahiye hoga, PDF se print kharab aata hai."},
+  {"id": "s033", "start_s": 240, "speaker": "Aman Khurana", "text": "Main aaj shaam vector file mail kar deta hoon."},
+  {"id": "s034", "start_s": 246, "speaker": "Suresh Patil", "text": "Aur box ke andar ka partition chahiye ya nahi?"},
+  {"id": "s035", "start_s": 252, "speaker": "Neha Bhatt", "text": "Partition sirf glass bottles wale box mein, baaki mein nahi."},
+  {"id": "s036", "start_s": 258, "speaker": "Suresh Patil", "text": "Theek, partition wale kitne honge?"},
+  {"id": "s037", "start_s": 262, "speaker": "Neha Bhatt", "text": "Lagbhag do hazaar, woh hum PO mein alag line item daal denge."},
+  {"id": "s038", "start_s": 269, "speaker": "Aman Khurana", "text": "Pichhli baar kuch boxes geele aaye the, transport mein tarpaulin nahi tha."},
+  {"id": "s039", "start_s": 276, "speaker": "Suresh Patil", "text": "Haan woh galti hui thi, is baar covered tempo bhejunga."},
+  {"id": "s040", "start_s": 282, "speaker": "Neha Bhatt", "text": "Achha. Aur invoice pe HSN code sahi likhna, pichhli baar accounts ne wapas bheja tha."},
+  {"id": "s041", "start_s": 291, "speaker": "Suresh Patil", "text": "जी madam, इस बार ध्यान रखूँगा।"},
+  {"id": "s042", "start_s": 296, "speaker": "Aman Khurana", "text": "Mujhe lagta hai sab cover ho gaya. Neha, kuch reh gaya?"},
+  {"id": "s043", "start_s": 303, "speaker": "Neha Bhatt", "text": "Nahi, bas proforma aur sample ka wait karenge."},
+  {"id": "s044", "start_s": 309, "speaker": "Suresh Patil", "text": "Dhanyavaad madam, dhanyavaad Aman ji."},
+  {"id": "s045", "start_s": 313, "speaker": "Neha Bhatt", "text": "Thank you Suresh ji, milte hain."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "Twenty thousand 5-ply boxes are ordered at Rs 18 per box.", "match": [["18"], ["box", "boxes", "dabbe", "डिब्बे"]], "evidence": ["s011"]},
+   {"id": "D2", "fact": "Delivery comes in two lots of ten thousand each.", "match": [["lot", "lots", "instalment", "kist"]], "evidence": ["s014", "s016"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Suresh sends a printed sample of the new box for a drop test.", "match": [["sample", "नमूना"]], "owner": "Suresh Patil", "due": "2026-10-23", "due_phrase": "Agle Friday tak", "evidence": ["s027", "s029"]},
+   {"id": "A2", "fact": "Space in the godown is cleared for the first lot; nobody named.", "match": [["godown", "warehouse", "गोदाम"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s018", "s019"]},
+   {"id": "A3", "fact": "Aman mails the logo vector file to the vendor today.", "match": [["vector", "logo"]], "owner": "Aman Khurana", "due": "2026-10-14", "due_phrase": "aaj shaam", "evidence": ["s033"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "Switching to biodegradable tape was suggested and dropped.", "match": [["tape"]], "evidence": ["s020", "s023"]},
+   {"id": "X2", "kind": "other_date", "fact": "20 October is the GST filing, not the sample's due date.", "match": [["gst"]], "evidence": ["s030"]}
+  ]
+ }
+}

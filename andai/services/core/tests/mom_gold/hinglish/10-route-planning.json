@@ -1,0 +1,69 @@
+{
+ "id": "10-route-planning",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "Logistics route planning",
+ "meeting_date": "2026-12-03",
+ "duration_min": 6,
+ "attendees": ["Harpreet Gill", "Mohit Saxena", "Anjali Verma"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Harpreet Gill", "text": "Sat sri akal ji. Aaj routes aur transport cost pe baat karni hai, December peak hai."},
+  {"id": "s002", "start_s": 9, "speaker": "Mohit Saxena", "text": "Haan paaji, November mein diesel ka kharcha phir badha hai, per trip lagbhag aath sau zyada."},
+  {"id": "s003", "start_s": 18, "speaker": "Anjali Verma", "text": "Jaipur route pe sabse zyada problem hai. Do chhote trucks jaate hain aur dono aadhe khaali."},
+  {"id": "s004", "start_s": 27, "speaker": "Harpreet Gill", "text": "Aadhe khaali kyun? Load toh pichhle mahine se badha hai."},
+  {"id": "s005", "start_s": 33, "speaker": "Anjali Verma", "text": "Load badha hai par do jagah se pickup hota hai, timing match nahi karti, isliye alag alag nikalte hain."},
+  {"id": "s006", "start_s": 44, "speaker": "Mohit Saxena", "text": "Agar pickup ek hi time pe kar dein toh ek bada truck kaafi hai, chaudah foot wala."},
+  {"id": "s007", "start_s": 54, "speaker": "Harpreet Gill", "text": "Ek bada truck mein kharcha kitna bachega?"},
+  {"id": "s008", "start_s": 59, "speaker": "Mohit Saxena", "text": "Mahine ka lagbhag sattar hazaar, driver bhi ek hi lagega. Anjali, pickup ka time tum ek kar sakti ho?"},
+  {"id": "s009", "start_s": 70, "speaker": "Anjali Verma", "text": "Haan, pickup ka time main dono vendors se baat karke ek kar dungi, subah das baje."},
+  {"id": "s010", "start_s": 79, "speaker": "Harpreet Gill", "text": "Theek hai, final karte hain, Jaipur route pe do chhote trucks ki jagah ek bada truck chalega."},
+  {"id": "s011", "start_s": 89, "speaker": "Mohit Saxena", "text": "Done, agle hafte se shuru kar dete hain."},
+  {"id": "s012", "start_s": 95, "speaker": "Anjali Verma", "text": "Ludhiana route pe raat ki delivery ka kya karein? Drivers shikayat kar rahe hain, fog bahut hai."},
+  {"id": "s013", "start_s": 105, "speaker": "Mohit Saxena", "text": "Pichhle saal do accident hote hote bache the isi mahine."},
+  {"id": "s014", "start_s": 111, "speaker": "Harpreet Gill", "text": "Safety pehle. Ludhiana pe raat ki delivery band, sirf din mein chalegi jab tak fog hai."},
+  {"id": "s015", "start_s": 120, "speaker": "Anjali Verma", "text": "Customers ko batana padega ki delivery ek din late hogi."},
+  {"id": "s016", "start_s": 126, "speaker": "Harpreet Gill", "text": "Haan, woh theek hai, accident se toh better hai."},
+  {"id": "s017", "start_s": 132, "speaker": "Mohit Saxena", "text": "Ek idea hai paaji, hum apne khud ke truck khareed lein, transporter pe depend nahi rehna padega."},
+  {"id": "s018", "start_s": 142, "speaker": "Anjali Verma", "text": "Khareedne ke liye kam se kam pachas lakh chahiye, aur maintenance alag."},
+  {"id": "s019", "start_s": 149, "speaker": "Harpreet Gill", "text": "Nahi Mohit, apne truck khareedna abhi nahi. Woh idea chhodo, peak season mein ye risk nahi lenge."},
+  {"id": "s020", "start_s": 159, "speaker": "Mohit Saxena", "text": "Theek hai paaji."},
+  {"id": "s021", "start_s": 163, "speaker": "Harpreet Gill", "text": "Transporter ka rate dobara negotiate karna padega, diesel ke naam pe har mahine badha dete hain."},
+  {"id": "s022", "start_s": 172, "speaker": "Mohit Saxena", "text": "Main transporter se baat karta hoon, saal bhar ka fixed rate maangunga."},
+  {"id": "s023", "start_s": 179, "speaker": "Harpreet Gill", "text": "Mohit, month end tak naya rate final karke batao, January se naya contract chahiye."},
+  {"id": "s024", "start_s": 187, "speaker": "Mohit Saxena", "text": "Haan, month end tak rate final kar dunga."},
+  {"id": "s025", "start_s": 193, "speaker": "Anjali Verma", "text": "Yaad dila doon, trucks ka insurance renewal 20 December ko hai, woh bhi isi mahine."},
+  {"id": "s026", "start_s": 202, "speaker": "Harpreet Gill", "text": "Haan insurance alag file hai, accounts dekh lega, rate wali baat se mat milao."},
+  {"id": "s027", "start_s": 210, "speaker": "Anjali Verma", "text": "GPS trackers ki baat bhi thi. Chaar trucks mein abhi bhi tracker nahi hai."},
+  {"id": "s028", "start_s": 218, "speaker": "Mohit Saxena", "text": "Isliye toh pata nahi chalta driver kahan ruka hai, do do ghante dhaba pe."},
+  {"id": "s029", "start_s": 226, "speaker": "Harpreet Gill", "text": "Tracker lagwana zaroori hai. Koi bhi vendor ko bula ke lagwa de."},
+  {"id": "s030", "start_s": 233, "speaker": "Anjali Verma", "text": "Main is hafte warehouse audit mein hoon, mujhse nahi hoga."},
+  {"id": "s031", "start_s": 239, "speaker": "Mohit Saxena", "text": "Mere paas transporter ki meeting hai."},
+  {"id": "s032", "start_s": 244, "speaker": "Harpreet Gill", "text": "Theek hai, koi kar lega, par parso tak chaaron trucks mein GPS lag jaana chahiye."},
+  {"id": "s033", "start_s": 253, "speaker": "Anjali Verma", "text": "Return loads ka bhi socho, trucks Jaipur se khaali wapas aate hain."},
+  {"id": "s034", "start_s": 260, "speaker": "Mohit Saxena", "text": "Wahan ek fabric supplier hai jo maal bhejta hai, unse return load ki baat kar sakte hain."},
+  {"id": "s035", "start_s": 270, "speaker": "Harpreet Gill", "text": "Achha idea hai, par pehle naya route set ho jaye, phir dekhte hain."},
+  {"id": "s036", "start_s": 278, "speaker": "Anjali Verma", "text": "Driver ke liye winter allowance ka bhi sawaal aaya tha."},
+  {"id": "s037", "start_s": 284, "speaker": "Harpreet Gill", "text": "Woh main HR ke saath dekhunga, aaj decide nahi kar sakte."},
+  {"id": "s038", "start_s": 291, "speaker": "Mohit Saxena", "text": "Toll tag ka recharge time pe nahi hota, do baar truck plaza pe atka."},
+  {"id": "s039", "start_s": 299, "speaker": "Anjali Verma", "text": "Auto recharge laga dete hain account pe, ek baar ka kaam hai."},
+  {"id": "s040", "start_s": 306, "speaker": "Harpreet Gill", "text": "Haan kar do. Aur kuch?"},
+  {"id": "s041", "start_s": 310, "speaker": "Mohit Saxena", "text": "Nahi paaji, bas rate wali meeting ke baad update dunga."},
+  {"id": "s042", "start_s": 316, "speaker": "Anjali Verma", "text": "Mera bhi ho gaya."},
+  {"id": "s043", "start_s": 320, "speaker": "Harpreet Gill", "text": "Theek hai, dhanyavaad dono ka. Safe driving sab ko bol dena."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "The Jaipur route runs one large truck instead of two small ones.", "match": [["jaipur"], ["truck", "trucks"]], "evidence": ["s010"]},
+   {"id": "D2", "fact": "Night deliveries on the Ludhiana route stop while there is fog; daytime only.", "match": [["ludhiana"], ["night", "raat"]], "evidence": ["s014"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Mohit renegotiates a fixed yearly rate with the transporter.", "match": [["transporter"], ["rate"]], "owner": "Mohit Saxena", "due": "2026-12-31", "due_phrase": "month end tak", "evidence": ["s022", "s023", "s024"]},
+   {"id": "A2", "fact": "GPS trackers are installed in the four remaining trucks; nobody named.", "match": [["gps", "tracker", "trackers"]], "owner": "unassigned", "due": "2026-12-05", "due_phrase": "parso tak", "evidence": ["s029", "s032"]},
+   {"id": "A3", "fact": "Anjali aligns both Jaipur vendors on a single 10 am pickup time.", "match": [["pickup"]], "owner": "Anjali Verma", "due": null, "due_phrase": null, "evidence": ["s009"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "Buying the company's own trucks was suggested and dropped.", "match": [["khareed", "kharid", "buy", "purchase", "khareedna"]], "evidence": ["s017", "s019"]},
+   {"id": "X2", "kind": "other_date", "fact": "20 December is the truck insurance renewal, not the transporter rate's due date.", "match": [["insurance"]], "evidence": ["s025"]}
+  ]
+ }
+}

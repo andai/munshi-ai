@@ -1,0 +1,70 @@
+{
+ "id": "01-pricing-review",
+ "language": "en",
+ "kind": "short",
+ "title": "Starter plan pricing review",
+ "meeting_date": "2026-11-04",
+ "duration_min": 6,
+ "attendees": ["Meera Iyer", "Kabir Sethi", "Tanvi Rao", "Arjun Malhotra"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Meera Iyer", "text": "Okay, I think everyone is here. Let's start, we have about ten minutes for the pricing review."},
+  {"id": "s002", "start_s": 10, "speaker": "Kabir Sethi", "text": "Morning. I have the numbers from last quarter ready if we need them."},
+  {"id": "s003", "start_s": 18, "speaker": "Meera Iyer", "text": "Good. The main question today is the Starter plan price."},
+  {"id": "s004", "start_s": 24, "speaker": "Tanvi Rao", "text": "Right now Starter is 399 rupees a month and the margin on it is thin."},
+  {"id": "s005", "start_s": 33, "speaker": "Arjun Malhotra", "text": "From the product side, usage on Starter went up almost forty percent since August."},
+  {"id": "s006", "start_s": 41, "speaker": "Kabir Sethi", "text": "And sales keeps hearing that 399 feels cheap compared to what people get."},
+  {"id": "s007", "start_s": 49, "speaker": "Meera Iyer", "text": "So what are the options on the table?"},
+  {"id": "s008", "start_s": 55, "speaker": "Tanvi Rao", "text": "I modelled three: 449, 499 and 549 rupees a month."},
+  {"id": "s009", "start_s": 61, "speaker": "Arjun Malhotra", "text": "549 worries me. We might lose the small shops that signed up this year."},
+  {"id": "s010", "start_s": 69, "speaker": "Kabir Sethi", "text": "I agree, 549 is a jump. 499 is easier to explain to customers."},
+  {"id": "s011", "start_s": 77, "speaker": "Tanvi Rao", "text": "At 499 we cover the support cost per account with a small buffer."},
+  {"id": "s012", "start_s": 85, "speaker": "Meera Iyer", "text": "Any objection to 499?"},
+  {"id": "s013", "start_s": 89, "speaker": "Arjun Malhotra", "text": "No objection from me if existing customers get some notice."},
+  {"id": "s014", "start_s": 95, "speaker": "Meera Iyer", "text": "Then let's settle it: Starter goes to 499 rupees a month, starting 1 December."},
+  {"id": "s015", "start_s": 103, "speaker": "Kabir Sethi", "text": "Works for me. Existing customers keep 399 until their renewal date."},
+  {"id": "s016", "start_s": 110, "speaker": "Meera Iyer", "text": "Yes, renewals move to the new price, not mid-cycle."},
+  {"id": "s017", "start_s": 116, "speaker": "Arjun Malhotra", "text": "While we are here, I want to bring up the free trial length."},
+  {"id": "s018", "start_s": 124, "speaker": "Arjun Malhotra", "text": "Some people asked for a thirty day trial instead of fourteen days."},
+  {"id": "s019", "start_s": 131, "speaker": "Tanvi Rao", "text": "Thirty days doubles our trial infrastructure cost. I would not do that now."},
+  {"id": "s020", "start_s": 139, "speaker": "Kabir Sethi", "text": "Most conversions happen in the first week anyway, the data shows that."},
+  {"id": "s021", "start_s": 146, "speaker": "Meera Iyer", "text": "Then we keep the free trial at fourteen days. No change there."},
+  {"id": "s022", "start_s": 153, "speaker": "Arjun Malhotra", "text": "Fine, I will tell the people who asked."},
+  {"id": "s023", "start_s": 159, "speaker": "Arjun Malhotra", "text": "One more idea. What if we give twenty percent off for annual plans?"},
+  {"id": "s024", "start_s": 167, "speaker": "Tanvi Rao", "text": "That needs a proper model first. Twenty percent is a lot on a thin margin."},
+  {"id": "s025", "start_s": 176, "speaker": "Meera Iyer", "text": "Let's park the annual discount for now, not deciding anything on it today."},
+  {"id": "s026", "start_s": 184, "speaker": "Kabir Sethi", "text": "Okay. Then I need to update the price sheet that the sales team uses."},
+  {"id": "s027", "start_s": 192, "speaker": "Meera Iyer", "text": "Kabir, can you send the revised price sheet to sales by Friday?"},
+  {"id": "s028", "start_s": 199, "speaker": "Kabir Sethi", "text": "Yes, I will send the revised sheet by Friday."},
+  {"id": "s029", "start_s": 205, "speaker": "Tanvi Rao", "text": "Also remember the board review is on 20 November, they will ask about this."},
+  {"id": "s030", "start_s": 213, "speaker": "Meera Iyer", "text": "Noted, but that is a separate deck, not the price sheet."},
+  {"id": "s031", "start_s": 220, "speaker": "Arjun Malhotra", "text": "What about the website? The pricing page still says 399."},
+  {"id": "s032", "start_s": 226, "speaker": "Meera Iyer", "text": "Someone has to update the website pricing page by next Monday."},
+  {"id": "s033", "start_s": 233, "speaker": "Kabir Sethi", "text": "Not me, I am on the road next week."},
+  {"id": "s034", "start_s": 239, "speaker": "Arjun Malhotra", "text": "My team is full too. Let's see who is free."},
+  {"id": "s035", "start_s": 245, "speaker": "Meera Iyer", "text": "Okay, we will find someone, but it has to be done by next Monday."},
+  {"id": "s036", "start_s": 253, "speaker": "Tanvi Rao", "text": "One thing I want to look at is GST on the new price."},
+  {"id": "s037", "start_s": 261, "speaker": "Tanvi Rao", "text": "I will check the GST impact of 499 and share a note."},
+  {"id": "s038", "start_s": 268, "speaker": "Meera Iyer", "text": "Thanks Tanvi. Any date for that?"},
+  {"id": "s039", "start_s": 273, "speaker": "Tanvi Rao", "text": "Not sure yet, depends on the accountant, I will share when I have it."},
+  {"id": "s040", "start_s": 281, "speaker": "Kabir Sethi", "text": "Should we also email the existing customers about the change?"},
+  {"id": "s041", "start_s": 287, "speaker": "Meera Iyer", "text": "Let's first get the price sheet and website done, then we talk about emails."},
+  {"id": "s042", "start_s": 295, "speaker": "Arjun Malhotra", "text": "Makes sense. I have nothing else."},
+  {"id": "s043", "start_s": 300, "speaker": "Tanvi Rao", "text": "Nothing from my side."},
+  {"id": "s044", "start_s": 304, "speaker": "Meera Iyer", "text": "Great, thanks everyone. Talk soon."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "The Starter plan price rises to 499 rupees a month from 1 December.", "match": [["starter"], ["499"]], "evidence": ["s014"]},
+   {"id": "D2", "fact": "The free trial stays at 14 days.", "match": [["trial"], ["14", "fourteen"]], "evidence": ["s021"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Kabir sends the revised price sheet to sales.", "match": [["price sheet", "pricing sheet", "revised sheet"]], "owner": "Kabir Sethi", "due": "2026-11-06", "due_phrase": "by Friday", "evidence": ["s027", "s028"]},
+   {"id": "A2", "fact": "The website pricing page is updated to the new price; nobody named.", "match": [["website", "pricing page"]], "owner": "unassigned", "due": "2026-11-09", "due_phrase": "next Monday", "evidence": ["s032", "s035"]},
+   {"id": "A3", "fact": "Tanvi checks the GST impact of the new price and shares a note.", "match": [["gst"]], "owner": "Tanvi Rao", "due": null, "due_phrase": null, "evidence": ["s037"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "A 20% discount on annual plans was suggested and parked.", "match": [["annual"], ["discount", "off"]], "evidence": ["s023"]},
+   {"id": "X2", "kind": "other_date", "fact": "The board review on 20 November is not the price sheet's due date.", "match": [["board"]], "evidence": ["s029"]}
+  ]
+ }
+}

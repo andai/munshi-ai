@@ -1,0 +1,72 @@
+{
+ "id": "07-q4-budget-review",
+ "language": "hinglish",
+ "kind": "short",
+ "title": "Q4 budget review",
+ "meeting_date": "2026-11-11",
+ "duration_min": 6,
+ "attendees": ["Sunita Reddy", "Ashok Pillai", "Megha Jain"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Sunita Reddy", "text": "Okay, Q4 budget review shuru karte hain. Ashok, October ke actuals aa gaye?"},
+  {"id": "s002", "start_s": 8, "speaker": "Ashok Pillai", "text": "Haan ma'am, October mein hum budget se kareeb aath percent upar gaye hain."},
+  {"id": "s003", "start_s": 16, "speaker": "Sunita Reddy", "text": "Aath percent? Kahan se aaya itna?"},
+  {"id": "s004", "start_s": 21, "speaker": "Ashok Pillai", "text": "Sabse bada hissa marketing ka hai, festive campaign mein spend expected se zyada hua."},
+  {"id": "s005", "start_s": 29, "speaker": "Megha Jain", "text": "Aur travel bhi, sales team ne October mein bahut client visits kiye."},
+  {"id": "s006", "start_s": 36, "speaker": "Sunita Reddy", "text": "Revenue bhi aaya ya sirf kharcha hua?"},
+  {"id": "s007", "start_s": 41, "speaker": "Ashok Pillai", "text": "Revenue thoda upar hai, par margin pe asar pada hai, collections slow hain."},
+  {"id": "s008", "start_s": 49, "speaker": "Sunita Reddy", "text": "Theek hai. Marketing ka Q4 budget kitna bacha hai?"},
+  {"id": "s009", "start_s": 55, "speaker": "Ashok Pillai", "text": "Original plan ka lagbhag chalis percent bacha hai, par December mein year-end sale bhi hai."},
+  {"id": "s010", "start_s": 64, "speaker": "Megha Jain", "text": "Marketing wale bolenge sale ke liye paisa chahiye, cut karoge toh shor machega."},
+  {"id": "s011", "start_s": 72, "speaker": "Sunita Reddy", "text": "Shor machne do. Marketing ka Q4 budget dus percent cut karenge, sale ke andar hi adjust karein."},
+  {"id": "s012", "start_s": 82, "speaker": "Ashok Pillai", "text": "Dus percent cut matlab lagbhag chaar lakh bachenge."},
+  {"id": "s013", "start_s": 88, "speaker": "Sunita Reddy", "text": "Haan, final hai, main unke head ko khud bata dungi."},
+  {"id": "s014", "start_s": 94, "speaker": "Megha Jain", "text": "Laptop wali request ka kya? IT ne pandrah naye laptops maange hain."},
+  {"id": "s015", "start_s": 101, "speaker": "Ashok Pillai", "text": "Pandrah laptops matlab nau-das lakh, is quarter mein toh possible nahi."},
+  {"id": "s016", "start_s": 108, "speaker": "Sunita Reddy", "text": "Naye laptop purchase March tak freeze rahenge. Jo zaroori hai woh repair karwao."},
+  {"id": "s017", "start_s": 116, "speaker": "Megha Jain", "text": "Theek hai, main IT ko bata deti hoon ki freeze hai."},
+  {"id": "s018", "start_s": 123, "speaker": "Ashok Pillai", "text": "Ek suggestion tha, January mein poori team ka offsite Goa mein karein, morale ke liye."},
+  {"id": "s019", "start_s": 132, "speaker": "Sunita Reddy", "text": "Ashok, abhi hum cut ki baat kar rahe hain aur tum offsite bol rahe ho?"},
+  {"id": "s020", "start_s": 141, "speaker": "Megha Jain", "text": "Haha, timing thodi galat hai. Offsite ka kharcha bhi kam se kam das lakh hoga."},
+  {"id": "s021", "start_s": 150, "speaker": "Sunita Reddy", "text": "Offsite abhi nahi hoga, woh topic band karo, next year dekhenge."},
+  {"id": "s022", "start_s": 157, "speaker": "Ashok Pillai", "text": "Theek hai ma'am, samajh gaya."},
+  {"id": "s023", "start_s": 161, "speaker": "Sunita Reddy", "text": "Cash flow ka sabse bada sawaal hai. Collections slow hain toh January tak paisa kaise chalega?"},
+  {"id": "s024", "start_s": 170, "speaker": "Ashok Pillai", "text": "Mujhe ek revised cash flow banana padega, har hafte ka, collections ke naye estimate ke saath."},
+  {"id": "s025", "start_s": 179, "speaker": "Sunita Reddy", "text": "Ashok, revised cash flow do hafte mein chahiye, board ke samne rakhna hai."},
+  {"id": "s026", "start_s": 187, "speaker": "Ashok Pillai", "text": "Haan, do hafte mein ready kar dunga. Waise statutory audit 30 November se shuru ho raha hai."},
+  {"id": "s027", "start_s": 197, "speaker": "Sunita Reddy", "text": "Audit apni jagah, cash flow uske upar priority hai."},
+  {"id": "s028", "start_s": 203, "speaker": "Megha Jain", "text": "Travel ka data main nikaal sakti hoon, kis team ne kitna spend kiya, client wise."},
+  {"id": "s029", "start_s": 212, "speaker": "Sunita Reddy", "text": "Haan Megha, travel spend ki report kal tak share kar do, team wise breakup ke saath."},
+  {"id": "s030", "start_s": 221, "speaker": "Megha Jain", "text": "Kal tak bhej dungi, expense tool se seedha export ho jata hai."},
+  {"id": "s031", "start_s": 228, "speaker": "Ashok Pillai", "text": "Vendor payments mein bhi gadbad hai, kuch invoices do baar book ho gaye hain lagta hai."},
+  {"id": "s032", "start_s": 237, "speaker": "Sunita Reddy", "text": "Kitne?"},
+  {"id": "s033", "start_s": 241, "speaker": "Ashok Pillai", "text": "Pakka nahi pata, das-baarah ho sakte hain. Ledger aur bank statement milane padenge."},
+  {"id": "s034", "start_s": 249, "speaker": "Megha Jain", "text": "Woh reconciliation lamba kaam hai, ek bande se nahi hoga."},
+  {"id": "s035", "start_s": 255, "speaker": "Sunita Reddy", "text": "Toh vendor payments ka reconciliation hum log milke kar lenge, jiske paas time ho woh baithe."},
+  {"id": "s036", "start_s": 264, "speaker": "Ashok Pillai", "text": "Theek hai, shared sheet bana deta hoon taaki sab apne hisse ke invoices dekh sakein."},
+  {"id": "s037", "start_s": 273, "speaker": "Megha Jain", "text": "GST input credit pe bhi asar padega agar duplicate invoices hain."},
+  {"id": "s038", "start_s": 280, "speaker": "Ashok Pillai", "text": "Haan, isliye reconciliation jaldi hona chahiye."},
+  {"id": "s039", "start_s": 285, "speaker": "Sunita Reddy", "text": "Subscriptions ka bhi dekho, bahut saare software tools hain jo koi use nahi karta."},
+  {"id": "s040", "start_s": 293, "speaker": "Megha Jain", "text": "Main list bana sakti hoon, par woh agle mahine, abhi travel report pehle."},
+  {"id": "s041", "start_s": 301, "speaker": "Sunita Reddy", "text": "Theek hai, subscriptions baad mein. Aur kuch?"},
+  {"id": "s042", "start_s": 306, "speaker": "Ashok Pillai", "text": "Salary revision ka sawaal aayega January mein, uska provision rakhna padega."},
+  {"id": "s043", "start_s": 313, "speaker": "Sunita Reddy", "text": "Woh December review mein lenge, abhi uske numbers bhi nahi hain."},
+  {"id": "s044", "start_s": 320, "speaker": "Megha Jain", "text": "Mere side se bas itna hi."},
+  {"id": "s045", "start_s": 325, "speaker": "Ashok Pillai", "text": "Mera bhi ho gaya."},
+  {"id": "s046", "start_s": 329, "speaker": "Sunita Reddy", "text": "Theek hai, thank you dono ko. Cut wali baat abhi bahar mat bolna, main pehle heads se baat karungi."}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "The marketing budget for Q4 is cut by 10 percent.", "match": [["marketing"], ["10", "dus", "das", "ten"]], "evidence": ["s011", "s013"]},
+   {"id": "D2", "fact": "New laptop purchases are frozen until March.", "match": [["laptop", "laptops"], ["freeze", "frozen", "march"]], "evidence": ["s016"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "Ashok prepares a revised weekly cash flow for the board.", "match": [["cash flow", "cashflow"]], "owner": "Ashok Pillai", "due": "2026-11-25", "due_phrase": "do hafte mein", "evidence": ["s024", "s025", "s026"]},
+   {"id": "A2", "fact": "Megha shares the travel spend report with a team-wise breakup.", "match": [["travel"]], "owner": "Megha Jain", "due": "2026-11-12", "due_phrase": "kal tak", "evidence": ["s029", "s030"]},
+   {"id": "A3", "fact": "The vendor payments are reconciled jointly; nobody named.", "match": [["reconciliation", "reconcile"], ["vendor"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s035"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "A team offsite in Goa in January was suggested and dropped.", "match": [["offsite"]], "evidence": ["s018", "s021"]},
+   {"id": "X2", "kind": "other_date", "fact": "30 November is the start of the statutory audit, not the cash flow's due date.", "match": [["audit"]], "evidence": ["s026"]}
+  ]
+ }
+}

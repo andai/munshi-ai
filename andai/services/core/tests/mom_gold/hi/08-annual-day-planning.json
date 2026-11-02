@@ -1,0 +1,72 @@
+{
+ "id": "08-annual-day-planning",
+ "language": "hi",
+ "kind": "short",
+ "title": "वार्षिक उत्सव की योजना",
+ "meeting_date": "2026-11-24",
+ "duration_min": 6,
+ "attendees": ["Swati Chaturvedi", "Rohit Negi", "Bhavna Pillai", "Mohit Arora"],
+ "segments": [
+  {"id": "s001", "start_s": 0, "speaker": "Swati Chaturvedi", "text": "हाय सब लोग। वार्षिक उत्सव 19 दिसंबर को है, आज बस मोटी-मोटी बातें तय कर लेते हैं।"},
+  {"id": "s002", "start_s": 10, "speaker": "Mohit Arora", "text": "पिछले साल वाला बैंक्वेट हॉल फिर से बुक करें? वो अच्छा था।"},
+  {"id": "s003", "start_s": 17, "speaker": "Rohit Negi", "text": "मैंने पूछा था, इस बार उन्होंने किराया लगभग दोगुना कर दिया है।"},
+  {"id": "s004", "start_s": 24, "speaker": "Bhavna Pillai", "text": "हमारी नई बिल्डिंग की छत काफी बड़ी है, वहाँ 250 लोग आराम से आ जाएँगे।"},
+  {"id": "s005", "start_s": 33, "speaker": "Swati Chaturvedi", "text": "दिसंबर में शाम को ठंड होगी, पर हीटर और शामियाना लग जाए तो चल जाएगा।"},
+  {"id": "s006", "start_s": 42, "speaker": "Rohit Negi", "text": "छत पर करने से हॉल का पूरा किराया बच जाएगा।"},
+  {"id": "s007", "start_s": 48, "speaker": "Swati Chaturvedi", "text": "ठीक है, इस बार वार्षिक उत्सव ऑफिस की छत पर ही होगा।"},
+  {"id": "s008", "start_s": 55, "speaker": "Mohit Arora", "text": "मंज़ूर, बस लिफ्ट की क्षमता का ध्यान रखना पड़ेगा।"},
+  {"id": "s009", "start_s": 61, "speaker": "Swati Chaturvedi", "text": "बजट की बात करें तो प्रबंधन ने कितना दिया है?"},
+  {"id": "s010", "start_s": 67, "speaker": "Rohit Negi", "text": "पहले 3 लाख माँगा था, पर ऊपर से कहा गया है कि कम में करो।"},
+  {"id": "s011", "start_s": 76, "speaker": "Bhavna Pillai", "text": "हॉल का किराया बच रहा है, तो 2 लाख में आराम से हो जाएगा।"},
+  {"id": "s012", "start_s": 84, "speaker": "Swati Chaturvedi", "text": "ठीक है, कुल खर्च की सीमा 2 लाख रुपये रहेगी, इससे ऊपर नहीं।"},
+  {"id": "s013", "start_s": 92, "speaker": "Mohit Arora", "text": "मेरा एक विचार है, इस बार बाहर से कोई लाइव बैंड बुलाएँ? लोग बहुत खुश होंगे।"},
+  {"id": "s014", "start_s": 101, "speaker": "Rohit Negi", "text": "अच्छा बैंड कम से कम 80 हज़ार लेगा, आधा बजट वहीं चला जाएगा।"},
+  {"id": "s015", "start_s": 109, "speaker": "Bhavna Pillai", "text": "और हमारे अपने लोग गाना-नाचना करना चाहते हैं, उन्हें मौका मिलना चाहिए।"},
+  {"id": "s016", "start_s": 116, "speaker": "Swati Chaturvedi", "text": "बैंड वाली बात छोड़ते हैं, इस बार नहीं। अपने लोगों के कार्यक्रम ही रखेंगे।"},
+  {"id": "s017", "start_s": 124, "speaker": "Mohit Arora", "text": "ठीक है, समझ गया।"},
+  {"id": "s018", "start_s": 128, "speaker": "Swati Chaturvedi", "text": "रोहित, साउंड सिस्टम और लाइट की बुकिंग कौन देखेगा?"},
+  {"id": "s019", "start_s": 134, "speaker": "Rohit Negi", "text": "मैं देख लूँगा, मेरी जान-पहचान में दो लोग हैं जो ठीक रेट देते हैं।"},
+  {"id": "s020", "start_s": 142, "speaker": "Swati Chaturvedi", "text": "दिसंबर में शादियों का सीज़न है, जल्दी बुक कर लेना। 5 दिसंबर तक पक्का हो जाना चाहिए।"},
+  {"id": "s021", "start_s": 152, "speaker": "Rohit Negi", "text": "हाँ, 5 दिसंबर तक साउंड और लाइट दोनों बुक कर दूँगा, एडवांस देकर।"},
+  {"id": "s022", "start_s": 160, "speaker": "Mohit Arora", "text": "3 दिसंबर को ऑफिस में फायर ड्रिल भी है, उस दिन छत खाली रखनी पड़ेगी।"},
+  {"id": "s023", "start_s": 169, "speaker": "Swati Chaturvedi", "text": "फायर ड्रिल अपनी जगह है, उसका बुकिंग से कोई लेना-देना नहीं।"},
+  {"id": "s024", "start_s": 176, "speaker": "Bhavna Pillai", "text": "सांस्कृतिक कार्यक्रम के लिए नाम अभी से लेने होंगे, वरना रिहर्सल का समय नहीं मिलेगा।"},
+  {"id": "s025", "start_s": 185, "speaker": "Swati Chaturvedi", "text": "भावना, ये आप संभालिए। हर टीम से कौन क्या करेगा, उसकी सूची चाहिए।"},
+  {"id": "s026", "start_s": 193, "speaker": "Bhavna Pillai", "text": "ठीक है, शुक्रवार तक सांस्कृतिक कार्यक्रम के सारे नाम इकट्ठे करके सूची भेज दूँगी।"},
+  {"id": "s027", "start_s": 201, "speaker": "Mohit Arora", "text": "खाने का क्या? पिछली बार खाना ठंडा था, बहुत शिकायत आई थी।"},
+  {"id": "s028", "start_s": 208, "speaker": "Swati Chaturvedi", "text": "इस बार कम से कम तीन कैटरर से कोटेशन लेने हैं, फिर चखकर तय करेंगे।"},
+  {"id": "s029", "start_s": 217, "speaker": "Rohit Negi", "text": "मेरे पास साउंड और लाइट है, मैं कैटरिंग नहीं देख पाऊँगा।"},
+  {"id": "s030", "start_s": 224, "speaker": "Bhavna Pillai", "text": "मैं कार्यक्रम में फँसी रहूँगी।"},
+  {"id": "s031", "start_s": 228, "speaker": "Swati Chaturvedi", "text": "ठीक है, कोई न कोई कैटरर वाला काम उठा लेगा, पर इसे जल्दी शुरू करना होगा।"},
+  {"id": "s032", "start_s": 237, "speaker": "Mohit Arora", "text": "मेरा क्या काम रहेगा फिर?"},
+  {"id": "s033", "start_s": 241, "speaker": "Swati Chaturvedi", "text": "मोहित, आप सजावट के कुछ आइडिया सोच कर लाइए, अगली मीटिंग में बात करेंगे।"},
+  {"id": "s034", "start_s": 249, "speaker": "Mohit Arora", "text": "जी, दो-तीन थीम सोचता हूँ।"},
+  {"id": "s035", "start_s": 253, "speaker": "Rohit Negi", "text": "परिवार वालों को बुलाना है या सिर्फ़ कर्मचारी?"},
+  {"id": "s036", "start_s": 259, "speaker": "Swati Chaturvedi", "text": "सिर्फ़ कर्मचारी, परिवार बुलाएँगे तो 250 से ऊपर चला जाएगा।"},
+  {"id": "s037", "start_s": 265, "speaker": "Bhavna Pillai", "text": "पुरस्कार भी देने हैं क्या, सबसे अच्छे कर्मचारी वाले?"},
+  {"id": "s038", "start_s": 271, "speaker": "Swati Chaturvedi", "text": "वो एचआर का अलग कार्यक्रम है, उसकी लिस्ट वो खुद देंगे।"},
+  {"id": "s039", "start_s": 278, "speaker": "Mohit Arora", "text": "पार्किंग की दिक्कत होगी, बेसमेंट में सिर्फ़ 40 गाड़ियाँ आती हैं।"},
+  {"id": "s040", "start_s": 285, "speaker": "Rohit Negi", "text": "लोग कैब से आ जाएँगे, शाम का कार्यक्रम है।"},
+  {"id": "s041", "start_s": 291, "speaker": "Swati Chaturvedi", "text": "हाँ, एक मेल में लिख देंगे कि गाड़ी कम लाएँ।"},
+  {"id": "s042", "start_s": 297, "speaker": "Bhavna Pillai", "text": "फोटोग्राफर अपने ही ऑफिस का कोई कर लेगा, अमन के पास अच्छा कैमरा है।"},
+  {"id": "s043", "start_s": 305, "speaker": "Swati Chaturvedi", "text": "ठीक है, पर उससे पूछ लेना पहले। चलिए, आज के लिए काफी है।"},
+  {"id": "s044", "start_s": 313, "speaker": "Rohit Negi", "text": "धन्यवाद स्वाति।"},
+  {"id": "s045", "start_s": 317, "speaker": "Bhavna Pillai", "text": "बाय सबको।"}
+ ],
+ "labels": {
+  "decisions": [
+   {"id": "D1", "fact": "वार्षिक उत्सव बैंक्वेट हॉल के बजाय ऑफिस की छत पर होगा।", "match": [["छत", "terrace", "टेरेस", "rooftop", "roof"]], "evidence": ["s007"]},
+   {"id": "D2", "fact": "उत्सव का कुल खर्च 2 लाख रुपये तक सीमित रहेगा।", "match": [["2", "दो"], ["लाख", "lakh"]], "evidence": ["s011", "s012"]}
+  ],
+  "action_items": [
+   {"id": "A1", "fact": "रोहित एडवांस देकर साउंड सिस्टम और लाइट बुक करेंगे।", "match": [["साउंड", "sound"]], "owner": "Rohit Negi", "due": "2026-12-05", "due_phrase": "5 दिसंबर तक", "evidence": ["s020", "s021"]},
+   {"id": "A2", "fact": "भावना हर टीम से सांस्कृतिक कार्यक्रम के नाम इकट्ठे करके सूची भेजेंगी।", "match": [["सांस्कृतिक", "cultural", "प्रस्तुति", "performance", "performances"]], "owner": "Bhavna Pillai", "due": "2026-11-27", "due_phrase": "शुक्रवार तक", "evidence": ["s025", "s026"]},
+   {"id": "A3", "fact": "कम से कम तीन कैटरर से कोटेशन लेने हैं; किसी का नाम तय नहीं।", "match": [["कैटरर", "caterer", "caterers", "कैटरिंग", "catering"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s028", "s031"]},
+   {"id": "A4", "fact": "मोहित सजावट की दो-तीन थीम सोचकर अगली मीटिंग में लाएँगे।", "match": [["सजावट", "decoration", "थीम", "theme"]], "owner": "Mohit Arora", "due": null, "due_phrase": null, "evidence": ["s033", "s034"]}
+  ],
+  "distractors": [
+   {"id": "X1", "kind": "not_agreed", "fact": "बाहर से लाइव बैंड बुलाने का सुझाव छोड़ दिया गया।", "match": [["बैंड", "band"]], "evidence": ["s013", "s016"]},
+   {"id": "X2", "kind": "other_date", "fact": "3 दिसंबर की फायर ड्रिल साउंड बुकिंग की तारीख नहीं है।", "match": [["फायर ड्रिल", "fire drill", "ड्रिल", "drill"]], "evidence": ["s022"]}
+  ]
+ }
+}
