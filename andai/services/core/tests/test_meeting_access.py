@@ -1,5 +1,6 @@
 """Who may read, stop, share and delete a meeting (`meetings/access.py`), over the routes that read
-or stop one (detail, transcript, live, minutes, stop): nine callers against `.work/AUTH_MATRIX.md`.
+or stop one (detail, transcript, live, minutes and their versions, edit, regenerate and exports,
+stop): nine callers against `.work/AUTH_MATRIX.md`.
 
 The org has an owner, an admin, the meeting's requester, a lead of the meeting's team, a plain
 member of that team, a user the meeting is shared with, a member of a team the meeting is shared
@@ -84,6 +85,55 @@ def test_minutes(world: AccessOrg, caller: str) -> None:
     assert response.status_code == 404, response.text
     if caller in READERS:  # readable, no minutes yet; the content is test_mom_read.py
         assert response.json()["code"] == "no_minutes"
+    else:
+        assert _refused(response), response.text
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_minutes_versions(world: AccessOrg, caller: str) -> None:
+    response = world.client(caller).get(f"/api/v1/meetings/{world.meeting_id}/mom/versions")
+
+    if caller in READERS:  # readable, no minutes yet; the content is test_mom_versions.py
+        assert (response.status_code, response.json()) == (200, {"versions": []}), response.text
+    else:
+        assert _refused(response), response.text
+
+
+@pytest.mark.parametrize("tail", ["export.md", "export.pdf"])
+@pytest.mark.parametrize("caller", CALLERS)
+def test_minutes_export(world: AccessOrg, caller: str, tail: str) -> None:
+    response = world.client(caller).get(f"/api/v1/meetings/{world.meeting_id}/mom/{tail}")
+
+    assert response.status_code == 404, response.text
+    if caller in READERS:  # readable, no minutes yet; the files are test_mom_export.py
+        assert response.json()["code"] == "no_minutes"
+    else:
+        assert _refused(response), response.text
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_minutes_edit(world: AccessOrg, caller: str) -> None:
+    body = {"summary": "s", "decisions": [], "actionItems": [], "topics": [], "risks": []}
+
+    response = world.client(caller).put(f"/api/v1/meetings/{world.meeting_id}/mom", json=body)
+
+    assert response.status_code == 404, response.text
+    if caller in SHARERS:  # may edit, nothing to edit yet; edits are test_mom_versions.py
+        assert response.json()["code"] == "no_minutes"
+    else:
+        assert _refused(response), response.text
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_minutes_regenerate(world: AccessOrg, caller: str) -> None:
+    response = world.client(caller).post(
+        f"/api/v1/meetings/{world.meeting_id}/mom/regenerate",
+        json={"templateId": "standard", "outputLanguage": "en"},
+    )
+
+    if caller in SHARERS:  # may regenerate; this meeting has no stored transcript
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "transcript_not_ready"
     else:
         assert _refused(response), response.text
 

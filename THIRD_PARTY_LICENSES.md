@@ -55,3 +55,47 @@ text: [`licenses/onnx-community-pyannote-segmentation-3.0.LICENSE.txt`](licenses
 > MIT is a Category-A (permissive) license under ADR-0004; baking it requires no exception,
 > only that the copyright + permission notice be preserved — which this file and the baked
 > `/opt/hf-cache/LICENSE.*` satisfy.
+
+## andai-core: minutes PDF export
+
+The minutes downloads (`andai_core.minutes.pdf`) print HTML to PDF with WeasyPrint, offline. The
+Python packages are pinned in `andai/uv.lock` and installed from PyPI into the andai-core
+virtualenv (andai-worker carries them too, as andai-core's dependencies, but never renders a PDF).
+`gate:licenses` does not read the Python tree, so they are listed here.
+
+| Package | Version | License | Why |
+| --- | --- | --- | --- |
+| `weasyprint` | `70.0` | BSD-3-Clause | HTML/CSS to PDF |
+| `pydyf` | `0.13.0` | BSD-3-Clause | PDF writer (WeasyPrint) |
+| `tinycss2` | `1.5.1` | BSD-3-Clause | CSS parser (WeasyPrint) |
+| `cssselect2` | `0.10.1` | BSD-3-Clause | CSS selectors (WeasyPrint) |
+| `tinyhtml5` | `2.1.0` | MIT | HTML parser (WeasyPrint) |
+| `webencodings` | `0.6.1` | BSD-3-Clause | character encodings (tinycss2, tinyhtml5) |
+| `cffi` | `2.1.1` | MIT-0 | loads Pango and HarfBuzz (WeasyPrint) |
+| `pycparser` | `3.12` | BSD-3-Clause | C parser (cffi) |
+| `pillow` | `13.0.0` | MIT-CMU | images (WeasyPrint) |
+| `fonttools` (`woff`) | `4.68.0` | MIT | font subsetting (WeasyPrint) |
+| `brotli`, `brotlicffi` | `1.2.1`, `1.2.1.0` | MIT | WOFF2 (fonttools) |
+| `zopfli` | `0.4.3` | Apache-2.0 | WOFF compression (fonttools) |
+| `pyphen` | `0.18.1` | GPL-2.0+ OR LGPL-2.1+ OR MPL-1.1 | hyphenation (WeasyPrint); used under LGPL/MPL, logged in `license-exceptions.json` |
+
+`pypdf` `6.20.1` (BSD-3-Clause) is a development dependency of the andai workspace (it reads the
+PDFs back in `tests/test_mom_export.py`) and is not in any image.
+
+The andai-core image's runtime stage installs these Debian bookworm packages for WeasyPrint
+(`andai/services/core/Dockerfile`); each keeps its Debian copyright file under
+`/usr/share/doc/<package>/copyright` in the image.
+
+| Debian package (and what apt pulls in) | Version | License |
+| --- | --- | --- |
+| `libpango-1.0-0`, `libpangoft2-1.0-0` | `1.50.12+ds-1` | LGPL-2.1+ (logged in `license-exceptions.json` with GLib, FriBidi, libthai, libdatrie, graphite2) |
+| `libharfbuzz0b`, `libharfbuzz-subset0` | `6.0.0+dfsg-3` | MIT (HarfBuzz "Old MIT") |
+| `fontconfig`, `libfontconfig1` | `2.14.1-4` | MIT-style (fontconfig) |
+| `libfreetype6` | `2.12.1+dfsg-5+deb12u4` | FreeType License (FTL) |
+| `libpng16-16`, `libexpat1`, `libbrotli1` | bookworm | libpng / MIT / MIT |
+| `fonts-noto-core` | `20201225-1` | SIL Open Font License 1.1 (Noto Sans, Noto Sans Devanagari) |
+| `fonts-dejavu-core` | `2.37-6` | Bitstream Vera (fontconfig's default font) |
+
+> The fonts are OFL-1.1 and Bitstream Vera, both Category A for fonts: they may be bundled and
+> redistributed with software provided they are not sold on their own, and their notices travel
+> with them in the image.

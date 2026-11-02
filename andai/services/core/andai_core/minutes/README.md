@@ -1,6 +1,7 @@
 # andai/services/core/andai_core/minutes
 
-Minutes of meeting generation (MOM-01..03). Pure code: no database, no routes. The pipeline
+Minutes of meeting generation (MOM-01..03) and their downloads (MOM-04). Pure code: no database,
+no routes. The pipeline
 (andai-worker) calls `generate`, then stores the draft through `meetings/mom_writer.py`, which
 applies the owner and date rules below.
 
@@ -40,3 +41,10 @@ applies the owner and date rules below.
   owners, due dates, needles, truncation, invalid ids before the filter) and writes a JSON and
   Markdown report with the SC3 verdict per criterion and latency per length band.
   `python -m andai_core.minutes.eval validate <gold dir>` lists problems in the fixtures.
+- `render.py` — a stored `MomDocument` as Markdown (`markdown`) or as the standalone HTML the PDF is
+  printed from (`html`): the template's sections in order under its headings in the document's
+  language, "None recorded" for an empty section, each item's evidence as transcript times (mm:ss);
+  every value escaped, no links or images. `filename` gives an ASCII-only download name.
+- `pdf.py` — `render(html)` prints with WeasyPrint, imported only when called (andai-worker has no
+  Pango). The URL fetcher refuses every URL; fonts come from the image (`fonts/README.md`).
+  `PdfUnavailable` where WeasyPrint cannot load.

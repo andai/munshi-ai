@@ -5,7 +5,9 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
 - `routes.py` — `GET /api/v1/meetings` (the list), `POST /api/v1/meetings/join`,
   `GET /api/v1/meetings/{id}`, `DELETE /api/v1/meetings/{id}`, `POST /api/v1/meetings/{id}/stop`,
   `GET /api/v1/meetings/{id}/transcript`, `GET /api/v1/meetings/{id}/live`,
-  `GET /api/v1/meetings/{id}/mom`, `GET/POST /api/v1/meetings/{id}/shares` and
+  `GET/PUT /api/v1/meetings/{id}/mom`, `GET /api/v1/meetings/{id}/mom/versions`,
+  `POST /api/v1/meetings/{id}/mom/regenerate`, `GET /api/v1/meetings/{id}/mom/export.md` and
+  `export.pdf`, `GET/POST /api/v1/meetings/{id}/shares` and
   `DELETE /api/v1/meetings/{id}/shares/{share_id}` (access per `.work/AUTH_MATRIX.md`; 404 for
   anyone who may not read the meeting).
 - `access.py` — the one access predicate, `accessible(actor)`, used as SQL by every read path
@@ -18,9 +20,21 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   filters `all | mine | shared | team:<id>`, keyset pages with an opaque cursor; access filtered in
   SQL before the limit, no totals. `has_minutes` says whether a minutes version exists.
 - `mom.py` — minutes of meeting: the latest version of a meeting's SPEC
-  `MomDocument` for its readers (404 `no_minutes` when there is none). Its evidence ids are
-  transcript segment ids. `seed_version` validates a document against the schema and the meeting's
-  stored segments before storing the next version (tests and seeds). Versions are never changed (the app role may only SELECT and INSERT `mom_documents`).
+  `MomDocument`, or any named version, for its readers (404 `no_minutes` when there is none,
+  `no_such_version`), with its template's `sections`, `headings` and `labels` in its output
+  language (`layout`, from `minutes.templates`, shared with the exports); the version list (template,
+  language, model, generated or edited at and by). Its evidence ids are transcript segment ids.
+  `seed_version` validates a document against the schema and the meeting's stored segments before
+  storing the next version (tests and seeds). Versions are never changed (the app role may only
+  SELECT and INSERT `mom_documents`).
+- `mom_edit.py` — changing the minutes, for the requester, the meeting's team lead, admins and
+  owners (`can_share`; 404 for anyone else): `save_edit` stores an edit as the next version through
+  `write_version(strict=True, edited_by=…)` (every item must cite segments of the meeting, else 422
+  `invalid_minutes` naming the item; a stale `baseVersion` is 409 `version_conflict`);
+  `request_regenerate` sets `mom_state = pending` with `mom_request` (template, language, who,
+  when) for the minutes job, never touching a running job's lease (409 `minutes_pending` while a
+  request waits, `transcript_not_ready` before the transcript is stored). Audited `mom.edit` and
+  `mom.regenerate` in the same transaction.
 - `mom_writer.py` — the one write path for minutes versions, generated or edited:
   `build_document` (no database) keeps only items citing segments of the meeting (generated drafts
   drop the rest and count them; edits are refused with the section and index), applies the owner

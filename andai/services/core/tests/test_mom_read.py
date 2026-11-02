@@ -78,6 +78,7 @@ def test_the_document_has_the_spec_shape_and_cites_andai_segment_ids(world: Acce
     assert set(doc) == {
         "meetingId", "version", "templateId", "outputLanguage", "summary", "decisions",
         "actionItems", "topics", "risks", "llmProfileId", "model", "generatedAt",
+        "headings", "sections", "labels",  # the layout of its template (test_mom_versions.py)
     }  # fmt: skip
     transcript = world.client("user_grantee").get(
         f"/api/v1/meetings/{world.meeting_id}/transcript"
