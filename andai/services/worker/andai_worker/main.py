@@ -1,11 +1,13 @@
-"""andai-worker: transcript ingest, meeting deletion, canary joins, join metrics and operator alerts
-(BOT-04, D-34, PORT-04).
+"""andai-worker: transcript ingest, minutes of meeting, meeting deletion, canary joins, metrics and
+operator alerts (BOT-04, D-34, PORT-04, MOM-01).
 
 * `GET /healthz` — liveness.
-* `GET /metrics` — join and deletion metrics in Prometheus text format (`metrics.py`), read from
-  the andai database on every scrape; 503 while the worker has no database URL.
+* `GET /metrics` — join, deletion and minutes metrics in Prometheus text format (`metrics.py`),
+  read from the andai database on every scrape; 503 while the worker has no database URL.
 * Background loops, started by the lifespan:
   - transcript ingest (`ingest.py`), always: andai's own copy of every finished meeting;
+  - minutes (`minutes.py`) when the LLM route is configured (`ANDAI_LLM_BASE_URL` and
+    `ANDAI_LLM_MODEL`): the minutes of every finished meeting with a stored transcript;
   - deletion (`deletion.py`), always: the purge of every meeting its users deleted;
   - canaries (`canary.py`) when at least one `ANDAI_CANARY_*_URL` is set;
   - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set.
@@ -33,10 +35,11 @@ from sqlalchemy import Engine
 
 from andai_core.crypto import load_keyring
 from andai_core.db.session import create_app_engine
+from andai_core.llm.client import LlmClient, LlmConfig
 from andai_core.mail import Mailer, SmtpMailer
 from andai_core.meetings.service import Meetings
 from andai_core.platform.gateway_client import HttpPlatformGateway
-from andai_worker import alerts, canary, deletion, ingest, metrics
+from andai_worker import alerts, canary, deletion, ingest, metrics, minutes
 from andai_worker.settings import WorkerSettings, get_worker_settings
 
 SERVICE_NAME = "andai-worker"
@@ -86,6 +89,19 @@ def jobs(services: WorkerServices) -> list[asyncio.Task]:
     )
     tasks.append(asyncio.create_task(ingester.run(ingest.TICK_S)))
     log.info("transcript ingest every %s s", ingest.TICK_S)
+    llm = LlmConfig.from_settings(settings)
+    if llm.configured:
+        writer = minutes.MomRunner(
+            services.engine,
+            LlmClient(llm),
+            timezone=settings.default_timezone,
+            default_language=settings.default_language,
+            clock=services.clock,
+        )
+        tasks.append(asyncio.create_task(writer.run(minutes.TICK_S)))
+        log.info("minutes every %s s", minutes.TICK_S)
+    else:
+        log.info("ANDAI_LLM_BASE_URL or ANDAI_LLM_MODEL is empty: minutes off")
     purger = deletion.DeletionRunner(
         services.engine,
         services.meetings.keyring,

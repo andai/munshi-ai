@@ -262,7 +262,7 @@ class World:
 
 @pytest.fixture(scope="module")
 def world(app_engine: Engine) -> World:
-    harness = make_harness(app_engine)
+    harness = make_harness(app_engine, ANDAI_PLATFORM_WEBHOOK_SECRET="cross-org-webhook-secret")
     a = seed_org(harness, app_engine, "Alpha")
     b = seed_org(harness, app_engine, "Beta")
     assert b.slug, "org B's slug is stored"
@@ -435,6 +435,12 @@ PUBLIC_ROUTES: dict[tuple[str, str], PublicCase] = {
         "org_name": b.name,
     },
     ("GET", "/healthz"): lambda b: None,
+    # Webhook-auth (HMAC, no session): unsigned here, so 401 or 503 and nothing written.
+    ("POST", "/internal/platform-events"): lambda b: {
+        "event_id": f"evt_{b.meeting_id.hex}",
+        "event_type": "meeting.completed",
+        "data": {"meeting": {"id": 1, "user_id": 1}},
+    },
 }
 
 ROUTES = sorted(served(create_app()))

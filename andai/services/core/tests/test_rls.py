@@ -630,13 +630,16 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "SETOF uuid"
     assert (fn[4], fn[5]) == (False, True)
-    # 0004 (open meetings), 0005 (join statistics), 0006 (the ingest claim) and 0009 (the
-    # deletion claim and backlog) together; never the link, the title, attendees or people.
+    # 0004 (open meetings), 0005 (join statistics), 0006 (the ingest claim), 0009 (the deletion
+    # claim and backlog) and 0010 (the MoM and recap claims and stats) together; never the link,
+    # the title, attendees, people, the minutes request or the error.
     assert readable == {
         "org_id", "status", "platform", "source", "failure_reason", "end_reason", "started_at",
         "created_at", "id", "platform_meeting_id", "transcript_state", "transcript_attempts",
         "transcript_next_at", "deleted_at", "deletion_state", "deletion_attempts",
-        "deletion_next_at",
+        "deletion_next_at", "ended_at", "mom_state", "mom_attempts", "mom_next_at", "mom_at",
+        "mom_lease", "mom_lease_until", "recap_state", "recap_attempts", "recap_next_at",
+        "recap_lease",
     }
     assert consent_columns == 0
     assert can_create is False
@@ -911,9 +914,10 @@ def test_claim_ingest_is_a_scan_owned_definer_function(superuser_engine: Engine)
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "TABLE(org_id uuid, meeting_id uuid)"
     assert (fn[4], fn[5]) == (False, True)
-    # 0006's three ingest columns and 0009's deletion lease.
+    # 0006's three ingest columns, 0009's deletion lease, 0010's MoM and recap state and leases.
     assert updatable == {
-        "transcript_state", "transcript_attempts", "transcript_next_at", "deletion_next_at"
+        "transcript_state", "transcript_attempts", "transcript_next_at", "deletion_next_at",
+        "mom_state", "mom_lease", "mom_lease_until", "recap_lease", "recap_next_at",
     }
     assert (segments, segment_columns) == (False, 0)
 
@@ -1131,3 +1135,293 @@ def test_the_scan_role_can_do_what_the_deletion_claim_needs(
             {"m": org_a.meeting_id},
         ).rowcount
     assert len(seen) == 1 and updated == 1
+
+
+# ─── the minutes pipeline: MoM and recap claims, the webhook nudge, stats (migration 0010) ────────
+
+CLAIM_MOM = "SELECT org_id, meeting_id, lease FROM andai_claim_mom(:n)"
+CLAIM_RECAP = "SELECT org_id, meeting_id, lease FROM andai_claim_recap(:n)"
+MOM_FUNCTIONS = {
+    "andai_claim_mom": "TABLE(org_id uuid, meeting_id uuid, lease uuid)",
+    "andai_claim_recap": "TABLE(org_id uuid, meeting_id uuid, lease uuid)",
+    "andai_platform_completed": "void",
+    "andai_mom_stats": "TABLE(pending bigint, failed bigint, latencies double precision[])",
+}
+
+
+def _leased(rows: list, org: SeededOrg) -> dict[uuid.UUID, uuid.UUID]:
+    return {meeting: lease for org_id, meeting, lease in rows if org_id == org.org_id}
+
+
+def test_the_mom_functions_are_scan_owned_definer_functions(superuser_engine: Engine) -> None:
+    with superuser_engine.connect() as conn:
+        rows = {
+            name: tuple(rest)
+            for name, *rest in conn.execute(
+                text(
+                    "SELECT p.proname, p.prosecdef, r.rolname, p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner"
+                    " WHERE p.proname = ANY(:n)"
+                ),
+                {"n": list(MOM_FUNCTIONS)},
+            ).all()
+        }
+    path = ["search_path=public, pg_temp"]
+    assert rows == {
+        name: (True, "andai_scan", path, result, False, True)
+        for name, result in MOM_FUNCTIONS.items()
+    }
+
+
+def test_claim_mom_takes_due_meetings_of_every_org_while_meetings_stay_hidden(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    for org in (org_a, org_b):
+        _set_meeting(app_engine, org, org.meeting_id, status="done", transcript_state="stored")
+    with transaction(app_engine) as tx:  # andai_app, no app.org_id
+        claimed = tx.execute(text(CLAIM_MOM), {"n": 1000}).all()
+        direct = tx.execute(text("SELECT count(*) FROM meetings")).scalar_one()
+    assert set(_leased(claimed, org_a)) == {org_a.meeting_id}
+    assert set(_leased(claimed, org_b)) == {org_b.meeting_id}
+    assert all(set(row._fields) == {"org_id", "meeting_id", "lease"} for row in claimed)
+    assert len({lease for *_, lease in claimed}) == len(claimed)
+    assert direct == 0
+
+
+def test_claim_mom_takes_only_due_meetings_and_leases_them(
+    app_engine: Engine, superuser_engine: Engine, org_a: SeededOrg
+) -> None:
+    now = datetime.now(UTC)
+
+    def meeting(status: str = "done", **values: object) -> uuid.UUID:
+        meeting_id = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status=status)
+        _set_meeting(app_engine, org_a, meeting_id, **{"transcript_state": "stored", **values})
+        return meeting_id
+
+    due = {
+        meeting(),
+        meeting("failed"),
+        meeting("cancelled"),
+        meeting(mom_state="pending", mom_attempts=3, mom_next_at=now - timedelta(seconds=1)),
+        meeting(mom_state="pending", mom_lease=uuid.uuid4(),
+                mom_lease_until=now - timedelta(seconds=1)),  # a crashed run's lease ran out
+    }
+    meeting("recording")
+    meeting("processing")
+    meeting(transcript_state="pending")
+    meeting(transcript_state="none")
+    for state in ("stored", "failed", "skipped"):
+        meeting(mom_state=state)
+    meeting(mom_attempts=8)
+    meeting(mom_next_at=now + timedelta(minutes=5))
+    meeting(mom_state="pending", mom_lease=uuid.uuid4(), mom_lease_until=now + timedelta(minutes=5))
+    meeting(source="canary")
+    meeting(deleted_at=now, deletion_state="pending")
+
+    with transaction(app_engine) as tx:
+        first = tx.execute(text(CLAIM_MOM), {"n": 1000}).all()
+    with transaction(app_engine) as tx:
+        again = tx.execute(text(CLAIM_MOM), {"n": 1000}).all()
+
+    assert set(_leased(first, org_a)) == due
+    assert _leased(again, org_a) == {}
+    with superuser_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT mom_state, mom_lease, mom_lease_until - now() FROM meetings"
+                " WHERE id = ANY(:ids)"
+            ),
+            {"ids": list(due)},
+        ).all()
+    leases = _leased(first, org_a)
+    assert {state for state, _, _ in rows} == {"pending"}
+    assert {lease for _, lease, _ in rows} == set(leases.values())
+    assert all(timedelta(minutes=14) < left <= timedelta(minutes=15) for *_, left in rows)
+
+
+def test_two_mom_claimers_never_take_the_same_meeting(
+    app_engine: Engine, org_a: SeededOrg
+) -> None:
+    ids = set()
+    for _ in range(3):
+        meeting_id = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done")
+        _set_meeting(app_engine, org_a, meeting_id, transcript_state="stored")
+        ids.add(meeting_id)
+    with app_engine.connect() as first:
+        held = first.execute(text(CLAIM_MOM), {"n": 1000}).all()  # locked until commit
+        with app_engine.connect() as second:
+            other = second.execute(text(CLAIM_MOM), {"n": 1000}).all()
+            second.commit()
+        first.commit()
+    assert set(_leased(held, org_a)) == ids
+    assert _leased(other, org_a) == {}
+
+
+def test_claim_recap_honours_its_due_time_and_lease(
+    app_engine: Engine, superuser_engine: Engine, org_a: SeededOrg
+) -> None:
+    now = datetime.now(UTC)
+
+    def meeting(**values: object) -> uuid.UUID:
+        meeting_id = _seed_meeting(app_engine, org_a.org_id, org_a.owner_id, status="done")
+        _set_meeting(app_engine, org_a, meeting_id, **values)
+        return meeting_id
+
+    due = {
+        meeting(recap_state="pending"),
+        meeting(recap_state="pending", recap_attempts=4, recap_next_at=now - timedelta(seconds=1)),
+    }
+    meeting(recap_state="pending", recap_next_at=now + timedelta(minutes=1))
+    meeting(recap_state="pending", recap_attempts=5)
+    for state in ("none", "sent", "failed", "skipped"):
+        meeting(recap_state=state)
+    meeting(recap_state="pending", source="canary")
+    meeting(recap_state="pending", deleted_at=now, deletion_state="pending")
+
+    with transaction(app_engine) as tx:
+        first = tx.execute(text(CLAIM_RECAP), {"n": 1000}).all()
+    with transaction(app_engine) as tx:
+        within_lease = tx.execute(text(CLAIM_RECAP), {"n": 1000}).all()
+
+    leases = _leased(first, org_a)
+    assert set(leases) == due
+    assert _leased(within_lease, org_a) == {}
+    with superuser_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT recap_state, recap_lease, recap_next_at - now() FROM meetings"
+                " WHERE id = ANY(:ids)"
+            ),
+            {"ids": list(due)},
+        ).all()
+    assert {state for state, _, _ in rows} == {"pending"}
+    assert {lease for _, lease, _ in rows} == set(leases.values())
+    assert all(timedelta(minutes=1) < left <= timedelta(minutes=2) for *_, left in rows)
+
+
+def test_platform_completed_makes_a_waiting_copy_due_in_any_org_and_answers_nothing(
+    app_engine: Engine, superuser_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    later = datetime.now(UTC) + timedelta(minutes=10)
+    for org in (org_a, org_b):
+        _set_meeting(app_engine, org, org.meeting_id, status="done",
+                     transcript_state="pending", transcript_next_at=later)
+    platform_id = 10**10 + uuid.uuid4().int % 10**9
+    _set_meeting(app_engine, org_b, org_b.meeting_id, platform_meeting_id=platform_id)
+
+    with transaction(app_engine) as tx:
+        answer = tx.execute(text("SELECT andai_platform_completed(:p)"), {"p": platform_id}).all()
+        unknown = tx.execute(text("SELECT andai_platform_completed(:p)"), {"p": 1}).all()
+    with superuser_engine.connect() as conn:
+        due = dict(
+            conn.execute(
+                text("SELECT id, transcript_next_at <= now() FROM meetings WHERE id = ANY(:i)"),
+                {"i": [org_a.meeting_id, org_b.meeting_id]},
+            ).all()
+        )
+    assert answer == unknown == [(None,)]
+    assert due == {org_a.meeting_id: False, org_b.meeting_id: True}
+
+
+def test_mom_stats_count_every_org_and_reveal_only_numbers(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    since = datetime.now(UTC) - timedelta(minutes=1)
+    with transaction(app_engine) as tx:
+        before = tx.execute(text("SELECT * FROM andai_mom_stats(:s)"), {"s": since}).one()
+    ended = datetime.now(UTC) - timedelta(seconds=90)
+    _set_meeting(app_engine, org_a, org_a.meeting_id, status="done", transcript_state="stored")
+    _set_meeting(app_engine, org_b, org_b.meeting_id, status="done", transcript_state="stored",
+                 mom_state="stored", ended_at=ended, mom_at=ended + timedelta(seconds=42))
+    failed = _seed_meeting(app_engine, org_b.org_id, org_b.owner_id, status="done")
+    _set_meeting(app_engine, org_b, failed, mom_state="failed")
+
+    with transaction(app_engine) as tx:
+        after = tx.execute(text("SELECT * FROM andai_mom_stats(:s)"), {"s": since}).one()
+        direct = tx.execute(text("SELECT count(*) FROM meetings")).scalar_one()
+
+    assert set(after._fields) == {"pending", "failed", "latencies"}
+    assert after.pending == before.pending + 1
+    assert after.failed == before.failed + 1
+    assert len(after.latencies) == len(before.latencies) + 1
+    assert 41.9 < [v for v in after.latencies if v not in before.latencies][0] < 42.1
+    assert direct == 0
+
+
+def test_the_webhook_table_holds_no_org_data_and_the_app_may_only_read_and_add(
+    app_engine: Engine, superuser_engine: Engine
+) -> None:
+    event_id = f"evt_{uuid.uuid4().hex}"
+    with transaction(app_engine) as tx:
+        tx.execute(
+            text(
+                "INSERT INTO platform_webhook_events (event_id, event_type, platform_meeting_id)"
+                " VALUES (:e, 'meeting.completed', 1)"
+            ),
+            {"e": event_id},
+        )
+    for statement in (
+        "UPDATE platform_webhook_events SET event_type = 'x'",
+        "DELETE FROM platform_webhook_events",
+    ):
+        with app_engine.connect() as conn, pytest.raises(ProgrammingError, match="permission"):
+            conn.execute(text(statement))
+    with superuser_engine.connect() as conn:
+        columns = set(
+            conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_name = 'platform_webhook_events'"
+                )
+            ).scalars()
+        )
+        rls = conn.execute(
+            text(
+                "SELECT relrowsecurity, relforcerowsecurity FROM pg_class"
+                " WHERE relname = 'platform_webhook_events'"
+            )
+        ).one()
+    assert columns == {"event_id", "event_type", "platform_meeting_id", "received_at"}
+    assert tuple(rls) == (False, False)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT mom_request FROM meetings",
+        "SELECT mom_error FROM meetings",
+        "SELECT recap_at FROM meetings",
+        "UPDATE meetings SET mom_attempts = 0",
+        "UPDATE meetings SET mom_at = now()",
+        "UPDATE meetings SET mom_request = NULL",
+        "UPDATE meetings SET recap_state = 'sent'",
+        "UPDATE meetings SET recap_attempts = 0",
+        "SELECT * FROM mom_documents",
+        "SELECT * FROM platform_webhook_events",
+    ],
+)
+def test_the_scan_role_cannot_reach_beyond_the_mom_grants(
+    superuser_engine: Engine, org_a: SeededOrg, statement: str
+) -> None:
+    with superuser_engine.connect() as conn:
+        conn.execute(text("SET LOCAL ROLE andai_scan"))
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            conn.execute(text(statement))
+
+
+def test_the_app_role_still_sees_only_its_own_orgs_mom_state(
+    app_engine: Engine, org_a: SeededOrg, org_b: SeededOrg
+) -> None:
+    _set_meeting(app_engine, org_b, org_b.meeting_id, mom_state="failed", mom_error="llm_x")
+    with transaction(app_engine, org_id=org_a.org_id) as tx:
+        seen = tx.execute(
+            text("SELECT count(*) FROM meetings WHERE id = :m"), {"m": org_b.meeting_id}
+        ).scalar_one()
+        changed = tx.execute(
+            text("UPDATE meetings SET mom_state = 'pending' WHERE id = :m"),
+            {"m": org_b.meeting_id},
+        ).rowcount
+    assert (seen, changed) == (0, 0)

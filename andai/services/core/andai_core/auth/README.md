@@ -19,7 +19,9 @@ Human authentication for andai-core, mounted under `/api/v1`:
 - `roles.py` — `require_role(...)`: a `full` session whose org role is one of the given ones (or,
   with `team_lead=True`, who leads the team in the path),
   else 403.
-- `csrf.py` — refuses state-changing requests whose `Origin` is not `ANDAI_PORTAL_ORIGIN`.
+- `csrf.py` — refuses state-changing requests whose `Origin` is not `ANDAI_PORTAL_ORIGIN`, except on
+  the signature-authenticated paths (`SIGNED_PATHS`: exactly `/internal/platform-events`), which the
+  stage gate also passes.
 - `clientip.py` — the client address; `X-Forwarded-For` only from `ANDAI_TRUSTED_PROXIES`.
 - `deps.py` — the app's services and the current-session dependencies.
 - `resets.py` — 30-minute single-use reset links; confirming one ends every session.

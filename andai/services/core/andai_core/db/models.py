@@ -9,8 +9,9 @@ Two kinds of table:
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
   `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
   (0008), `meeting_removals` (0009).
-* System tables with no org and no customer data (no row-level security; migration 0005):
-  `canary_runs` and `alert_state`, written by andai-worker.
+* System tables with no org and no customer data (no row-level security): `canary_runs` and
+  `alert_state` (0005), written by andai-worker, and `platform_webhook_events` (0010), written by
+  andai-core's platform webhook.
 
 One org may carry `is_canary`: the org whose principal sends canary bots (`canary-setup`).
 
@@ -97,6 +98,10 @@ GRANTEE_TYPES = ("user", "team")
 # Minutes of meeting (migration 0008; SPEC `OutputLanguage`).
 OUTPUT_LANGUAGES = ("en", "hi", "hinglish")
 
+# The minutes pipeline (migration 0010): a meeting's minutes and its recap mail.
+MOM_STATES = ("none", "pending", "stored", "failed", "skipped")
+RECAP_STATES = ("none", "pending", "sent", "failed", "skipped")
+
 # Meeting deletion (migration 0009): `none` until deleted, then `pending` until purged (the row
 # goes), or `failed` once the purge has spent its attempts.
 DELETION_STATES = ("none", "pending", "failed")
@@ -124,8 +129,8 @@ ORG_SCOPED_TABLES = (
     "meeting_removals",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
-# No org, no customer data, no row-level security (migration 0005).
-SYSTEM_TABLES = ("canary_runs", "alert_state")
+# No org, no customer data, no row-level security (migrations 0005 and 0010).
+SYSTEM_TABLES = ("canary_runs", "alert_state", "platform_webhook_events")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -459,6 +464,22 @@ class Meeting(Base):
             "deletion_next_at",
             postgresql_where=text("deletion_state = 'pending'"),
         ),
+        CheckConstraint(_in("mom_state", MOM_STATES), name="mom_state"),
+        CheckConstraint(_in("recap_state", RECAP_STATES), name="recap_state"),
+        Index(
+            "ix_meetings_mom_due",
+            "mom_next_at",
+            postgresql_where=text(
+                f"status IN ({', '.join(repr(v) for v in TERMINAL_STATUSES)})"
+                " AND transcript_state = 'stored' AND mom_state IN ('none', 'pending')"
+            ),
+        ),
+        Index(
+            "ix_meetings_recap_due",
+            "recap_next_at",
+            postgresql_where=text("recap_state = 'pending'"),
+        ),
+        Index("ix_meetings_platform_meeting_id", "platform_meeting_id"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -518,6 +539,25 @@ class Meeting(Base):
         Integer, nullable=False, server_default=text("0")
     )
     deletion_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Minutes (`meetings/minutes_job.py`, andai-worker): `mom_state` none → pending → stored, or
+    # skipped (empty transcript) / failed (attempts spent, `mom_error` the typed code). `mom_at` is
+    # when the first minutes were stored; `mom_request` the template and language of a pending
+    # regenerate; `mom_lease` / `mom_lease_until` the running job's lease (`andai_claim_mom`).
+    mom_state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'none'"))
+    mom_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    mom_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mom_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mom_error: Mapped[str | None] = mapped_column(Text)
+    mom_request: Mapped[dict | None] = mapped_column(JSONB)
+    mom_lease: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    mom_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The recap mail of the first minutes: `pending` once they are stored, then sent / failed;
+    # `skipped` for meetings that never get one. `recap_next_at` is its due time, backoff and lease.
+    recap_state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'none'"))
+    recap_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    recap_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recap_lease: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    recap_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TranscriptSegment(Base):
@@ -726,5 +766,19 @@ class AlertState(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notice: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PlatformWebhookEvent(Base):
+    """One platform webhook event andai-core accepted (`platform/webhook.py`): its id (the dedup
+    key), type and platform meeting id. A system row: no org, no customer data."""
+
+    __tablename__ = "platform_webhook_events"
+
+    event_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    platform_meeting_id: Mapped[int | None] = mapped_column(BigInteger)
+    received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

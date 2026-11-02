@@ -223,6 +223,10 @@ def view(tx: Tx, actor: Actor, meeting: Meeting) -> dict:
         "title": meeting.title,
         "attendees": list(meeting.attendees or []),
         "transcript_state": meeting.transcript_state,
+        # The minutes pipeline (`minutes_job.py`): none | pending | stored | failed | skipped,
+        # and the typed code of the last failure (no message, no content).
+        "mom_state": meeting.mom_state,
+        "mom_error": meeting.mom_error,
     }
 
 

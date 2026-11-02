@@ -7,6 +7,8 @@ reconciler (`meetings.reconciler`) unless `ANDAI_RECONCILER=off`.
 Startup refuses to complete outside `ANDAI_ENV=dev` without a key-encryption key
 (`crypto.load_keyring` raises `KeyUnavailable`), so a production service never runs without one.
 A session in a two-factor stage reaches only its own routes (`auth.stage_gate`).
+The platform's system webhook (`POST /internal/platform-events`, `platform.webhook`) sits outside
+`/api` and is authenticated by its HMAC signature.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from andai_core.search import routes as search_routes
 from andai_core.mail import SmtpMailer
 from andai_core.platform.admin_client import HttpPlatformAdmin
 from andai_core.platform.gateway_client import HttpPlatformGateway
+from andai_core.platform import webhook as platform_webhook
 from andai_core.settings import Settings, get_settings
 
 SERVICE_NAME = "andai-core"
@@ -112,6 +115,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(org_routes.router)
     app.include_router(meeting_routes.router)
     app.include_router(search_routes.router)
+    app.include_router(platform_webhook.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
