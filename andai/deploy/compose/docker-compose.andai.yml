@@ -69,6 +69,9 @@ services:
       - ANDAI_LLM_MAX_OUTPUT_TOKENS=${ANDAI_LLM_MAX_OUTPUT_TOKENS:-4000}
       - ANDAI_LLM_TIMEOUT_S=${ANDAI_LLM_TIMEOUT_S:-120}
       - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
+      # The secret meeting-api signs its system webhook with (POST /internal/platform-events);
+      # meeting-api gets the same value below. gen-secrets.sh mints it.
+      - ANDAI_PLATFORM_WEBHOOK_SECRET=${ANDAI_PLATFORM_WEBHOOK_SECRET?ANDAI_PLATFORM_WEBHOOK_SECRET must be in the env file (gen-secrets.sh mints it)}
       - REDIS_URL=redis://redis:6379/1
       - SMTP_HOST=${SMTP_HOST:-mailpit}
       - SMTP_PORT=${SMTP_PORT:-1025}
@@ -290,6 +293,12 @@ services:
     environment:
       # Not read by meeting-api at v0.12.28; see admin-api.
       - MUNSHI_ENV=${MUNSHI_ENV:-production}
+      # The system webhook: meeting.completed (and bot.failed) to andai-core on the stack network,
+      # signed with the shared secret. andai-core only records it and makes the meeting's
+      # transcript copy due; andai-worker's claim loop produces the minutes either way.
+      - MUNSHI_SYSTEM_WEBHOOK_URL=http://andai-core:8000/internal/platform-events
+      - MUNSHI_SYSTEM_WEBHOOK_SECRET=${ANDAI_PLATFORM_WEBHOOK_SECRET?ANDAI_PLATFORM_WEBHOOK_SECRET must be in the env file (gen-secrets.sh mints it)}
+      - MUNSHI_SYSTEM_WEBHOOK_ALLOW_PRIVATE_HTTP=true
     ports: !override
       - "127.0.0.1:${MEETING_API_PORT:-18080}:8080"
 

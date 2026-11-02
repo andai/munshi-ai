@@ -4,7 +4,8 @@ The parametrised test enumerates `app.routes` of the real application (flattened
 `fastapi.routing.iter_route_contexts`: an included router appears in `app.routes` as one entry),
 so a route added later is covered without editing this file: for each route and method, an
 `mfa_pending` and an `enroll_required` session must be stopped by the gate unless the route is on
-that stage's allow-list, and must get through when it is.
+that stage's allow-list, and must get through when it is. Webhook-auth routes (`WEBHOOK_AUTH`) are
+not session routes and pass the gate whatever the cookie.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.routing import iter_route_contexts
 from sqlalchemy import Engine
 
+from andai_core.auth.csrf import SIGNED_PATHS
 from andai_core.auth.sessions import COOKIE_NAME
 from andai_core.auth.stage_gate import DETAIL, NEXT_STEP
 from andai_core.main import create_app
@@ -44,6 +46,9 @@ ALLOWED = {
         ("POST", "/api/v1/me/mfa/recovery-codes"),
     },
 }
+# Webhook-auth routes: signed server-to-server calls with no session, outside the gate (the gate
+# passes them whatever cookie a request carries; the route checks its HMAC signature).
+WEBHOOK_AUTH = {("POST", "/internal/platform-events")}
 # Routes this phase must have; guards against an enumeration that silently finds nothing.
 KNOWN = {
     ("GET", "/healthz"),
@@ -66,6 +71,7 @@ KNOWN = {
     ("GET", "/api/v1/org/directory"),
     ("GET", "/api/v1/meetings/{meeting_id}/mom"),
     ("GET", "/api/v1/search"),
+    ("POST", "/internal/platform-events"),
 }
 
 
@@ -95,6 +101,8 @@ def test_the_enumeration_covers_the_live_application(harness: Harness) -> None:
     assert KNOWN <= live
     for stage in STAGES:
         assert ALLOWED[stage] <= live, f"an allow-listed route of {stage} does not exist"
+    assert WEBHOOK_AUTH <= live
+    assert {path for _, path in WEBHOOK_AUTH} == SIGNED_PATHS
 
 
 @pytest.mark.parametrize("stage", STAGES)
@@ -110,7 +118,7 @@ def test_every_route_is_gated_for_two_factor_stages(
 
     gate = {"detail": DETAIL[stage], "next_step": NEXT_STEP[stage]}
     body = response.json() if response.headers.get("content-type") == "application/json" else {}
-    if (method, path) in ALLOWED[stage]:
+    if (method, path) in ALLOWED[stage] or (method, path) in WEBHOOK_AUTH:
         assert body.get("detail") not in DETAIL.values(), (stage, method, path, response.text)
     else:
         assert (response.status_code, body) == (401, gate), (stage, method, path)

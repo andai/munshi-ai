@@ -11,7 +11,8 @@
 # (Munshi's flows services refuse to boot without the last two; Munshi's own
 # deploy/compose/mint-dev-env.sh mints the same two), plus andai-core's database role passwords
 # ANDAI_DB_PASSWORD_OWNER and ANDAI_DB_PASSWORD_APP (hex, so they are safe inside connection URLs).
-# Minted as `openssl rand -base64 32`: ANDAI_KEK, andai-core's key-encryption key (32 bytes).
+# ANDAI_PLATFORM_WEBHOOK_SECRET (hex) is the secret meeting-api signs its system webhook to andai-core
+# with. Minted as `openssl rand -base64 32`: ANDAI_KEK, andai-core's key-encryption key (32 bytes).
 set -euo pipefail
 
 usage() { echo "usage: $0 ENV_FILE" >&2; exit 2; }
@@ -30,7 +31,7 @@ case "$(basename "$env_file")" in
 esac
 command -v openssl >/dev/null || { echo "gen-secrets: openssl not found" >&2; exit 1; }
 
-keys=(ADMIN_TOKEN INTERNAL_API_SECRET MUNSHI_DISPATCH_SIGNING_KEY NEXTAUTH_SECRET MUNSHI_FLOWS_API_KEY MUNSHI_FLOWS_TIMELINE_KEY ANDAI_DB_PASSWORD_OWNER ANDAI_DB_PASSWORD_APP ANDAI_KEK)
+keys=(ADMIN_TOKEN INTERNAL_API_SECRET MUNSHI_DISPATCH_SIGNING_KEY NEXTAUTH_SECRET MUNSHI_FLOWS_API_KEY MUNSHI_FLOWS_TIMELINE_KEY ANDAI_DB_PASSWORD_OWNER ANDAI_DB_PASSWORD_APP ANDAI_KEK ANDAI_PLATFORM_WEBHOOK_SECRET)
 placeholders=" dev-admin-token dev-dispatch-signing-key dev-nextauth-secret munshi-internal-secret lite-internal-secret changeme change-me CHANGE-ME default secret "
 
 tmp="$(mktemp "${env_file}.XXXXXX")"

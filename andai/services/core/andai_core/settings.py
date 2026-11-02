@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     # The zone a meeting's local date is taken in (relative due dates resolve against it).
     default_timezone: str = Field(default="Asia/Kolkata", validation_alias="ANDAI_DEFAULT_TIMEZONE")
 
+    # The shared secret the platform signs its system webhook with (`POST /internal/platform-events`,
+    # `platform/webhook.py`); empty refuses every webhook (503).
+    platform_webhook_secret: SecretStr | None = Field(
+        default=None, validation_alias="ANDAI_PLATFORM_WEBHOOK_SECRET"
+    )
+
     redis_url: str = Field(default="redis://redis:6379/1", validation_alias="REDIS_URL")
 
     # The only origin allowed to make state-changing browser requests.

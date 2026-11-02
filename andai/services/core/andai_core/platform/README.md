@@ -17,5 +17,13 @@ Each org's principal on the meeting platform:
   live relay (`meetings/live.py`) opens with the same key.
   Errors carry the call and status only; a structured duplicate 409 is `DuplicateMeeting`.
 
+- `webhook.py` — `POST /internal/platform-events`, the platform's system webhook (meeting-api's
+  `MUNSHI_SYSTEM_WEBHOOK_URL`, pointed here by the compose overlay). Outside `/api`, so the portal
+  never proxies it; HMAC-SHA256 over the raw body with `ANDAI_PLATFORM_WEBHOOK_SECRET` and a ±300 s
+  timestamp window (503 without a secret, 401 on any mismatch); deduplicated on `event_id` in
+  `platform_webhook_events`. A `meeting.completed` only records the event and makes that meeting's
+  transcript copy due (`andai_platform_completed`) in one transaction; andai-worker's claims do the
+  work. Unknown meetings are answered like known ones.
+
 `andai_core.org.service.create_org` provisions and configures the principal before it inserts the
 org, so an org never exists without a configured one.

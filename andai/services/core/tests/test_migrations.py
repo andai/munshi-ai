@@ -115,11 +115,16 @@ def test_app_role_grants(migrated: Postgres) -> None:
     assert granted["audit_events"] == {"INSERT"}
     assert granted["mom_documents"] == {"SELECT", "INSERT"}  # a version is never changed
     assert granted["meeting_removals"] == {"SELECT", "INSERT"}  # a removal is a fact
-    for table in SYSTEM_TABLES:  # canary runs and alert incidents are kept, never deleted
+    for table in set(SYSTEM_TABLES) - {"platform_webhook_events"}:  # kept, never deleted
         assert granted[table] == {"SELECT", "INSERT", "UPDATE"}, table
+    assert granted["platform_webhook_events"] == {"SELECT", "INSERT"}  # an event is a fact
     assert tuple(app_role) == (False, False, False, False)
     assert version_table is False
 
+
+# andai_scan's UPDATE column grants at head: the ingest columns (0006), the deletion lease (0009),
+# and the MoM and recap state and leases (0010).
+HEAD_SCAN_UPDATES = 3 + 1 + 5
 
 TRANSCRIPT_COLUMNS = {
     "title",
@@ -167,12 +172,13 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
     engine = create_engine(migrated.superuser_url)
     try:
         assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
-        assert _scan_objects(engine) == (1, 1, 4)
+        assert _scan_objects(engine) == (1, 1, HEAD_SCAN_UPDATES)
 
         command.downgrade(config, "0005")
         assert _revision(engine) == "0005"
         assert _tables(engine) == ALL_TABLES - {
-            "transcript_segments", "meeting_shares", "mom_documents", "meeting_removals"
+            "transcript_segments", "meeting_shares", "mom_documents", "meeting_removals",
+            "platform_webhook_events",
         }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
@@ -180,7 +186,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
         command.upgrade(config, "head")
         assert _tables(engine) == ALL_TABLES
         assert TRANSCRIPT_COLUMNS <= _meeting_columns(engine)
-        assert _scan_objects(engine) == (1, 1, 4)
+        assert _scan_objects(engine) == (1, 1, HEAD_SCAN_UPDATES)
     finally:
         engine.dispose()
 
@@ -206,7 +212,7 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
         command.downgrade(config, "0006")
         assert _revision(engine) == "0006"
         assert _tables(engine) == ALL_TABLES - {
-            "meeting_shares", "mom_documents", "meeting_removals"
+            "meeting_shares", "mom_documents", "meeting_removals", "platform_webhook_events"
         }
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
@@ -256,7 +262,9 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
 
         command.downgrade(config, "0007")
         assert _revision(engine) == "0007"
-        assert _tables(engine) == ALL_TABLES - {"mom_documents", "meeting_removals"}
+        assert _tables(engine) == ALL_TABLES - {
+            "mom_documents", "meeting_removals", "platform_webhook_events"
+        }
         assert _search_state(engine) == (set(), False, False)
 
         command.upgrade(config, "head")
@@ -309,7 +317,7 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
 
         command.downgrade(config, "0008")
         assert _revision(engine) == "0008"
-        assert _tables(engine) == ALL_TABLES - {"meeting_removals"}
+        assert _tables(engine) == ALL_TABLES - {"meeting_removals", "platform_webhook_events"}
         present, functions, selectable, updatable, body_0008 = _deletion_state(engine)
         assert (present, functions, selectable, updatable) == (False, 0, set(), set())
         assert _scan_objects(engine) == (1, 1, 3)
@@ -328,3 +336,148 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
         assert _deletion_state(engine)[4] == head_body
     finally:
         engine.dispose()
+
+
+# ─── 0010: the minutes pipeline ───────────────────────────────────────────────────────────────────
+
+MOM_COLUMNS = {
+    "mom_state", "mom_attempts", "mom_next_at", "mom_at", "mom_error", "mom_request", "mom_lease",
+    "mom_lease_until", "recap_state", "recap_attempts", "recap_next_at", "recap_lease", "recap_at",
+}
+MOM_FUNCTIONS = (
+    "andai_claim_mom", "andai_claim_recap", "andai_platform_completed", "andai_mom_stats"
+)
+
+
+def _mom_state(engine: Engine) -> tuple[bool, int, bool]:
+    """(MoM columns present, MoM functions, webhook table present)."""
+    with engine.connect() as conn:
+        functions = conn.execute(
+            text("SELECT count(*) FROM pg_proc WHERE proname = ANY(:n)"),
+            {"n": list(MOM_FUNCTIONS)},
+        ).scalar_one()
+    return (
+        MOM_COLUMNS <= _meeting_columns(engine),
+        functions,
+        "platform_webhook_events" in _tables(engine),
+    )
+
+
+def test_mom_pipeline_downgrade_to_0009_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        assert _mom_state(engine) == (True, 4, True)
+
+        command.downgrade(config, "0009")
+        assert _revision(engine) == "0009"
+        assert _mom_state(engine) == (False, 0, False)
+        assert not MOM_COLUMNS & _meeting_columns(engine)
+        assert _scan_objects(engine)[2] == 4
+
+        command.upgrade(config, "head")
+        assert _mom_state(engine) == (True, 4, True)
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
+    finally:
+        engine.dispose()
+
+
+def _fresh_database(postgres: Postgres) -> tuple[str, Engine]:
+    import uuid
+
+    name = f"andai_m{uuid.uuid4().hex[:12]}"
+    admin = create_engine(postgres.url("postgres", postgres.superuser_password, "postgres"))
+    with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(f"CREATE DATABASE {name} OWNER andai_owner"))
+        conn.execute(text(f"GRANT CONNECT ON DATABASE {name} TO andai_owner, andai_app"))
+    admin.dispose()
+    superuser = create_engine(postgres.url("postgres", postgres.superuser_password, name))
+    with superuser.begin() as conn:
+        conn.execute(text("REVOKE ALL ON SCHEMA public FROM PUBLIC"))
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO andai_app, andai_scan"))
+    return name, superuser
+
+
+def _drop_database(postgres: Postgres, name: str) -> None:
+    admin = create_engine(postgres.url("postgres", postgres.superuser_password, "postgres"))
+    with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+    admin.dispose()
+
+
+def test_meetings_over_before_0010_never_get_minutes_or_a_recap(migrated: Postgres) -> None:
+    import json
+    import uuid
+
+    name, superuser = _fresh_database(migrated)
+    try:
+        owner_url = migrated.url("andai_owner", migrated.owner_password, name)
+        command.upgrade(alembic_config(owner_url), "0009")
+        org, user = uuid.uuid4(), uuid.uuid4()
+        meetings = {
+            "done_with_minutes": ("done", None),
+            "done_without": ("done", None),
+            "failed": ("failed", "internal_error"),
+            "cancelled": ("cancelled", None),
+            "recording": ("recording", None),
+            "dispatching": ("dispatching", None),
+        }
+        ids = {label: uuid.uuid4() for label in meetings}
+        with superuser.begin() as conn:  # the superuser is not bound by row-level security
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, email, display_name, status)"
+                    " VALUES (:u, :e, 'U', 'active')"
+                ),
+                {"u": user, "e": f"{user.hex}@example.test"},
+            )
+            conn.execute(
+                text("INSERT INTO orgs (id, name, slug) VALUES (:o, 'O', :s)"),
+                {"o": org, "s": f"o-{org.hex}"},
+            )
+            for label, (status, reason) in meetings.items():
+                conn.execute(
+                    text(
+                        "INSERT INTO meetings (id, org_id, requested_by, platform, join_url,"
+                        " join_url_key, status, failure_reason)"
+                        " VALUES (:m, :o, :u, 'zoom', :j, :k, :s, :r)"
+                    ),
+                    {"m": ids[label], "o": org, "u": user, "j": f"https://zoom.us/j/{label}",
+                     "k": f"zoom.us/j/{ids[label].hex}", "s": status, "r": reason},
+                )
+            conn.execute(
+                text(
+                    "INSERT INTO mom_documents (meeting_id, version, org_id, template_id,"
+                    " output_language, body, search_text, created_at)"
+                    " VALUES (:m, 1, :o, 'standard', 'en', CAST(:b AS jsonb), 's',"
+                    " '2026-10-30T10:00:00Z')"
+                ),
+                {"m": ids["done_with_minutes"], "o": org, "b": json.dumps({"summary": "s"})},
+            )
+
+        command.upgrade(alembic_config(owner_url), "head")
+
+        with superuser.connect() as conn:
+            rows = {
+                row.id: (row.mom_state, row.recap_state, row.mom_at is not None)
+                for row in conn.execute(
+                    text("SELECT id, mom_state, recap_state, mom_at FROM meetings")
+                )
+            }
+            forced = dict(
+                conn.execute(
+                    text(
+                        "SELECT relname, relforcerowsecurity FROM pg_class"
+                        " WHERE relname IN ('meetings', 'mom_documents')"
+                    )
+                ).all()
+            )
+        assert rows[ids["done_with_minutes"]] == ("stored", "skipped", True)
+        for label in ("done_without", "failed", "cancelled"):
+            assert rows[ids[label]] == ("skipped", "skipped", False), label
+        for label in ("recording", "dispatching"):  # still running: minutes when it ends
+            assert rows[ids[label]] == ("none", "none", False), label
+        assert forced == {"meetings": True, "mom_documents": True}
+    finally:
+        superuser.dispose()
+        _drop_database(migrated, name)

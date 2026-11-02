@@ -10,6 +10,8 @@ A request that carries a live session in a two-factor stage reaches only that st
 Every other path answers 401 with `{"next_step": "mfa_verify" | "mfa_enroll"}` before any route
 runs, so a route added later is gated without opting in. Requests without a session cookie, with a
 dead one, or with a `full` session pass through unchanged; the routes do their own authentication.
+The signature-authenticated server-to-server paths (`csrf.SIGNED_PATHS`, exact matches) are not
+session routes: the gate passes them without looking at any cookie.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from andai_core.auth import sessions
+from andai_core.auth.csrf import SIGNED_PATHS
 from andai_core.db.session import transaction
 
 LOGOUT = "/api/v1/auth/logout"
@@ -52,7 +55,7 @@ class StageGate:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in ("http", "websocket"):
+        if scope["type"] not in ("http", "websocket") or scope["path"] in SIGNED_PATHS:
             await self.app(scope, receive, send)
             return
         token = HTTPConnection(scope).cookies.get(sessions.COOKIE_NAME)
