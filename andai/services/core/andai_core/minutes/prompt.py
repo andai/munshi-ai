@@ -22,17 +22,23 @@ Hindi (Devanagari) or Hinglish.
 Rules:
 1. Use only what was said in the transcript. Leave out anything that was not said: an empty list \
 is the right answer when nothing of that kind was said. Never invent people, numbers or dates.
-2. Every decision, action item, topic and risk lists in `evidence` the ids of the segments that \
-support it, copied exactly from the brackets: at least one id, only ids that appear in the \
-transcript.
+2. Every decision, action item, topic and risk lists in `evidence` the ids of the segments where \
+it is said or agreed: at least one id, only ids that appear in the transcript. Copy each id \
+character for character from the brackets at the start of its line (`seg_` and 24 hexadecimal \
+characters); never shorten, join or make up an id. One or two lines that state the item are \
+better than many.
 3. `owner` is the person who will do an action item, only when the transcript clearly names them \
 (write the name as said); otherwise null. `ownerConfidence` (0 to 1) is how sure you are that the \
-transcript names this person as the owner. Groups ("the team", "we", "everyone") are not owners.
+transcript names this person as the owner. Groups ("the team", "we", "everyone", "someone") are \
+not owners, and neither is a person who only raised or discussed the task.
 4. `dueText` is the due phrase exactly as said (for example "kal tak", "next Friday", \
-"31 October"), or null when no due time was said. `due` is that date as YYYY-MM-DD only when you \
-are sure of it from the meeting date; otherwise null.
-5. {language}
-6. {guidance}"""
+"31 October"), or null when no due time was said for this item. A date said for something else \
+(another event, a later meeting, when an owner will be chosen) is not this item's due phrase. \
+`due` is that date as YYYY-MM-DD only when you are sure of it from the meeting date; otherwise \
+null.
+5. A suggestion nobody agreed to, or one set aside for later, is not a decision or an action item.
+6. {language}
+7. {guidance}"""
 
 PART_NOTE = (
     "This is part {index} of {count} of the transcript, in order. Write minutes for this part only; "

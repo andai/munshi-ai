@@ -66,7 +66,7 @@
   "action_items": [
    {"id": "A1", "fact": "Kunal turns on the SMS appointment reminders.", "match": [["sms", "reminder", "reminders"]], "owner": "Kunal Mehra", "due": "2026-12-14", "due_phrase": "next Monday", "evidence": ["s024"]},
    {"id": "A2", "fact": "Arif retrains the front desk staff on the new walk-in rules.", "match": [["front desk", "reception", "retrain", "retraining", "training"]], "owner": "Arif Hussain", "due": "2026-12-12", "due_phrase": "by Saturday", "evidence": ["s014", "s015"]},
-   {"id": "A3", "fact": "A notice about the walk-in hours goes up at the entrance and pharmacy; nobody named.", "match": [["notice", "sign", "signage", "poster"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s032"]}
+   {"id": "A3", "fact": "A notice about the walk-in hours goes up at the entrance and pharmacy; nobody named.", "match": [["notice", "sign", "signage", "poster"]], "owner": "unassigned", "due": "2026-12-11", "due_phrase": "later this week", "evidence": ["s032", "s035"]}
   ],
   "distractors": [
    {"id": "X1", "kind": "not_agreed", "fact": "Opening on Sunday mornings was suggested and rejected.", "match": [["sunday"]], "evidence": ["s027", "s029"]},

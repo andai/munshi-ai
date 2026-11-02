@@ -15,14 +15,16 @@ the minutes must not pick up, and for long meetings one needle fact said only on
 * `score` compares a stored document with the labels: a label matches an item of its section when
   every one of its `match` groups has an alternative in the item's text (fold-normalised, so
   Devanagari and Roman spellings meet; words of 6+ letters fuzzy at a 0.8 ratio, shorter ones
-  as a prefix, numbers exact). A matched item
-  is *supported* when it cites a labelled segment or one within ±2 segments of it. Owners and due
-  dates are compared exactly.
+  as a prefix, numbers exact). A matched item is *supported* when it cites a labelled segment or
+  one within ±2 segments of it. When several items match a label, the one answering it is taken:
+  supported first, then with the labelled owner, then the labelled due date. Owners and due dates
+  are compared exactly.
 * `report` aggregates the runs: recall on labelled decisions and action items, the stored-evidence
   validity, labelled support of matched items, owner and date accuracy, needles, truncation, the
-  pre-filter invalid-id rate and dropped items per section, distractor hits, schema failures, and
-  per-meeting latency with n / median / max (p95 only where n ≥ 20) per exclusive length band
-  (≤ 30, 31–60, 61–90 min). Its `sc3` block states each criterion as pass or fail.
+  pre-filter invalid-id rate and dropped items per section, distractor hits (informational),
+  schema failures, what the model wrote per meeting, and per-meeting latency with n / median /
+  max (p95 only where n ≥ 20) per exclusive length band (≤ 30, 31–60, 61–90 min). Its `sc3`
+  block states each criterion as pass or fail.
 * `write_report` saves the report as JSON and Markdown. Neither names the route's host or key.
 """
 
@@ -424,6 +426,17 @@ def _text(item) -> str:
     return getattr(item, "text", None) or getattr(item, "title", "")
 
 
+def _rank(item, label: dict, fixture: Fixture, index: dict[str, int]) -> tuple[bool, bool, bool]:
+    """Of several items matching a label, the one that answers it: supported first, then with the
+    labelled owner, then with the labelled due date (`max` keeps the earliest of equals)."""
+    due = getattr(item, "due", None)
+    return (
+        _support(item.evidence, label, fixture, index),
+        getattr(item, "owner", None) == label.get("owner"),
+        (due.isoformat() if due is not None else None) == label.get("due"),
+    )
+
+
 def score(fixture: Fixture, doc: Document) -> Score:
     """The stored document `doc` against the fixture's labels."""
     index = fixture.index()
@@ -444,7 +457,7 @@ def score(fixture: Fixture, doc: Document) -> Score:
             pool = list(doc.decisions) + list(doc.action_items)
         hits = [i for i in pool if matches(label["match"], _text(i))]
         supported = [i for i in hits if _support(i.evidence, label, fixture, index)]
-        best = (supported or hits or [None])[0]
+        best = max(hits, key=lambda i: _rank(i, label, fixture, index), default=None)
         lr = LabelResult(
             label=label["id"],
             section=section,
@@ -533,7 +546,33 @@ class MeetingRun:
     error: str | None = None
     write: dict | None = None  # the writer's report (invalid ids, dropped items per section)
     cited_ids: int = 0  # ids the draft cited before the writer's filter
+    draft: dict | None = None  # what the model wrote (decisions, action items), ids made local
     score: Score | None = None
+
+
+def _as_written(draft: Draft, fixture: Fixture) -> dict:
+    """The draft's decisions and action items as the model wrote them, segment ids shown as the
+    fixture's local ids (`?<id>` for an id that is not a segment), for reading a run's misses."""
+    local = {fixture.global_id(s["id"]): s["id"] for s in fixture.segments}
+
+    def ids(evidence: Sequence[str]) -> list[str]:
+        return [local.get(e, f"?{e}") for e in evidence]
+
+    return {
+        "summary": draft.summary,
+        "decisions": [{"text": d.text, "evidence": ids(d.evidence)} for d in draft.decisions],
+        "action_items": [
+            {
+                "text": a.text,
+                "owner": a.owner,
+                "owner_confidence": a.owner_confidence,
+                "due_text": a.due_text,
+                "due": a.due,
+                "evidence": ids(a.evidence),
+            }
+            for a in draft.action_items
+        ],
+    }
 
 
 def _cited(draft: Draft) -> int:
@@ -595,6 +634,7 @@ async def run_fixture(
     run.completion_tokens = generation.usage.completion_tokens
     run.write = report.as_dict()
     run.cited_ids = _cited(generation.draft)
+    run.draft = _as_written(generation.draft, fixture)
     run.score = score(fixture, doc)
     return run
 
@@ -730,6 +770,11 @@ def report(runs: Sequence[MeetingRun], stats: CallStats, *, expected: int) -> di
             "matched_items_supported": supported,
         },
         "distractor_hits": {
+            "note": (
+                "Decisions or action items matching a suggestion nobody agreed to, near where it "
+                "was said. An item may rightly record it as parked or rejected: read the drafts. "
+                "Informational, not an SC3 criterion."
+            ),
             "count": sum(len(r.score.distractor_hits) for r in scored),  # type: ignore[union-attr]
             "by_fixture": {
                 r.fixture: r.score.distractor_hits  # type: ignore[union-attr]
@@ -770,6 +815,7 @@ def _meeting(run: MeetingRun) -> dict:
         "error": run.error,
         "write": run.write,
         "cited_ids": run.cited_ids,
+        "draft": run.draft,
     }
     if run.score is not None:
         out["stored"] = run.score.stored

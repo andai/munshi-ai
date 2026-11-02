@@ -61,7 +61,7 @@
   "action_items": [
    {"id": "A1", "fact": "Faisal fixes and tests the login crash on older phones.", "match": [["login"], ["crash"]], "owner": "Faisal Mirza", "due": "2026-12-14", "due_phrase": "Monday tak", "evidence": ["s008", "s009"]},
    {"id": "A2", "fact": "Someone writes the release notes for the store and the blog; nobody named.", "match": [["release notes", "notes"]], "owner": "unassigned", "due": "2026-12-18", "due_phrase": "Agle hafte ke end tak", "evidence": ["s033", "s035"]},
-   {"id": "A3", "fact": "Gitanjali runs the payments regression covering wallet and card flows.", "match": [["regression"]], "owner": "Gitanjali Das", "due": null, "due_phrase": null, "evidence": ["s024", "s025"]}
+   {"id": "A3", "fact": "Gitanjali runs the payments regression covering wallet and card flows.", "match": [["regression"]], "owner": "Gitanjali Das", "due": "2026-12-15", "due_phrase": "Tuesday ko", "evidence": ["s024", "s025"]}
   ],
   "distractors": [
    {"id": "X1", "kind": "not_agreed", "fact": "A push notification campaign with the release was suggested and dropped.", "match": [["notification"]], "evidence": ["s027", "s030"]},

@@ -8,8 +8,9 @@ applies the owner and date rules below.
   `client_call`): name, section order, heading per section per output language (`en`, `hi`,
   `hinglish`) and prompt guidance. All fill the same `MomDocument` fields. Also the per-language
   "None recorded" and "Unassigned" labels and the output-language instructions.
-- `prompt.py` — the system message (cite segment ids, omit what was not said, owner only when named
-  with `ownerConfidence`, `dueText` as said, the language instruction, the template guidance) and
+- `prompt.py` — the system message (cite segment ids copied exactly, omit what was not said, owner
+  only when named with `ownerConfidence`, `dueText` as said for this item, no decision or action
+  item from a suggestion nobody agreed to, the language instruction, the template guidance) and
   the user message (meeting date, attendees, transcript lines); the reduce prompt for merging
   partial minutes.
 - `chunking.py` — transcript lines `[seg_id] mm:ss Speaker: text_raw` (the script as spoken,
@@ -28,3 +29,9 @@ applies the owner and date rules below.
 - `dates.py` — due phrases in English, Hindi and Hinglish (`kal`, `परसों`, `next Friday`,
   `agle hafte`, `3 din mein`, `20 November` ...) resolved deterministically against the meeting's
   local date; the rule list is in the module docstring. An unknown phrase gives no date.
+- `eval.py` — the gold-set evaluator (MOM-02, D-45): loads and validates the synthetic fixtures in
+  `tests/mom_gold/`, runs each through `generate` and the writer's `build_document` (no database),
+  scores the stored document against its labels (recall, labelled support within ±2 segments,
+  owners, due dates, needles, truncation, invalid ids before the filter) and writes a JSON and
+  Markdown report with the SC3 verdict per criterion and latency per length band.
+  `python -m andai_core.minutes.eval validate <gold dir>` lists problems in the fixtures.

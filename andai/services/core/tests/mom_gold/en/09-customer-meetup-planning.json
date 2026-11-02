@@ -68,7 +68,7 @@
   "action_items": [
    {"id": "A1", "fact": "Aditya confirms the venue booking and pays the advance.", "match": [["venue", "booking", "advance"]], "owner": "Aditya Nair", "due": "2026-11-23", "due_phrase": "by Monday", "evidence": ["s011", "s012"]},
    {"id": "A2", "fact": "Gloria sends the invitations from the CRM list.", "match": [["invitation", "invitations", "invites", "invite"]], "owner": "Gloria Pinto", "due": "2026-11-27", "due_phrase": "by Friday", "evidence": ["s020"]},
-   {"id": "A3", "fact": "Shuttle buses from the station are arranged; nobody took it on.", "match": [["shuttle", "bus", "buses", "transport"]], "owner": "unassigned", "due": null, "due_phrase": null, "evidence": ["s035"]}
+   {"id": "A3", "fact": "Shuttle buses from the station are arranged; nobody took it on.", "match": [["shuttle", "bus", "buses", "transport"]], "owner": "unassigned", "due": "2026-11-23", "due_phrase": "next week", "evidence": ["s035", "s038"]}
   ],
   "distractors": [
    {"id": "X1", "kind": "not_agreed", "fact": "A live band was suggested and dropped.", "match": [["band"]], "evidence": ["s023", "s027"]},

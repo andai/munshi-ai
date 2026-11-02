@@ -360,3 +360,14 @@ def test_the_report_files_name_no_route(tmp_path: Path) -> None:
     text = json_path.read_text(encoding="utf-8") + md_path.read_text(encoding="utf-8")
     assert "http" not in text and "Bearer" not in text
     assert "| recall:" in md_path.read_text(encoding="utf-8")
+
+
+def test_of_several_matching_items_the_one_answering_the_label_is_scored() -> None:
+    named = next(a for a in SHORT.labels["action_items"] if a["owner"] != UNASSIGNED)
+    other = next(p for p in SHORT.attendees if p != named["owner"])
+    items = perfect(SHORT)
+    decoy = next(item for section, item in items if item["text"] == _item_text(named))
+    items.insert(0, ("action_items", {**decoy, "owner": other, "dueText": None}))
+    stats = gold.CallStats()
+    report = gold.report([run(SHORT, items, stats)], stats, expected=1)
+    assert report["sc3"]["owners"]["pass"] and report["sc3"]["due_dates"]["pass"]
