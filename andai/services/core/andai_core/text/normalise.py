@@ -146,13 +146,15 @@ def _apply_schwa_rules(syllables: list[_Akshara]) -> None:
         if not (len(last.consonants) > 1 and cluster_end in KEEPS_FINAL_SCHWA):
             last.dropped = True
     # Medial: V C a C V → V C C V, scanned right to left so each deletion sees the one after it.
+    # The letter after must be a single consonant: before a conjunct the `a` stays, since
+    # deleting it would make a cluster of three (कुलकर्णी → kulkarni, not kulakrni).
     for k in range(len(syllables) - 2, 0, -1):
         s = syllables[k]
         if not s.inherent or s.dropped or s.coda or len(s.consonants) != 1:
             continue
         prev, nxt = syllables[k - 1], syllables[k + 1]
         prev_voiced = prev.vowel is not None and not prev.dropped
-        next_cv = bool(nxt.consonants) and nxt.vowel is not None and not nxt.dropped
+        next_cv = len(nxt.consonants) == 1 and nxt.vowel is not None and not nxt.dropped
         if prev_voiced and next_cv:
             s.dropped = True
 

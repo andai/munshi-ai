@@ -41,8 +41,10 @@ every run and every machine.
      one-letter word (`न` → `na`) and after a final conjunct that ends in `य`, `र` or `व`
      (`मित्र` → `mitra`, `राज्य` → `raajya`).
    - Medial: the inherent `a` of a single consonant is dropped when the letter before it has a vowel
-     and the letter after it is a consonant with a vowel (V C a C V). The scan runs right to left, so
-     `समझना` → `samajhna` and `कमल` → `kamal`, never `kml`. Anything else keeps its `a`.
+     and the letter after it is a single consonant with a vowel (V C a C V). The scan runs right to
+     left, so `समझना` → `samajhna` and `कमल` → `kamal`, never `kml`. Before a conjunct the `a`
+     stays, since dropping it would make a cluster of three (`नमस्ते` → `namaste`,
+     `कुलकर्णी` → `kulkarni`). Anything else keeps its `a`.
 6. **Glide.** An independent `ए`/`ऐ` after `a`, `ā`, `i` or `ī` takes a `y` (`लिए` → `liye`,
    `गए` → `gaye`, `चाहिए` → `chaahiye`), but not after `u` (`हुए` → `hue`).
 7. **Exceptions.** These are whole words whose rule output is not the usual Hinglish spelling. Keep
