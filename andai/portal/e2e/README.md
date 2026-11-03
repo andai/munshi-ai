@@ -36,14 +36,26 @@ The minutes pipeline runs on the e2e stack: global-setup adds the `e2e` compose 
 `fake-llm` service (a deterministic OpenAI-compatible route, `andai_core.testing.fake_llm`) writes
 the minutes of every finished meeting through andai-worker, so the env file must name it as the LLM
 route (`ANDAI_LLM_BASE_URL=http://fake-llm:8000`, no `/v1`, and any `ANDAI_LLM_MODEL`); setup refuses
-otherwise, and no test reaches a real model. Seeded meetings keep the pipeline and the recap mail
+otherwise, and by default no test reaches a real model. Seeded meetings keep the pipeline and the recap mail
 away: their minutes are `stored` (when seeded) or `skipped`, their recap `skipped`, unless a seed
 names `momState` (`pending` hands a meeting to the pipeline after `momDueInS` seconds; `failed`
 carries `momError`). `minutes` covers the minutes on the meeting page: preparing, then version 1
 without a reload; a typed failure and Regenerate; nothing said; an edit saved as a new version (an
 uncited item blocked, andai-core's 422 shown); the version menu and the unsaved-edit guard;
 regenerating in another template and language (Hindi headings); a grantee's Markdown and PDF
-downloads.
+downloads. `mom-pipeline` runs the pipeline end to end on one meeting in an organisation of its own:
+the join form sends the mock bot to a Hinglish meeting with a team, the platform's webhook arrives
+once, the transcript and version 1 are stored and appear on the open page, one recap mail reaches
+exactly the requester and the team (`mailsMentioning`), an edit and a regenerate (Indian formal MoM
+in Hindi) add versions 2 and 3 and send nothing, version 3 downloads as Markdown and PDF (copies in
+`test-results/downloads/`), a grantee reads it, and the dashboard's Unassigned section lists the
+latest version's unassigned items. A second test stops andai-core and andai-worker while the bot
+records (`stopServices`), lets the platform end the meeting (`platformStatus`), starts them again and
+checks one version and one recap. Times come from andai's database (`pipelineRow`);
+`E2E_CHAIN_LOG=/abs/file` appends them as JSON lines. `E2E_REAL_LLM_ENV_FILE=/abs/file` (only
+`ANDAI_LLM_*` keys) recreates andai-core and andai-worker on that route for the chain alone
+(`useLlmRoute`; values never printed) and back on the fake route afterwards: use it only with the
+mock bot's synthetic lines and a route you are allowed to send them to.
 
 ```bash
 cd andai/portal

@@ -2,8 +2,10 @@
 // test addresses, account setup through the API (a second organisation too), mock-bot meeting
 // links, status timing, seeded meetings and minutes (rows written inside the stack's andai-core
 // container), andai's row counts for one meeting and the object count under a storage prefix (for
-// the deletion purge), and a `test` whose pages are watched for unexpected console errors and
-// requests that leave the portal's origin.
+// the deletion purge), a meeting's pipeline state and the platform's status for it, stopping and
+// starting the stack's services and switching their minutes route, the mails that mention a
+// meeting, and a `test` whose pages are watched for unexpected console errors and requests that
+// leave the portal's origin.
 
 import {
   expect,
@@ -18,13 +20,14 @@ import {
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import * as OTPAuth from "otpauth";
 
 import { PROJECT, envFile, parseEnvFile, settings } from "./env";
 import { Mailpit } from "./mailpit";
 
 export const { portalOrigin, mailpit: mailpitUrl } = settings();
+const REPO_ROOT = resolve(__dirname, "../../..");
 export const mailpit = new Mailpit(mailpitUrl);
 
 export const PASSWORD = "e2e-correct-horse-battery";
@@ -474,12 +477,208 @@ export function meetingRows(meetingId: string): { rows: MeetingRows; audit: stri
     `'meetings', ${count("meetings", "id")}, ` +
     ["transcript_segments", "mom_documents", "meeting_shares", "consent_records"].map((t) => `'${t}', ${count(t, "meeting_id")}`).join(", ") +
     `), 'audit', coalesce((SELECT json_agg(action ORDER BY at) FROM audit_events WHERE target = 'meeting:${meetingId}' OR target LIKE 'meeting:${meetingId} %'), '[]'::json))`;
+  return JSON.parse(psql("andai", sql));
+}
+
+/**
+ * One SQL statement run as the database superuser with psql inside the stack's postgres container,
+ * against andai's database or the platform's (`DB_NAME` in the env file); answers psql's unaligned
+ * output, trimmed. No credential leaves the container.
+ */
+function psql(database: "andai" | "platform", sql: string): string {
+  const name = database === "andai" ? "andai" : parseEnvFile(envFile()).DB_NAME || "munshi";
+  if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error("unexpected database name");
   const output = execFileSync(
     "docker",
-    ["exec", "-i", serviceContainer("postgres"), "sh", "-c", 'psql -X -q -t -A -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d andai'],
+    ["exec", "-i", serviceContainer("postgres"), "sh", "-c", `psql -X -q -t -A -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d ${name}`],
     { input: sql, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] },
   );
-  return JSON.parse(output.trim());
+  return output.trim();
+}
+
+/** Where one meeting stands in andai's pipeline, read from andai's database (times as ISO strings). */
+export type PipelineRow = {
+  platform_meeting_id: number | null;
+  status: string;
+  ended_at: string | null;
+  transcript_state: string;
+  transcript_at: string | null;
+  mom_state: string;
+  mom_at: string | null;
+  recap_state: string;
+  recap_at: string | null;
+  /** The platform's `meeting.completed` webhooks andai-core accepted for this meeting. */
+  webhooks: { event_type: string; received_at: string }[];
+  /** Every stored minutes version: template, output language and the model that wrote it. */
+  versions: { version: number; template_id: string; output_language: string; model: string | null }[];
+};
+
+export function pipelineRow(meetingId: string): PipelineRow {
+  if (!UUID_RE.test(meetingId)) throw new Error("not a meeting id");
+  const sql =
+    "SELECT json_build_object(" +
+    "'platform_meeting_id', m.platform_meeting_id, 'status', m.status, 'ended_at', m.ended_at, " +
+    "'transcript_state', m.transcript_state, 'transcript_at', m.transcript_at, " +
+    "'mom_state', m.mom_state, 'mom_at', m.mom_at, 'recap_state', m.recap_state, 'recap_at', m.recap_at, " +
+    "'webhooks', coalesce((SELECT json_agg(json_build_object('event_type', w.event_type, 'received_at', w.received_at) ORDER BY w.received_at) " +
+    "FROM platform_webhook_events w WHERE w.platform_meeting_id = m.platform_meeting_id), '[]'::json), " +
+    "'versions', coalesce((SELECT json_agg(json_build_object('version', d.version, 'template_id', d.template_id, " +
+    "'output_language', d.output_language, 'model', d.body->>'model') ORDER BY d.version) " +
+    "FROM mom_documents d WHERE d.meeting_id = m.id), '[]'::json)) " +
+    `FROM meetings m WHERE m.id = '${meetingId}'`;
+  const output = psql("andai", sql);
+  if (!output) throw new Error(`no andai row for meeting ${meetingId}`);
+  return JSON.parse(output);
+}
+
+/** The status the platform's meeting-api holds for one of its meetings (read from its database). */
+export function platformStatus(platformMeetingId: number): string | null {
+  if (!Number.isSafeInteger(platformMeetingId)) throw new Error("not a platform meeting id");
+  return psql("platform", `SELECT status FROM meetings WHERE id = ${platformMeetingId}`) || null;
+}
+
+// ─── stack services ─────────────────────────────────────────────────────────────────────────────
+
+/** Every container of the e2e stack's `service`, running or stopped. */
+function serviceContainersAll(service: string): string[] {
+  return execFileSync(
+    "docker",
+    ["ps", "-aq", "--filter", `label=com.docker.compose.project=${PROJECT}`, "--filter", `label=com.docker.compose.service=${service}`],
+    { encoding: "utf8" },
+  )
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function containersOf(services: string[]): string[] {
+  const ids = services.flatMap(serviceContainersAll);
+  if (ids.length < services.length) throw new Error(`missing containers for ${services.join(", ")} in ${PROJECT}`);
+  return ids;
+}
+
+/** Stop the e2e stack's containers of these services (compose labels; compose project andai-e2e only). */
+export function stopServices(services: string[]): void {
+  execFileSync("docker", ["stop", "--time", "5", ...containersOf(services)], { stdio: "ignore" });
+}
+
+/** Start the stopped containers of these services again. */
+export function startServices(services: string[]): void {
+  execFileSync("docker", ["start", ...containersOf(services)], { stdio: "ignore" });
+}
+
+/** Whether any container of `service` is running. */
+export function serviceRunning(service: string): boolean {
+  return serviceContainersAll(service).some(
+    (id) => execFileSync("docker", ["inspect", "-f", "{{.State.Running}}", id], { encoding: "utf8" }).trim() === "true",
+  );
+}
+
+/** Wait until every container of these services reports `healthy` (their compose health checks). */
+export async function waitHealthy(services: string[], timeoutMs = 120_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const states = containersOf(services).map((id) =>
+      execFileSync("docker", ["inspect", "-f", "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", id], {
+        encoding: "utf8",
+      }).trim(),
+    );
+    if (states.every((s) => s === "healthy")) return;
+    if (Date.now() > deadline) throw new Error(`${services.join(", ")} not healthy within ${timeoutMs} ms: ${states.join(", ")}`);
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+}
+
+// The minutes route andai-core and andai-worker read (compose interpolation; shell values win).
+const LLM_KEYS = [
+  "ANDAI_LLM_BASE_URL",
+  "ANDAI_LLM_API_KEY",
+  "ANDAI_LLM_MODEL",
+  "ANDAI_LLM_CONTEXT_TOKENS",
+  "ANDAI_LLM_MAX_OUTPUT_TOKENS",
+  "ANDAI_LLM_TIMEOUT_S",
+  "ANDAI_LLM_PART_TOKENS",
+] as const;
+
+// Shell values compose would interpolate over the env file; stripped as andai/Makefile strips them.
+const STRIP_ENV = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "HOST_CLAUDE_CREDENTIALS",
+  "IMAGE_TAG",
+];
+
+/**
+ * Recreate andai-core and andai-worker on another minutes route: the `ANDAI_LLM_*` values of
+ * `routeFile` (an absolute path; the stack's env file is untouched), or, with no file, the env
+ * file's own route again. The values travel only in the compose process's environment and are
+ * never printed. Waits until both are healthy. For a run against a real route on synthetic speech
+ * only (the mock bot's lines); global-setup always starts the stack on the fake route.
+ */
+export async function useLlmRoute(routeFile: string | null): Promise<void> {
+  const overrides: Record<string, string> = {};
+  if (routeFile) {
+    if (!isAbsolute(routeFile)) throw new Error("the route file must be an absolute path");
+    const values = parseEnvFile(routeFile);
+    for (const key of LLM_KEYS) if (values[key]) overrides[key] = values[key];
+    if (!overrides.ANDAI_LLM_BASE_URL || !overrides.ANDAI_LLM_MODEL) throw new Error("the route file names no ANDAI_LLM_BASE_URL and ANDAI_LLM_MODEL");
+  }
+  const env: Record<string, string | undefined> = { ...process.env };
+  for (const key of [...LLM_KEYS, ...STRIP_ENV]) delete env[key];
+  const values = parseEnvFile(envFile());
+  const profiles = new Set((values.COMPOSE_PROFILES ?? "").split(",").map((p) => p.trim()).filter(Boolean));
+  profiles.add("e2e");
+  Object.assign(env, overrides, {
+    ANDAI_ROOT: REPO_ROOT,
+    BROWSER_IMAGE: "mock-bot:dev",
+    COMPOSE_PROFILES: [...profiles].join(","),
+  });
+  const compose = [
+    "compose", "-p", PROJECT,
+    "--project-directory", join(REPO_ROOT, "deploy/compose"),
+    "-f", join(REPO_ROOT, "deploy/compose/docker-compose.yml"),
+    "-f", join(REPO_ROOT, "andai/deploy/compose/docker-compose.andai.yml"),
+    "--env-file", envFile(),
+  ];
+  execFileSync("docker", [...compose, "up", "-d", "--no-deps", "--no-build", "--force-recreate", "andai-core", "andai-worker"], {
+    env,
+    stdio: "ignore",
+  });
+  await waitHealthy(["andai-core", "andai-worker"]);
+}
+
+// ─── mail ───────────────────────────────────────────────────────────────────────────────────────
+
+type Address = { Name: string; Address: string };
+export type MailSeen = { subject: string; to: string[]; cc: string[]; bcc: string[]; text: string };
+
+/**
+ * Every mail in the stack's Mailpit whose text contains `needle` (e.g. a meeting id: a recap names
+ * the meeting's portal link), with its recipients (addresses, lower case, sorted).
+ */
+export async function mailsMentioning(needle: string): Promise<MailSeen[]> {
+  const found: MailSeen[] = [];
+  const response = await fetch(`${mailpitUrl}/api/v1/search?limit=200&query=${encodeURIComponent(`"${needle}"`)}`);
+  if (!response.ok) throw new Error(`Mailpit search answered ${response.status}`);
+  const { messages } = (await response.json()) as { messages: { ID: string }[] };
+  for (const { ID } of messages) {
+    const message = (await (await fetch(`${mailpitUrl}/api/v1/message/${ID}`)).json()) as {
+      Subject: string;
+      To: Address[] | null;
+      Cc: Address[] | null;
+      Bcc: Address[] | null;
+      Text: string;
+    };
+    if (!message.Text.includes(needle)) continue;
+    const addresses = (list: Address[] | null) => (list ?? []).map((a) => a.Address.toLowerCase()).sort();
+    found.push({ subject: message.Subject, to: addresses(message.To), cc: addresses(message.Cc), bcc: addresses(message.Bcc), text: message.Text });
+  }
+  return found;
 }
 
 // Where the stack's storage service (versitygw, POSIX backend) keeps every object as a file.
