@@ -288,7 +288,8 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "sessions": "SELECT count(*) FROM sessions WHERE user_id = ANY(:u)",
         "meetings": (
             "SELECT id, status, failure_reason, platform_meeting_id, join_url, updated_at,"
-            " deleted_at, deletion_state FROM meetings WHERE org_id = :o"
+            " deleted_at, deletion_state, mom_state, mom_attempts, mom_next_at, mom_request"
+            " FROM meetings WHERE org_id = :o"
         ),
         "consent_records": (
             "SELECT meeting_id, disclosure_channel, removed_at, updated_at"
@@ -301,7 +302,8 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
             "SELECT id, meeting_id, grantee_type, grantee_id FROM meeting_shares WHERE org_id = :o"
         ),
         "mom_documents": (
-            "SELECT meeting_id, version, search_text FROM mom_documents WHERE org_id = :o"
+            "SELECT meeting_id, version, template_id, output_language, body, search_text"
+            " FROM mom_documents WHERE org_id = :o"
         ),
         "meeting_removals": (
             "SELECT join_url_key, removed_at FROM meeting_removals WHERE org_id = :o"
@@ -358,6 +360,35 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ],
     ("GET", "/api/v1/meetings/{meeting_id}/mom"): lambda b: [
         ("read B minutes", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("PUT", "/api/v1/meetings/{meeting_id}/mom"): lambda b: [
+        (
+            "edit B minutes citing B's segment",
+            {"meeting_id": b.meeting_id},
+            {
+                "summary": "rewritten",
+                "decisions": [{"text": "taken over", "evidence": [f"seg_{b.tag}"]}],
+                "actionItems": [],
+                "topics": [],
+                "risks": [],
+            },
+        ),
+    ],
+    ("GET", "/api/v1/meetings/{meeting_id}/mom/versions"): lambda b: [
+        ("list B minutes versions", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("POST", "/api/v1/meetings/{meeting_id}/mom/regenerate"): lambda b: [
+        (
+            "regenerate B minutes",
+            {"meeting_id": b.meeting_id},
+            {"templateId": "standard", "outputLanguage": "en"},
+        ),
+    ],
+    ("GET", "/api/v1/meetings/{meeting_id}/mom/export.md"): lambda b: [
+        ("download B minutes as Markdown", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("GET", "/api/v1/meetings/{meeting_id}/mom/export.pdf"): lambda b: [
+        ("download B minutes as PDF", {"meeting_id": b.meeting_id}, None),
     ],
     ("GET", "/api/v1/meetings/{meeting_id}/shares"): lambda b: [
         ("list B shares", {"meeting_id": b.meeting_id}, None),

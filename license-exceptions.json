@@ -32,6 +32,22 @@
       "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv.",
       "scope": "andai/services/core (andai-core runtime dependency via httpx)",
       "approved": "ADR-0004"
+    },
+    {
+      "package": "pango",
+      "license": "LGPL-2.1-or-later",
+      "reason": "Text layout library WeasyPrint loads through cffi to print minutes PDFs. It comes from Debian bookworm (libpango-1.0-0, libpangoft2-1.0-0) with the LGPL-2.1-or-later runtime libraries it depends on: libglib2.0-0, libfribidi0, libthai0, libthai-data, libdatrie1, and libgraphite2-3 (LGPL-2.1-or-later OR GPL-2.0-or-later OR MPL-1.1, used under the LGPL). All are unmodified system shared libraries, dynamically loaded at runtime and never copied into or statically linked with munshi.ai code, so they qualify as FINOS/ASF Category B.",
+      "disposition": "Logged exception; installed unmodified with apt in the andai-core image's runtime stage (andai/services/core/Dockerfile), each with its Debian copyright file under /usr/share/doc, replaceable by the user.",
+      "scope": "andai/services/core (andai-core image, minutes PDF export only; andai-worker does not install them)",
+      "approved": "ADR-0004"
+    },
+    {
+      "package": "pyphen",
+      "license": "GPL-2.0-or-later OR LGPL-2.1-or-later OR MPL-1.1",
+      "reason": "Hyphenation library and dictionaries, a required dependency of WeasyPrint. It is tri-licensed and used under the LGPL-2.1-or-later / MPL-1.1 option: an unmodified, separately installed Python package loaded at runtime, never copied into munshi.ai source. That qualifies as FINOS/ASF Category B; the GPL option is not relied on.",
+      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core (and andai-worker, which carries andai-core's dependencies but never renders a PDF) virtualenv.",
+      "scope": "andai/services/core (andai-core runtime dependency via weasyprint)",
+      "approved": "ADR-0004"
     }
   ]
 }

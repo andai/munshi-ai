@@ -235,6 +235,38 @@ def test_a_minutes_only_hit_quotes_the_minutes(world: World) -> None:
     assert _marked(hit["text"], hit["marks"]) == ["contract"]
 
 
+def test_minutes_search_follows_the_latest_version_after_an_edit(app_engine: Engine) -> None:
+    """An edit is a new version; search reads only the newest one, so a word only the old version
+    had stops matching and a word of the edit starts to."""
+    w = access_org(app_engine)
+    meeting_id = w.meeting()
+    ids = seed_segments(app_engine, w.org_id, meeting_id, ["theek hai", "kal milte hain"])
+    with transaction(app_engine, org_id=w.org_id) as tx:
+        mom.seed_version(tx, w.org_id, meeting_id, mom_body(ids, summary="Quokka rollout tay hua"))
+    client = w.client("requester")
+    assert _ids(_search(client, "quokka")) == {str(meeting_id)}
+
+    edited = client.put(
+        f"/api/v1/meetings/{meeting_id}/mom",
+        json={
+            "baseVersion": 1,
+            "summary": "Narwhal rollout tay hua",
+            "decisions": [{"text": "Rollout Friday ko", "evidence": ids[:1]}],
+            "actionItems": [],
+            "topics": [],
+            "risks": [],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+
+    stale = _search(client, "quokka")
+    assert (stale["results"], stale["total"]) == ([], 0)
+    [hit] = _search(client, "narwhal")["results"]
+    assert hit["id"] == str(meeting_id)
+    assert [h["source"] for h in hit["hits"]] == ["minutes"]
+    assert hit["hits"][0]["text"] == "Narwhal rollout tay hua"
+
+
 def test_no_more_than_three_hits_per_meeting(world: World) -> None:
     w = world.org
     chatty = seed_meeting(

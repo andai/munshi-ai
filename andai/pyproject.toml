@@ -15,6 +15,7 @@ dev = [
     "pytest==9.1.1",
     "httpx==0.28.1",
     "websockets==16.0",
+    "pypdf==6.20.1",
 ]
 
 [tool.uv]
@@ -31,7 +32,9 @@ andai-intake = { workspace = true }
 [tool.pytest.ini_options]
 testpaths = ["tests", "services/core/tests", "services/worker/tests"]
 # Live tests need a running stack; select them explicitly with `-m live`.
-addopts = "-m 'not live'"
+# PDF tests need Pango/HarfBuzz/Noto: run them in the andai-core image with `-m pdf`.
+addopts = "-m 'not live and not pdf'"
 markers = [
     "live: needs the running compose stack (excluded by default; run with -m live)",
+    "pdf: renders PDFs with WeasyPrint; needs the andai-core image's system libraries and fonts (excluded by default; run with -m pdf)",
 ]

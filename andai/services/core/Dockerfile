@@ -17,6 +17,14 @@ COPY services/core/andai_core services/core/andai_core
 RUN uv sync --frozen --no-dev --no-editable --package andai-core
 
 FROM python:3.12-slim-bookworm
+# The minutes PDF export (`andai_core.minutes.pdf`, WeasyPrint): Pango and HarfBuzz lay out and
+# shape the text, fontconfig finds the fonts, and Noto (OFL-1.1) covers Latin and Devanagari.
+# Licences: license-exceptions.json (Pango, HarfBuzz) and THIRD_PARTY_LICENSES.md.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libharfbuzz-subset0 fontconfig \
+        fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin andai
 COPY --from=build /app/.venv /app/.venv
 # Alembic migrations for the andai database (`make -C andai db-migrate` runs them from /app).

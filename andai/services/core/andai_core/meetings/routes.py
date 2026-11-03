@@ -23,9 +23,23 @@
   (`transcript.py`); the polling source when the live stream drops. Same access as reading.
 * `GET /meetings/{id}/live` — server-sent events with the meeting's status and transcript as they
   change (`live.py`). Same access as reading; the browser never reaches the platform.
-* `GET /meetings/{id}/mom` — the latest version of the meeting's minutes, a SPEC `MomDocument`
-  whose evidence ids are the transcript's segment ids (`mom.py`). Same access as reading; 404
-  `no_minutes` when there are none yet. There is no write route.
+* `GET /meetings/{id}/mom?version=` — the latest version of the meeting's minutes, or the named
+  one, a SPEC `MomDocument` whose evidence ids are the transcript's segment ids, with its
+  template's `sections`, `headings` and `labels` in its output language (`mom.py`). Same access as
+  reading; 404 `no_minutes` when there are none yet, 404 `no_such_version`.
+* `GET /meetings/{id}/mom/versions` — every version, newest first: template, language, model, when
+  and by whom (`mom.py`). Same access as reading.
+* `PUT /meetings/{id}/mom {baseVersion?, summary, decisions, actionItems, topics, risks}` — save an
+  edit as the next version (`mom_edit.py`): every item cites segments of the meeting (else 422
+  `invalid_minutes` naming the item); 409 `version_conflict` when `baseVersion` is not the latest.
+  Requester, team lead, admins and owners (not grantees: 404).
+* `POST /meetings/{id}/mom/regenerate {templateId, outputLanguage}` — generate the minutes again
+  as a new version (`mom_edit.py`): 202; 422 `unknown_template` / `unknown_language`; 409
+  `transcript_not_ready`, `minutes_pending`. Same callers as editing.
+* `GET /meetings/{id}/mom/export.md?version=` and `export.pdf?version=` — the latest version, or the
+  named one, as a Markdown or PDF download laid out by its template in its language
+  (`minutes/render.py`, `minutes/pdf.py`; the PDF renderer fetches nothing). Same access as reading;
+  404 `no_minutes`, `no_such_version`; 503 `pdf_unavailable` where the PDF renderer cannot load.
 * `GET /meetings/{id}/shares`, `POST /meetings/{id}/shares {grantee_type, grantee_id}` and
   `DELETE /meetings/{id}/shares/{share_id}` — who the meeting is shared with, share it with a user
   or team of the org (201 new, 200 already shared), stop sharing (204). Requester, team lead,
@@ -42,14 +56,17 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from andai_core.auth.deps import Services, client_ip, get_services
 from andai_core.auth.roles import Caller, require_role
 from andai_core.db.session import transaction
-from andai_core.meetings import deletion, listing, mom, shares
+from andai_core.meetings import deletion, listing, mom, mom_edit, shares
 from andai_core.meetings.live import open_stream
 from andai_core.meetings.service import Actor, MeetingError, Meetings
 from andai_core.meetings.transcript import read_transcript
+from andai_core.minutes import pdf, render
+from andai_core.minutes.generate import Draft
 
 router = APIRouter(prefix="/api/v1")
 
@@ -69,6 +86,23 @@ class ShareBody(BaseModel):
 
     grantee_type: Literal["user", "team"]
     grantee_id: uuid.UUID
+
+
+class EditBody(Draft):
+    """An edited document: the draft fields of `minutes.generate.Draft` and the version the edit
+    started from."""
+
+    base_version: int | None = Field(default=None, ge=1)
+
+    def draft(self) -> Draft:
+        return Draft.model_validate(self.model_dump(exclude={"base_version"}))
+
+
+class RegenerateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
+
+    template_id: str = Field(min_length=1, max_length=64)
+    output_language: str = Field(min_length=1, max_length=16)
 
 
 def meetings(services: Services) -> Meetings:
@@ -169,12 +203,108 @@ async def live(
 @router.get("/meetings/{meeting_id}/mom")
 def minutes(
     meeting_id: uuid.UUID,
+    version: int | None = Query(default=None, ge=1),
     caller: Caller = Depends(require_role(*EVERYONE)),
     services: Services = Depends(get_services),
 ) -> dict:
     who = actor(caller)
     with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
-        return mom.read(tx, who, meeting_id)
+        return mom.read(tx, who, meeting_id, version)
+
+
+@router.get("/meetings/{meeting_id}/mom/versions")
+def minutes_versions(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> dict:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        return mom.versions(tx, who, meeting_id)
+
+
+def _download(content: bytes, media_type: str, name: str) -> Response:
+    return Response(
+        content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/meetings/{meeting_id}/mom/export.md")
+def export_markdown(
+    meeting_id: uuid.UUID,
+    version: int | None = Query(default=None, ge=1),
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> Response:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        doc, context = mom.export_source(
+            tx, who, meeting_id, version, services.settings.default_timezone
+        )
+    name = render.filename(context, doc["version"], "md")
+    return _download(
+        render.markdown(doc, context).encode(), "text/markdown; charset=utf-8", name
+    )
+
+
+@router.get("/meetings/{meeting_id}/mom/export.pdf")
+def export_pdf(
+    meeting_id: uuid.UUID,
+    version: int | None = Query(default=None, ge=1),
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> Response:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        doc, context = mom.export_source(
+            tx, who, meeting_id, version, services.settings.default_timezone
+        )
+    try:
+        content = pdf.render(render.html(doc, context))
+    except pdf.PdfUnavailable:
+        raise MeetingError(
+            503, "pdf_unavailable", "PDF export is not available on this server"
+        ) from None
+    return _download(content, "application/pdf", render.filename(context, doc["version"], "pdf"))
+
+
+@router.put("/meetings/{meeting_id}/mom")
+def edit_minutes(
+    meeting_id: uuid.UUID,
+    body: EditBody,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+    ip: str | None = Depends(client_ip),
+) -> dict:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        return mom_edit.save_edit(
+            tx, who, meeting_id, body.draft(), base_version=body.base_version,
+            now=services.clock(), ip=ip,
+        )  # fmt: skip
+
+
+@router.post("/meetings/{meeting_id}/mom/regenerate")
+def regenerate_minutes(
+    meeting_id: uuid.UUID,
+    body: RegenerateBody,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+    ip: str | None = Depends(client_ip),
+) -> JSONResponse:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        accepted = mom_edit.request_regenerate(
+            tx, who, meeting_id, body.template_id, body.output_language,
+            now=services.clock(), ip=ip,
+        )  # fmt: skip
+    return JSONResponse(accepted, status_code=202)
 
 
 @router.get("/meetings/{meeting_id}/shares")
