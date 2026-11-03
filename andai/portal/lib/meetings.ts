@@ -6,6 +6,11 @@
 // which meetings a caller may see, so the portal never filters, merges or caches other people's
 // meetings. Their cursors are opaque; the next page comes from passing one back unchanged.
 //
+// The minutes (`getMinutes`, `listMinuteVersions`, `saveMinutes`, `regenerateMinutes`,
+// `minutesExportUrl`) are andai-core's versions of the meeting's MoM: a read names a version or takes
+// the latest, an edit and a regenerate each add a version, and a download is andai-core's own file
+// through the same-origin proxy. The meeting's `mom_state` says where generation stands.
+//
 // `subscribeLive` reads the transcript so far and opens the meeting's event stream (EventSource on
 // /live) for what follows. When the stream fails — andai-core's `error` event, a dropped
 // connection, or a stream that ends before the meeting does — it closes the EventSource (which
@@ -56,6 +61,13 @@ export type Consent = {
 /** Whether andai holds its own copy of a finished meeting's transcript (`stored`) yet. */
 export type TranscriptState = "none" | "pending" | "stored" | "failed";
 
+/**
+ * Where the meeting's minutes stand: not started (`none`), being generated (`pending`, also while a
+ * regenerate waits), stored, `failed` (attempts spent; `mom_error` is the typed code) or `skipped`
+ * (nothing was said).
+ */
+export type MomState = "none" | "pending" | "stored" | "failed" | "skipped";
+
 /** Someone the platform listed for the meeting: a calendar invitee or a speaker. */
 export type Attendee = { name: string; source: "invite" | "speaker" };
 
@@ -100,6 +112,9 @@ export type Meeting = {
   title: string | null;
   attendees: Attendee[];
   transcript_state: TranscriptState;
+  mom_state: MomState;
+  /** The typed code of the last minutes failure (e.g. `llm_unavailable`), never a message. */
+  mom_error: string | null;
 };
 
 export type Script = "latn" | "deva" | "mixed" | "other";
@@ -168,6 +183,8 @@ export function deleteMeeting(id: string): Promise<{ id: string; purge_by: strin
 
 // ─── minutes ───────────────────────────────────────────────────────────────────────────────────
 
+export type OutputLanguage = "en" | "hi" | "hinglish";
+
 /** SPEC `MomDocument`; every `evidence` list names transcript segment ids. */
 export type MomDecision = { text: string; evidence: string[] };
 export type MomActionItem = {
@@ -187,7 +204,7 @@ export type MomDocument = {
   meetingId: string;
   version: number;
   templateId: string;
-  outputLanguage: "en" | "hi" | "hinglish";
+  outputLanguage: OutputLanguage;
   summary: string;
   decisions: MomDecision[];
   actionItems: MomActionItem[];
@@ -199,16 +216,79 @@ export type MomDocument = {
   editedBy?: string;
 };
 
+/** A part of the minutes as a template lays it out (`attendees` are the meeting's, not the MoM's). */
+export type MomSection = "summary" | "attendees" | "topics" | "decisions" | "action_items" | "risks";
+
+/** How andai-core lays a version out: its template's section order and words in its language. */
+export type MomLayout = {
+  sections: MomSection[];
+  headings: Partial<Record<MomSection, string>>;
+  labels: { noneRecorded: string; unassigned: string };
+};
+
+/** One version of the minutes as `GET /mom` answers it: the document and its layout. */
+export type Minutes = MomDocument & MomLayout;
+
+/** One entry of `GET /mom/versions` (newest first). */
+export type MinutesVersion = {
+  version: number;
+  templateId: string;
+  outputLanguage: OutputLanguage;
+  model: string | null;
+  generatedAt: string | null;
+  /** The editor's user id for an edited version; null for a generated one. */
+  editedBy: string | null;
+  editedByName: string | null;
+  createdAt: string;
+};
+
+/** An edit as `PUT /mom` takes it: the draft fields, and the version the edit started from. */
+export type MinutesDraft = {
+  baseVersion: number;
+  summary: string;
+  decisions: { text: string; evidence: string[] }[];
+  actionItems: { text: string; owner: string; due: string | null; evidence: string[] }[];
+  topics: { title: string; evidence: string[] }[];
+  risks: { text: string; evidence: string[] }[];
+};
+
 export const UNASSIGNED = "unassigned";
 
-/** The latest minutes, or null when the meeting has none yet (404 `no_minutes`). */
-export async function getMinutes(id: string): Promise<MomDocument | null> {
+/** The latest minutes or version `version`, or null when the meeting has none yet (404 `no_minutes`). */
+export async function getMinutes(id: string, version?: number): Promise<Minutes | null> {
+  const query = version ? `?version=${encodeURIComponent(String(version))}` : "";
   try {
-    return await api<MomDocument>(`/meetings/${encodeURIComponent(id)}/mom`, { redirect: false });
+    return await api<Minutes>(`/meetings/${encodeURIComponent(id)}/mom${query}`, { redirect: false });
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return null;
+    if (err instanceof ApiError && err.status === 404 && !version) return null;
     throw err;
   }
+}
+
+export async function listMinuteVersions(id: string): Promise<MinutesVersion[]> {
+  const answer = await api<{ versions: MinutesVersion[] }>(`/meetings/${encodeURIComponent(id)}/mom/versions`, { redirect: false });
+  return answer.versions;
+}
+
+/**
+ * Save an edit as the next version (the saved version comes back). 422 `invalid_minutes` names an
+ * item that cites no line; 409 `version_conflict` when the minutes changed since `baseVersion`.
+ */
+export function saveMinutes(id: string, draft: MinutesDraft): Promise<Minutes> {
+  return api<Minutes>(`/meetings/${encodeURIComponent(id)}/mom`, { method: "PUT", body: draft, redirect: false });
+}
+
+/** Ask for the minutes again in another template or output language (202; the meeting turns `pending`). */
+export function regenerateMinutes(
+  id: string,
+  body: { templateId: string; outputLanguage: OutputLanguage },
+): Promise<{ id: string; mom_state: MomState; templateId: string; outputLanguage: OutputLanguage }> {
+  return api(`/meetings/${encodeURIComponent(id)}/mom/regenerate`, { method: "POST", body, redirect: false });
+}
+
+/** Where a version downloads from (same origin: the portal proxy streams andai-core's file). */
+export function minutesExportUrl(id: string, format: "md" | "pdf", version: number): string {
+  return `/api/v1/meetings/${encodeURIComponent(id)}/mom/export.${format}?version=${encodeURIComponent(String(version))}`;
 }
 
 // ─── sharing ───────────────────────────────────────────────────────────────────────────────────

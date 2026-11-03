@@ -214,6 +214,16 @@ export type SeedMeeting = {
   minutes?: boolean | "full";
   /** Attendees as ingest stores them (invitees, then speakers). */
   attendees?: { name: string; source: "invite" | "speaker" }[];
+  /**
+   * Where the meeting's minutes stand (`mom_state`). Default: `stored` when `minutes` are seeded,
+   * else `skipped`, so the e2e stack's minutes pipeline (fake LLM) never touches a seeded meeting.
+   * `pending` hands the meeting to the pipeline, which generates version 1 once `momDueInS` seconds
+   * have passed (default 0).
+   */
+  momState?: "none" | "pending" | "stored" | "failed" | "skipped";
+  /** The typed failure code a `failed` meeting carries (`mom_error`), e.g. `llm_unavailable`. */
+  momError?: string;
+  momDueInS?: number;
 };
 
 /** Many look-alike past meetings ("<titlePrefix> 0001" …), one per `stepMin` back from now. */
@@ -234,7 +244,8 @@ export type Seeded = { meetings: Record<string, { id: string; segments: string[]
  * stack's andai-core container (its own models, `text` normaliser, `set_title` and
  * `mom.seed_version`, under the org's row-level security context). Terminal meetings are marked
  * `stored`, so the ingest worker leaves them alone; live ones carry no platform id, so the
- * reconciler does too.
+ * reconciler does too. Every seeded meeting's minutes are `stored` or `skipped` (unless `momState`
+ * says otherwise) and its recap `skipped`, so the minutes pipeline and the recap mail leave it alone.
  */
 export function seedMeetings(orgId: string, meetings: SeedMeeting[], bulk: SeedBulk[] = []): Seeded {
   const output = execFileSync("docker", ["exec", "-i", coreContainer(), "python", "-c", SEED_SCRIPT], {
@@ -274,7 +285,7 @@ def link(meeting_id):
 
 def minutes_body(evidence):
     return {
-        "templateId": "standard", "outputLanguage": "hinglish",
+        "templateId": "standard", "outputLanguage": "en",
         "summary": "Dispatch plan review; the vendor list is due tomorrow.",
         "decisions": [{"text": "Night shift starts next week", "evidence": evidence[:1]}],
         "actionItems": [{"id": str(uuid.uuid4()), "text": "Share the vendor list", "owner": "Sample Speaker", "evidence": evidence[:1]}],
@@ -287,7 +298,7 @@ def minutes_body(evidence):
 def full_minutes_body(evidence):
     last, middle = evidence[-1:], evidence[len(evidence) // 2:len(evidence) // 2 + 1]
     return {
-        "templateId": "standard", "outputLanguage": "hinglish",
+        "templateId": "standard", "outputLanguage": "en",
         "summary": "Sample review of the dispatch plan and the vendor list.",
         "decisions": [
             {"text": "Night shift starts next week", "evidence": evidence[:1]},
@@ -313,6 +324,7 @@ try:
             status = m["status"]
             started, ended = times(m.get("startedMinAgo"), m.get("durationMin"), status)
             url, key = link(meeting_id)
+            mom_state = m.get("momState") or ("stored" if m.get("minutes") else "skipped")
             meeting = Meeting(
                 id=meeting_id, org_id=org_id, team_id=m.get("teamId"), requested_by=uuid.UUID(m["requestedBy"]),
                 platform=m.get("platform") or "zoom", join_url=url, join_url_key=key, status=status,
@@ -322,6 +334,9 @@ try:
                 transcript_state="stored" if status in TERMINAL else "none",
                 attendees=m.get("attendees") or [],
                 created_at=started or now,
+                mom_state=mom_state, mom_error=m.get("momError") if mom_state == "failed" else None,
+                mom_next_at=now + timedelta(seconds=m.get("momDueInS") or 0) if mom_state == "pending" else None,
+                recap_state="skipped",
             )
             set_title(tx, meeting, m.get("title"))
             tx.flush()
@@ -358,7 +373,7 @@ try:
                     join_url=url, join_url_key=key, status="done",
                     settings_snapshot={"bot_name": "munshi.ai (recording)"},
                     started_at=started, ended_at=started + timedelta(minutes=25 + i % 40),
-                    created_at=started, transcript_state="stored",
+                    created_at=started, transcript_state="stored", mom_state="skipped", recap_state="skipped",
                 )
                 set_title(tx, meeting, f"{b['titlePrefix']} {i + 1:04d}")
                 rows.append(meeting)
@@ -379,9 +394,9 @@ print(json.dumps(answer))
  * Store a SPEC MomDocument (the next version) for a meeting that already has stored transcript
  * lines, through andai's own `mom.seed_version`: two decisions, an assigned and an unassigned
  * action item, one topic and no risks, citing the first, middle and last lines. Answers the
- * meeting's segment ids in order.
+ * meeting's segment ids in order and the version stored.
  */
-export function seedMinutes(orgId: string, meetingId: string): { segments: string[] } {
+export function seedMinutes(orgId: string, meetingId: string): { segments: string[]; version: number } {
   const output = execFileSync("docker", ["exec", "-i", coreContainer(), "python", "-c", MINUTES_SCRIPT], {
     input: JSON.stringify({ org_id: orgId, meeting_id: meetingId }),
     encoding: "utf8",
@@ -411,8 +426,8 @@ try:
         if not ids:
             raise SystemExit("the meeting has no stored transcript lines to cite")
         first, middle, last = ids[:1], ids[len(ids) // 2:len(ids) // 2 + 1], ids[-1:]
-        seed_version(tx, org_id, meeting_id, {
-            "templateId": "standard", "outputLanguage": "hinglish",
+        row = seed_version(tx, org_id, meeting_id, {
+            "templateId": "standard", "outputLanguage": "en",
             "summary": "Sample minutes: the deadline and the budget follow-up.",
             "decisions": [
                 {"text": "Ship by Friday", "evidence": first},
@@ -428,9 +443,10 @@ try:
             "llmProfileId": str(uuid.uuid4()), "model": "seed-model",
             "generatedAt": now.isoformat(),
         })
+        version = row.version
 finally:
     engine.dispose()
-print(json.dumps({"segments": ids}))
+print(json.dumps({"segments": ids, "version": version}))
 `;
 
 /** andai's tables that hold a meeting's content, with the count of its rows in each. */

@@ -18,7 +18,7 @@ Devanagari speech, and the first-list time with 1,000 meetings, desktop only) an
 and highlight the cited line, a search result opening at its line, sharing with a team and removing
 it as requester and team lead, what a grantee sees, and deletion) and `portal-core` (the whole chain
 on one meeting in an organisation of its own: the join form sends the mock bot to a Hinglish meeting
-(`mock=hindi-lines`), andai-worker stores the transcript, a Roman query finds the Devanagari speech,
+(`mock=hindi-lines`), andai-worker stores the transcript and writes its minutes, a Roman query finds the Devanagari speech,
 both scripts, a team share and its removal, seeded minutes' evidence, and a delete purged from
 andai's tables and from storage within 15 minutes; `E2E_CHAIN_LOG=/abs/file` appends each run's
 timings and counts as one JSON line). The dashboard and meeting-detail
@@ -30,6 +30,19 @@ credential leaving either container. Meeting links are
 Zoom-shaped with a unique number per test and `mock=<scenario>` for the mock bot; the second
 organisation is created inside the stack's andai-core container (`docker exec`), since bootstrap
 runs once. Projects `desktop` (1440×900) and `mobile` (390×844).
+
+The minutes pipeline runs on the e2e stack: global-setup adds the `e2e` compose profile, whose
+`fake-llm` service (a deterministic OpenAI-compatible route, `andai_core.testing.fake_llm`) writes
+the minutes of every finished meeting through andai-worker, so the env file must name it as the LLM
+route (`ANDAI_LLM_BASE_URL=http://fake-llm:8000`, no `/v1`, and any `ANDAI_LLM_MODEL`); setup refuses
+otherwise, and no test reaches a real model. Seeded meetings keep the pipeline and the recap mail
+away: their minutes are `stored` (when seeded) or `skipped`, their recap `skipped`, unless a seed
+names `momState` (`pending` hands a meeting to the pipeline after `momDueInS` seconds; `failed`
+carries `momError`). `minutes` covers the minutes on the meeting page: preparing, then version 1
+without a reload; a typed failure and Regenerate; nothing said; an edit saved as a new version (an
+uncited item blocked, andai-core's 422 shown); the version menu and the unsaved-edit guard;
+regenerating in another template and language (Hindi headings); a grantee's Markdown and PDF
+downloads.
 
 ```bash
 cd andai/portal

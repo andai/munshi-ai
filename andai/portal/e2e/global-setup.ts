@@ -7,7 +7,12 @@
 //    never moves the images another stack on this machine runs.
 // 3. Start the whole stack as compose project andai-e2e (`make up`: db-init and db-migrate run as
 //    part of it), with the mock bot as the meeting bot whatever the env file names: a meeting link
-//    carrying `mock=<scenario>` plays that scenario (core/meetings/services/bot/mock).
+//    carrying `mock=<scenario>` plays that scenario (core/meetings/services/bot/mock). The `e2e`
+//    compose profile is added to the env file's profiles, so its fake LLM runs (a deterministic
+//    OpenAI-compatible route, andai_core.testing.fake_llm) and andai-worker writes the minutes of
+//    every finished meeting through it; the env file must name it as the LLM route
+//    (`ANDAI_LLM_BASE_URL=http://fake-llm:8000`, no `/v1`, and an `ANDAI_LLM_MODEL`), so no test
+//    ever reaches a real model.
 // 4. Bootstrap the first organisation through the portal (the only bootstrap in the suite), and
 //    set the owner's password in a browser from the emailed link.
 // 5. Hand the owner's credentials to the specs in a temporary file (E2E_OWNER_FILE).
@@ -20,13 +25,26 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { PROJECT, envFile, imageTag, settings, stackDown } from "./env";
+import { PROJECT, envFile, imageTag, parseEnvFile, settings, stackDown } from "./env";
 import { Mailpit } from "./mailpit";
 
 const REPO_ROOT = resolve(__dirname, "../../..");
 
 // The meeting bot of the e2e stack (a compose variable a shell value overrides).
 export const MOCK_BOT_IMAGE = "mock-bot:dev";
+// The e2e profile's fake LLM, as andai-core and andai-worker reach it on the stack's network.
+export const FAKE_LLM_URL = "http://fake-llm:8000";
+
+/** The env file's compose profiles plus `e2e`; refuses an env file whose LLM route is not the fake one. */
+function e2eProfiles(env: string): string {
+  const values = parseEnvFile(env);
+  if ((values.ANDAI_LLM_BASE_URL ?? "").replace(/\/+$/, "") !== FAKE_LLM_URL || !values.ANDAI_LLM_MODEL?.trim()) {
+    throw new Error(`the e2e env file must set ANDAI_LLM_BASE_URL=${FAKE_LLM_URL} and an ANDAI_LLM_MODEL (see e2e/README.md)`);
+  }
+  const profiles = new Set((values.COMPOSE_PROFILES ?? "").split(",").map((p) => p.trim()).filter(Boolean));
+  profiles.add("e2e");
+  return [...profiles].join(",");
+}
 
 function make(args: string[], options: { quiet?: boolean; env?: Record<string, string> } = {}): string {
   const output = execFileSync("make", ["--no-print-directory", "-C", join(REPO_ROOT, "andai"), ...args], {
@@ -91,6 +109,7 @@ async function bootstrapOwner(portalOrigin: string, mailpit: Mailpit) {
 export default async function globalSetup(_config: FullConfig) {
   const env = envFile();
   const { portalOrigin, mailpit } = settings();
+  const profiles = e2eProfiles(env);
 
   const busy: number[] = [];
   for (const port of publishedPorts(env)) if (!(await portIsFree(port))) busy.push(port);
@@ -102,7 +121,9 @@ export default async function globalSetup(_config: FullConfig) {
   if (process.env.E2E_SKIP_BUILD !== "1") make(["images", "ONLY=andai-core,andai-worker,andai-portal,mock-bot", `VERSION=${version}`]);
   let owner: Awaited<ReturnType<typeof bootstrapOwner>>;
   try {
-    make(["up", `ENV_FILE=${env}`, `PROJECT=${PROJECT}`, `VERSION=${version}`], { env: { BROWSER_IMAGE: MOCK_BOT_IMAGE } });
+    make(["up", `ENV_FILE=${env}`, `PROJECT=${PROJECT}`, `VERSION=${version}`], {
+      env: { BROWSER_IMAGE: MOCK_BOT_IMAGE, COMPOSE_PROFILES: profiles },
+    });
     owner = await bootstrapOwner(portalOrigin, new Mailpit(mailpit));
   } catch (error) {
     // Leave nothing half-started behind (teardown does not run when setup fails).

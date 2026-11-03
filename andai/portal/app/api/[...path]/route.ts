@@ -9,6 +9,10 @@
 // andai-core believes it only from the portal). Forwarded back: status, body, every Set-Cookie,
 // and the headers the portal pages read (Content-Type, Cache-Control, Retry-After).
 //
+// Downloads (a meeting's minutes as Markdown or PDF) pass through as andai-core sent them: the body
+// as bytes, never decoded as text, with its Content-Type, Content-Disposition (the file name) and
+// X-Content-Type-Options.
+//
 // Server-sent events (a `text/event-stream` answer, e.g. a meeting's live stream) pass through as
 // a stream: each chunk is written to the browser as andai-core sends it, marked
 // `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no` so neither the portal's own
@@ -30,7 +34,7 @@ const REQUEST_HEADERS = [
   "user-agent",
   "x-forwarded-for",
 ];
-const RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after", "content-disposition"];
+const RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after", "content-disposition", "x-content-type-options"];
 
 type Context = { params: Promise<{ path: string[] }> };
 
