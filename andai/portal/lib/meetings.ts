@@ -1,10 +1,12 @@
-// Meetings through andai-core (same-origin /api/v1/meetings/* and /api/v1/search): list the
-// meetings the caller may open, search them, send the bot, read one meeting, stop it, read its
+// Meetings through andai-core (same-origin /api/v1/meetings/*, /api/v1/search and
+// /api/v1/action-items/unassigned): list the meetings the caller may open and the action items
+// nobody owns in their minutes, search them, send the bot, read one meeting, stop it, read its
 // transcript and minutes, follow it live, share it inside the org, and delete it.
 //
-// `listMeetings` and `searchMeetings` return andai-core's pages as they are: andai-core decides
-// which meetings a caller may see, so the portal never filters, merges or caches other people's
-// meetings. Their cursors are opaque; the next page comes from passing one back unchanged.
+// `listMeetings`, `listUnassigned` and `searchMeetings` return andai-core's pages as they are:
+// andai-core decides which meetings a caller may see, so the portal never filters, merges or caches
+// other people's meetings. Their cursors are opaque; the next page comes from passing one back
+// unchanged.
 //
 // The minutes (`getMinutes`, `listMinuteVersions`, `saveMinutes`, `regenerateMinutes`,
 // `minutesExportUrl`) are andai-core's versions of the meeting's MoM: a read names a version or takes
@@ -364,6 +366,34 @@ export async function listMeetings(
   else if (options.filter && options.filter !== "all") params.set("filter", options.filter);
   const answer = await api<{ sections: MeetingSections }>(`/meetings?${params}`, { signal: options.signal });
   return answer.sections;
+}
+
+/** One action item nobody owns yet, from the latest minutes of a meeting the caller may open. */
+export type UnassignedItem = {
+  meeting_id: string;
+  title: string | null;
+  platform: Platform;
+  started_at: string | null;
+  created_at: string;
+  team: TeamRef | null;
+  item_id: string;
+  text: string;
+  /** ISO date, or null. */
+  due: string | null;
+  /** The first transcript segment the item cites (the page links to `#seg-<id>`). */
+  evidence_first_id: string | null;
+};
+
+export type UnassignedPage = { items: UnassignedItem[]; next_cursor: string | null };
+
+/**
+ * The unassigned action items across the meetings the caller may open, newest meeting first
+ * (`GET /action-items/unassigned`); with `cursor`, the page after it.
+ */
+export function listUnassigned(options: { cursor?: string | null; signal?: AbortSignal } = {}): Promise<UnassignedPage> {
+  const params = new URLSearchParams({ limit: String(LIST_LIMIT) });
+  if (options.cursor) params.set("cursor", options.cursor);
+  return api<UnassignedPage>(`/action-items/unassigned?${params}`, { signal: options.signal });
 }
 
 /** `[start, end)` character offsets of the matched words in a hit's text. */

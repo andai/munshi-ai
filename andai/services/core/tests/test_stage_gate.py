@@ -76,6 +76,7 @@ KNOWN = {
     ("GET", "/api/v1/meetings/{meeting_id}/mom/export.md"),
     ("GET", "/api/v1/meetings/{meeting_id}/mom/export.pdf"),
     ("GET", "/api/v1/search"),
+    ("GET", "/api/v1/action-items/unassigned"),
     ("POST", "/internal/platform-events"),
 }
 

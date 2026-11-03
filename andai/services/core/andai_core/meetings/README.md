@@ -9,7 +9,7 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   `POST /api/v1/meetings/{id}/mom/regenerate`, `GET /api/v1/meetings/{id}/mom/export.md` and
   `export.pdf`, `GET/POST /api/v1/meetings/{id}/shares` and
   `DELETE /api/v1/meetings/{id}/shares/{share_id}` (access per `.work/AUTH_MATRIX.md`; 404 for
-  anyone who may not read the meeting).
+  anyone who may not read the meeting), and `GET /api/v1/action-items/unassigned`.
 - `access.py` — the one access predicate, `accessible(actor)`, used as SQL by every read path
   (detail, transcript, live, minutes, list, search): admins and owners, the requester, a lead of
   the meeting's team, and the users and current team members it is shared with. A deleted meeting
@@ -19,6 +19,12 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
 - `listing.py` — the dashboard list: Live / Upcoming / Past sections by status, newest first,
   filters `all | mine | shared | team:<id>`, keyset pages with an opaque cursor; access filtered in
   SQL before the limit, no totals. `has_minutes` says whether a minutes version exists.
+- `action_items.py` — the dashboard's Unassigned section: the action items whose owner is
+  `unassigned` (any case) in the latest minutes version of each meeting `accessible(actor)` admits,
+  newest meeting first then in the minutes' order, keyset pages of 25 (at most 50) with an opaque
+  cursor. Access, the latest-version join (one step down the `mom_documents` primary key) and the
+  owner test are SQL, before the limit. Each item carries its meeting's title, platform, times and
+  team, and the first segment it cites (`evidence_first_id`) for the `#seg-<id>` link.
 - `mom.py` — minutes of meeting: the latest version of a meeting's SPEC
   `MomDocument`, or any named version, for its readers (404 `no_minutes` when there is none,
   `no_such_version`), with its template's `sections`, `headings` and `labels` in its output

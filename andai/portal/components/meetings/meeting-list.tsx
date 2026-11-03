@@ -34,6 +34,8 @@ import { cn } from "@/lib/utils";
 // after a section's last row with that section's cursor and appends it. Nothing is fetched on
 // mount beyond that first page, and a filter change starts again from the first page (an answer
 // for an older filter is dropped). Under the `md` breakpoint the Past table becomes stacked rows.
+// `between` (the dashboard's Unassigned action items) sits between Upcoming and Past once the list
+// has loaded.
 
 type Pages = Record<Section, MeetingPage>;
 
@@ -47,7 +49,7 @@ function errorText(err: unknown): string {
   return err instanceof ApiError ? sentence(err.detail) : "Something went wrong. Try again.";
 }
 
-export function MeetingList({ filter }: { filter: ListFilter }) {
+export function MeetingList({ filter, between }: { filter: ListFilter; between?: ReactNode }) {
   const [pages, setPages] = useState<Pages | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState<Section | null>(null);
@@ -133,6 +135,7 @@ export function MeetingList({ filter }: { filter: ListFilter }) {
     <div className="mt-6 grid gap-10" data-testid="meeting-list">
       <LiveSection page={pages.live} more={more("live")} />
       <UpcomingSection page={pages.upcoming} more={more("upcoming")} />
+      {between}
       <PastSection page={pages.past} more={more("past")} />
     </div>
   );

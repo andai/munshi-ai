@@ -1,10 +1,13 @@
-// The dashboard's meeting list and keyword search, against meetings seeded in an organisation of
-// this spec's own (one per test project): rows written inside the stack's andai-core container
-// (`seedMeetings`), shares granted and revoked through the API, sample names only.
+// The dashboard's meeting list, its Unassigned action items and keyword search, against meetings
+// seeded in an organisation of this spec's own (one per test project): rows written inside the
+// stack's andai-core container (`seedMeetings`), shares granted and revoked through the API, sample
+// names only.
 //
 // Mira (member) requested a live, an upcoming and three past meetings; Ravi (member) shares one
 // meeting with her and keeps two to himself — one in a team Mira belongs to, and one whose
-// transcript holds the same Devanagari word as hers. Neha has no meetings. Tara has 1,000.
+// transcript holds the same Devanagari word as hers. Mira's "Diwali dispatch plan", the shared
+// "Rate card review" and Ravi's private "Budget planning" each have minutes with one unassigned
+// action item. Neha has no meetings. Tara has 1,000, none with minutes.
 
 import type { APIRequestContext, Page, TestInfo } from "@playwright/test";
 
@@ -84,7 +87,7 @@ async function buildWorld(testInfo: TestInfo): Promise<World> {
           { speaker: "Rohit Sample", text: "Bhiwandi dock ka forklift repair mein hai" },
           { speaker: "Rohit Sample", text: "कल सुबह dispatch का plan final करेंगे" },
         ],
-        minutes: true,
+        minutes: "full",
       },
       { key: "failed", requestedBy: mira.id!, status: "failed", failureReason: "admission_timeout", platform: "teams", title: "Client call — sample", startedMinAgo: 300 },
       { key: "untitled", requestedBy: mira.id!, status: "done", platform: "zoom", title: null, teamId: finance, startedMinAgo: 400, durationMin: 14 },
@@ -97,6 +100,7 @@ async function buildWorld(testInfo: TestInfo): Promise<World> {
         startedMinAgo: 200,
         durationMin: 52,
         segments: [{ speaker: "Ravi Sample", text: "har gaadi ka bhada badhega from November" }],
+        minutes: "full",
       },
       {
         key: "private",
@@ -108,6 +112,7 @@ async function buildWorld(testInfo: TestInfo): Promise<World> {
         startedMinAgo: 150,
         durationMin: 20,
         segments: [{ speaker: "Ravi Sample", text: "कल budget sheet भेजनी है" }],
+        minutes: "full",
       },
       { key: "ravi-ops", requestedBy: ravi.id!, status: "done", platform: "zoom", title: "Ops review (Ravi only)", teamId: ops, startedMinAgo: 250, durationMin: 30 },
     ],
@@ -289,6 +294,86 @@ test("SC5: a Roman query finds Devanagari speech, with snippets, among meetings 
   await expect(page).toHaveURL(new RegExp(`/meetings/${done.id}#seg-${done.segments[1]}$`));
 });
 
+// ─── Unassigned action items (SC6) ──────────────────────────────────────────────────────────────
+
+type Unassigned = { items: { meeting_id: string; item_id: string; text: string; evidence_first_id: string | null }[]; next_cursor: string | null };
+
+async function unassignedOf(account: Account): Promise<Unassigned> {
+  const api = await apiAs(account);
+  const answer = await json<Unassigned>(api, "get", "/api/v1/action-items/unassigned");
+  await api.dispose();
+  return answer;
+}
+
+const unassignedRow = (page: Page, meetingId: string) => page.locator(`[data-testid=unassigned-row][data-meeting-id="${meetingId}"]`);
+
+test("SC6: Unassigned action items sit between Upcoming and Past, from meetings I can open only", async ({ page }, testInfo) => {
+  const { done, shared, private: hidden } = world.seeded.meetings;
+  // andai-core's answers: Mira gets her own and the shared meeting's item, the owner all three.
+  const mira = await unassignedOf(world.mira);
+  expect(mira.items.map((i) => i.meeting_id)).toEqual([done.id, shared.id]);
+  expect(mira.items.map((i) => i.text)).toEqual(["Extend the transit insurance", "Extend the transit insurance"]);
+  expect((await unassignedOf(world.boss)).items.map((i) => i.meeting_id).sort()).toEqual([done.id, hidden.id, shared.id].sort());
+  expect((await unassignedOf(world.neha)).items).toEqual([]);
+
+  await openDashboard(page, world.mira);
+  const section = page.getByTestId("section-unassigned");
+  await expect(section).toBeVisible();
+  await expect(section.getByRole("heading", { name: "Unassigned action items" })).toBeVisible();
+  await expect(page.getByTestId("unassigned-count")).toHaveText("2 to assign");
+  const rows = page.getByTestId("unassigned-row");
+  await expect(rows).toHaveCount(2);
+  expect(await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-meeting-id")))).toEqual([done.id, shared.id]);
+  await expect(unassignedRow(page, done.id).getByTestId("unassigned-meeting")).toContainText("Diwali dispatch plan");
+  await expect(unassignedRow(page, done.id).getByTestId("unassigned-meeting")).toContainText("Operations");
+  await expect(unassignedRow(page, shared.id).getByTestId("unassigned-meeting")).toContainText("Rate card review");
+  await expect(unassignedRow(page, hidden.id)).toHaveCount(0);
+  await expect(page.getByTestId("load-more-unassigned")).toHaveCount(0);
+
+  // One list, in D-42's order: Live now, Upcoming, Unassigned, Past.
+  const order = await page.evaluate(() =>
+    ["section-live", "section-upcoming", "section-unassigned", "section-past"].map((id) => {
+      const el = document.querySelector(`[data-testid=${id}]`);
+      return el ? Array.from(document.querySelectorAll("[data-testid^=section-]")).indexOf(el) : -1;
+    }),
+  );
+  expect(order).toEqual([0, 1, 2, 3]);
+
+  // Each item links to its meeting at the line it cites.
+  const link = unassignedRow(page, done.id).getByTestId("unassigned-text");
+  await expect(link).toHaveText("Extend the transit insurance");
+  await expect(link).toHaveAttribute("href", `/meetings/${done.id}#seg-${done.segments[1]}`);
+  expect(mira.items[0].evidence_first_id).toBe(done.segments[1]);
+  await expectNoOverflow(page);
+  await screenshots(page, "dashboard-unassigned", testInfo);
+
+  // The section is not narrowed by the filters, so it shows only under "All I can see".
+  const scope = (name: string) => page.getByRole("group", { name: "Whose meetings" }).getByRole("button", { name });
+  await scope("Requested by me").click();
+  await waitForList(page);
+  await expect(page.getByTestId("past-row").first()).toBeVisible();
+  await expect(section).toHaveCount(0);
+  await scope("All I can see").click();
+  await waitForList(page);
+  await expect(rows).toHaveCount(2);
+
+  // A search swaps it out with the rest of the list.
+  const box = page.getByRole("searchbox", { name: "Search meetings" });
+  await box.fill("gaadi");
+  await expect(page.getByTestId("search-result")).toHaveCount(1);
+  await expect(section).toBeHidden();
+  await box.press("Escape");
+  await expect(section).toBeVisible();
+
+  // Clicking the item opens the meeting with the cited line on screen and highlighted.
+  await link.click();
+  await expect(page).toHaveURL(new RegExp(`/meetings/${done.id}#seg-${done.segments[1]}$`));
+  const cited = page.locator(`[data-testid=transcript-line][data-segment-id="${done.segments[1]}"]`);
+  await expect(cited).toHaveAttribute("data-highlighted", "true");
+  await expect(cited).toBeInViewport({ ratio: 0.9 });
+  await expect(page.locator("[data-highlighted=true]")).toHaveCount(1);
+});
+
 test("PORT-03/SC1: a shared meeting leaves the grantee's list on reload once it is revoked", async ({ page }) => {
   const { shared } = world.seeded.meetings;
   await openDashboard(page, world.mira);
@@ -302,6 +387,9 @@ test("PORT-03/SC1: a shared meeting leaves the grantee's list on reload once it 
   await waitForList(page);
   await expect(page.getByTestId("past-row")).toHaveCount(3);
   await expect(page.locator(`[data-testid=past-row][data-meeting-id="${shared.id}"]`)).toHaveCount(0);
+  // Its unassigned action item goes with it.
+  await expect(page.getByTestId("unassigned-row")).toHaveCount(1);
+  await expect(unassignedRow(page, shared.id)).toHaveCount(0);
   await expect(page.getByText("Rate card review")).toHaveCount(0);
   // Search drops it too.
   await page.getByRole("searchbox", { name: "Search meetings" }).fill("gaadi");
@@ -311,6 +399,7 @@ test("PORT-03/SC1: a shared meeting leaves the grantee's list on reload once it 
 test("SC1: a member with no meetings sees the empty dashboard", async ({ page }, testInfo) => {
   await openDashboard(page, world.neha);
   await expect(page.getByTestId("dashboard-empty")).toContainText("No meetings yet");
+  await expect(page.getByTestId("section-unassigned")).toHaveCount(0);
   await expect(page.getByTestId("join-form")).toBeVisible();
   await expectNoOverflow(page);
   await screenshots(page, "dashboard-empty", testInfo);
@@ -322,9 +411,13 @@ test("SC1: with 1,000 meetings Load more appends the next page without repeats, 
     const url = new URL(req.url());
     if (url.pathname === "/api/v1/meetings") listCalls.push(url.search);
   });
+  const unassigned = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/v1/action-items/unassigned");
   await openDashboard(page, world.tara);
   const rows = page.getByTestId("past-row");
   await expect(rows).toHaveCount(25);
+  // None of her meetings has minutes: the Unassigned section stays hidden once andai-core answers.
+  expect(await (await unassigned).json()).toEqual({ items: [], next_cursor: null });
+  await expect(page.getByTestId("section-unassigned")).toHaveCount(0);
   await expect(page.getByTestId("past-count")).toHaveText("Showing 25 · more below");
   // No page beyond the first is fetched without a click.
   await page.waitForTimeout(1_000);
