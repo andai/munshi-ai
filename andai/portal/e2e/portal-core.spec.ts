@@ -1,10 +1,11 @@
 // The portal's core chain on one meeting, end to end through the mock bot and andai-worker: a member
 // sends the bot to a Hinglish meeting from the join form (`mock=hindi-lines`: six lines mixing
 // Devanagari and Roman, and one recording chunk), the meeting finishes and andai stores its
-// transcript, a Roman query on the dashboard finds the Devanagari speech and opens the meeting at
-// the line, the transcript reads in both scripts, a team share lets a colleague in and its removal
-// shuts him out, seeded minutes scroll to their evidence, and the requester deletes the meeting:
-// hidden at once, then purged from andai's tables and from storage within 15 minutes.
+// transcript, andai-worker writes its minutes (version 1, through the e2e stack's fake LLM), a
+// Roman query on the dashboard finds the Devanagari speech and opens the meeting at the line, the
+// transcript reads in both scripts, a team share lets a colleague in and its removal shuts him out,
+// seeded minutes (the next version) scroll to their evidence, and the requester deletes the
+// meeting: hidden at once, then purged from andai's tables and from storage within 15 minutes.
 //
 // The meeting lives in an organisation of its own (one per run), so that organisation's recordings
 // prefix holds this meeting's objects only. Each step's time is recorded as a test annotation, and
@@ -82,7 +83,8 @@ test("SC1–SC5: one Hinglish meeting from the join form to its purge", async ({
     if (log && isAbsolute(log)) appendFileSync(log, `${JSON.stringify(entry)}\n`);
   };
   const api = await apiAs(world.mira);
-  const meeting = async (id: string) => json<{ status: string; transcript_state: string }>(api, "get", `/api/v1/meetings/${id}`);
+  const meeting = async (id: string) =>
+    json<{ status: string; transcript_state: string; mom_state: string }>(api, "get", `/api/v1/meetings/${id}`);
 
   // ── Dispatch from the join form; the meeting finishes and andai stores its transcript. ──
   await signIn(page, world.mira);
@@ -99,6 +101,10 @@ test("SC1–SC5: one Hinglish meeting from the join form to its purge", async ({
   const stored = Date.now();
   timings.dispatch_to_done = seconds(done - sent);
   timings.done_to_stored = seconds(stored - done);
+  // The pipeline's minutes, before anything on the page is scrolled to (they arrive above the transcript).
+  await expect.poll(async () => (await meeting(id)).mom_state, { timeout: 120_000, intervals: [500] }).toBe("stored");
+  timings.stored_to_minutes = seconds(Date.now() - stored);
+  await expect(page.getByTestId("minutes")).toHaveAttribute("data-version", "1", { timeout: 30_000 });
 
   await expect(page.getByTestId("meeting-status")).toHaveAttribute("data-status", "done");
   await expect(lines(page)).toHaveCount(LINES, { timeout: 60_000 });
@@ -182,11 +188,14 @@ test("SC1–SC5: one Hinglish meeting from the join form to its purge", async ({
   expect((await omarApi.get(`/api/v1/meetings/${id}`)).status()).toBe(404);
   await omarApi.dispose();
 
-  // ── Minutes (seeded for this meeting): an evidence time shows the cited line. ──
-  const cited = seedMinutes(world.orgId, id).segments;
-  expect(cited).toEqual(segments.map((s) => s.id));
+  // ── Minutes (seeded for this meeting after the pipeline's): an evidence time shows the cited line. ──
+  const seeded = seedMinutes(world.orgId, id);
+  expect(seeded.segments).toEqual(segments.map((s) => s.id));
+  expect(seeded.version, "the seeded minutes follow the pipeline's version 1").toBe(2);
   await page.goto(`/meetings/${id}`);
   const minutes = page.getByTestId("minutes");
+  await expect(minutes).toHaveAttribute("data-version", String(seeded.version));
+  await expect(minutes.getByTestId("minutes-summary")).toContainText("Sample minutes: the deadline and the budget follow-up.");
   await expect(minutes.getByTestId("decision")).toHaveCount(2);
   const last = segments[LINES - 1].id;
   await minutes.getByTestId("unassigned-actions").locator(`[data-testid=evidence-link][data-segment-id="${last}"]`).click();

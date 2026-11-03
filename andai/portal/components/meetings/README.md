@@ -18,9 +18,18 @@ The dashboard's meeting list and search, the join form, and the meeting page.
 - `transcript-view.tsx` — a finished meeting's transcript: every stored line with an `id="seg-<id>"`
   anchor, "Original script | Roman Hinglish" (original first, D-41), and the line named by
   `#seg-<id>` or an evidence link scrolled into view and highlighted.
-- `minutes-view.tsx` — the latest minutes, read-only: summary, decisions, action items (unassigned
-  ones grouped apart), topics and risks, "None recorded" for an empty section, and evidence times
-  that show the cited line.
+- `minutes-view.tsx` — the minutes (`MinutesPanel`): where generation stands from the meeting's
+  `mom_state` ("Preparing minutes…", re-reading the meeting only while it is pending; a typed
+  failure with Regenerate; "No minutes: nothing was said"), the shown version with its template,
+  language and editor and a version menu for earlier ones, and the document laid out by the
+  template's `sections`/`headings`/`labels` from andai-core (unassigned action items grouped apart,
+  evidence times that show the cited line). Asks before unsaved edits are dropped.
+- `minutes-toolbar.tsx` — Edit and Regenerate (for `permissions.can_share`), Download as Markdown or
+  PDF (the shown version, andai-core's file through the `/api/*` proxy).
+- `minutes-editor.tsx` — edit the summary and every item (owner from the attendees or unassigned,
+  due date), remove and add items, cite transcript lines from a checklist of the stored lines; saves
+  as the next version, offered only when every item has text and a cited line.
+- `regenerate-dialog.tsx` — generate the minutes again in another template and output language.
 - `attendees.tsx` — who attended (invitees, then speakers), initials and names.
 - `share-dialog.tsx` — share with a person or team from the org directory (names only, no email
   entry) and remove shares. `delete-dialog.tsx` — confirm, delete, then the not-found page.
@@ -28,4 +37,5 @@ The dashboard's meeting list and search, the join form, and the meeting page.
   `consent-note.tsx`, `live-transcript.tsx` — the live page's parts.
 - `display.ts` — the words for andai-core's values (status, `JoinFailureReason`, end reason,
   platform, language, list sections, the "<Platform> meeting · <date>" title fallback, initials,
-  meeting times and due dates), keyed by andai's enums.
+  meeting times and due dates, minutes templates, output languages and minutes failure codes), keyed
+  by andai's enums.

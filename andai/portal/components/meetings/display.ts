@@ -1,7 +1,7 @@
 // Words for andai-core's meeting values. The portal decides nothing here: every map is keyed by an
 // andai enum, and a value this file does not know is shown in a neutral form rather than guessed.
 
-import type { JoinFailureReason, Language, MeetingStatus, Platform, Section } from "@/lib/meetings";
+import type { JoinFailureReason, Language, MeetingStatus, OutputLanguage, Platform, Section } from "@/lib/meetings";
 
 export const PLATFORM_NAME: Record<Platform, string> = {
   google_meet: "Google Meet",
@@ -201,4 +201,42 @@ export function dueText(due: string | undefined): string {
   if (!due) return "";
   const date = /^\d{4}-\d{2}-\d{2}$/.test(due) ? new Date(`${due}T00:00:00`) : null;
   return date && !Number.isNaN(date.getTime()) ? dayFormat.format(date) : due;
+}
+
+// ─── minutes ────────────────────────────────────────────────────────────────────────────────────
+
+/** andai-core's minutes templates (`minutes.templates`), by id, in the order the portal offers them. */
+export const TEMPLATE_NAME: Record<string, string> = {
+  standard: "Standard",
+  indian_formal_mom: "Indian formal MoM",
+  standup: "Stand-up",
+  client_call: "Client call",
+};
+
+export function templateName(id: string): string {
+  return TEMPLATE_NAME[id] ?? id;
+}
+
+/** The output languages of the minutes. */
+export const OUTPUT_LANGUAGE_NAME: Record<OutputLanguage, string> = {
+  en: "English",
+  hi: "Hindi",
+  hinglish: "Hinglish",
+};
+
+/** Why the minutes could not be prepared, per the typed code andai-core stores (`mom_error`). */
+const MOM_ERROR: Record<string, string> = {
+  llm_not_configured: "No language model is set up for minutes on this server.",
+  llm_unavailable: "The language model did not answer in time.",
+  llm_invalid_output: "The language model's answer was not usable minutes.",
+  llm_truncated: "The language model's answer was cut off before it finished.",
+  llm_error: "The language model refused the request.",
+  mom_invalid: "The language model's answer was not usable minutes.",
+  mom_invalid_request: "The template or language asked for is not available.",
+  mom_context_too_small: "The language model's context is too small for this meeting.",
+  internal_error: "Something went wrong on our side.",
+};
+
+export function momErrorText(code: string | null): string {
+  return (code && MOM_ERROR[code]) || MOM_ERROR.internal_error;
 }

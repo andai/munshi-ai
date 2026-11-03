@@ -13,7 +13,7 @@ import { DeleteDialog } from "@/components/meetings/delete-dialog";
 import { LANGUAGE_NAME, PLATFORM_NAME, endText, linkHost, meetingWhen } from "@/components/meetings/display";
 import { FailurePanel } from "@/components/meetings/failure-panel";
 import { LiveTranscript } from "@/components/meetings/live-transcript";
-import { MinutesView } from "@/components/meetings/minutes-view";
+import { MinutesPanel } from "@/components/meetings/minutes-view";
 import { ShareDialog } from "@/components/meetings/share-dialog";
 import { StatusBadge } from "@/components/meetings/status-badge";
 import {
@@ -27,7 +27,6 @@ import { Button } from "@/components/ui/button";
 import { ApiError, sentence } from "@/lib/api";
 import {
   getMeeting,
-  getMinutes,
   getTranscript,
   isTerminal,
   mergeSegments,
@@ -35,7 +34,6 @@ import {
   subscribeLive,
   type LiveMode,
   type Meeting,
-  type MomDocument,
   type Segment,
   type StatusUpdate,
 } from "@/lib/meetings";
@@ -44,9 +42,9 @@ import { useSession } from "@/lib/session";
 // One meeting, as andai-core reports it. While the bot is in it: status and when it changed, why it
 // failed, how to admit the bot while it waits, the recording notice, and the transcript as it
 // arrives (live stream, polling when the stream drops). Once it has ended: the transcript andai
-// stored (original script, or Roman Hinglish), the attendees and, where they exist, the minutes,
-// whose evidence links show the line they cite. Share, Delete and Stop appear for whoever
-// andai-core's `permissions` allow. A meeting this account may not read does not exist here (404),
+// stored (original script, or Roman Hinglish), the attendees and the minutes (`minutes-view.tsx`:
+// where generation stands, versions, edit, regenerate, downloads), whose evidence links show the
+// line they cite. Share, Delete and Stop appear for whoever andai-core's `permissions` allow. A meeting this account may not read does not exist here (404),
 // and neither does one it has just deleted.
 
 const FINAL_READ_DELAY_MS = 3_000;
@@ -108,10 +106,11 @@ export function MeetingView({ id }: { id: string }) {
   const { me } = useSession();
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
   const [segments, setSegments] = useState<Segment[]>([]);
-  const [minutes, setMinutes] = useState<MomDocument | null>(null);
   // Whether the stored transcript and the minutes have both been read: the layout is final, so a
   // line can be scrolled to without the minutes arriving above it and pushing it away.
-  const [settled, setSettled] = useState(false);
+  const [transcriptRead, setTranscriptRead] = useState(false);
+  const [minutesRead, setMinutesRead] = useState(false);
+  const settled = transcriptRead && minutesRead;
   const [mode, setMode] = useState<LiveMode>("live");
   const [changedAt, setChangedAt] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -259,27 +258,27 @@ export function MeetingView({ id }: { id: string }) {
     };
   }, [storing, id]);
 
-  // Stored: andai's copy replaces whatever was on screen (same ids, with both scripts), and the
-  // minutes, which cite its lines, are read with it.
+  // Stored: andai's copy replaces whatever was on screen (same ids, with both scripts). The
+  // minutes, which cite its lines, are read beside it (`MinutesPanel` reports when).
   useEffect(() => {
     if (!stored) return;
     let active = true;
-    setSettled(false);
-    void Promise.allSettled([
-      getTranscript(id).then((copy) => {
+    setTranscriptRead(false);
+    getTranscript(id)
+      .then((copy) => {
         if (active) setSegments(copy);
-      }),
-      getMinutes(id).then((doc) => {
-        if (active) setMinutes(doc);
-      }),
-    ]).then(() => {
-      // A failed read leaves what is on screen (no minutes shown; a reload tries again).
-      if (active) setSettled(true);
-    });
+      })
+      .catch(() => {
+        // a failed read leaves what is on screen; a reload tries again
+      })
+      .finally(() => {
+        if (active) setTranscriptRead(true);
+      });
     return () => {
       active = false;
     };
   }, [stored, id]);
+  const minutesSettled = useCallback(() => setMinutesRead(true), []);
 
   async function onStop() {
     setStopping(true);
@@ -354,7 +353,7 @@ export function MeetingView({ id }: { id: string }) {
         <>
           {stored && <Attendees attendees={m.attendees ?? []} />}
           <div className="flex flex-wrap items-start gap-6">
-            {minutes && <MinutesView minutes={minutes} segments={segments} onEvidence={showSegment} />}
+            {stored && <MinutesPanel meeting={m} segments={segments} onEvidence={showSegment} onSettled={minutesSettled} />}
             <TranscriptView segments={segments} script={script} onScriptChange={setScript} target={target} ready={stored ? settled : !storing} preparing={storing} />
           </div>
           <div className="max-w-xl">
@@ -383,7 +382,6 @@ export function MeetingView({ id }: { id: string }) {
           open={deleteOpen}
           onOpenChange={setDeleteOpen}
           onDeleted={() => {
-            setMinutes(null);
             setSegments([]);
             setLoaded({ state: "missing" });
           }}
