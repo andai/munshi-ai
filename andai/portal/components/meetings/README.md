@@ -4,7 +4,13 @@ The dashboard's meeting list and search, the join form, and the meeting page.
 
 - `meeting-list.tsx` — the dashboard's one list (D-42): Live now, Upcoming and Past, one page of
   each from `lib/meetings.ts` `listMeetings`, "Load more" per section by cursor; Past is a table
-  that becomes stacked rows under the `md` breakpoint. Also `PlatformMark`.
+  that becomes stacked rows under the `md` breakpoint. The dashboard's Unassigned section goes
+  between Upcoming and Past (`between`). Also `PlatformMark`.
+- `unassigned-actions.tsx` — "Unassigned action items" (D-42): the items nobody owns in the latest
+  minutes of the meetings the caller may open, from `listUnassigned`, newest meeting first; each
+  links to its meeting at the cited line (`#seg-<id>`) and shows the meeting's title (or the
+  "<Platform> meeting · <date>" fallback), time, team and due date. Hidden while it loads and when
+  there are none; shown only under "All I can see", since the filters do not narrow it.
 - `meeting-filters.tsx` — All I can see / Requested by me / Shared with me, or one team (andai-core
   takes one filter at a time).
 - `search-results.tsx` — keyword search results from `searchMeetings`: total, title, time and up to

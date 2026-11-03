@@ -44,6 +44,9 @@
   `DELETE /meetings/{id}/shares/{share_id}` — who the meeting is shared with, share it with a user
   or team of the org (201 new, 200 already shared), stop sharing (204). Requester, team lead,
   admins and owners; 404 for everyone else, grantees included (`shares.py`).
+* `GET /action-items/unassigned?limit=&cursor=` — the action items owned by nobody in the latest
+  minutes of the meetings the caller may read, newest meeting first, keyset-paginated
+  (`action_items.py`). Any member; access filtered in SQL before the page limit.
 
 Refusals answer `{"detail", "code"}`.
 """
@@ -61,7 +64,7 @@ from pydantic.alias_generators import to_camel
 from andai_core.auth.deps import Services, client_ip, get_services
 from andai_core.auth.roles import Caller, require_role
 from andai_core.db.session import transaction
-from andai_core.meetings import deletion, listing, mom, mom_edit, shares
+from andai_core.meetings import action_items, deletion, listing, mom, mom_edit, shares
 from andai_core.meetings.live import open_stream
 from andai_core.meetings.service import Actor, MeetingError, Meetings
 from andai_core.meetings.transcript import read_transcript
@@ -135,6 +138,18 @@ def list_meetings(
         return listing.list_meetings(
             tx, who, section=section, filter_=filter, limit=limit, cursor=cursor
         )
+
+
+@router.get("/action-items/unassigned")
+def unassigned_action_items(
+    limit: int = Query(default=action_items.DEFAULT_LIMIT, ge=1, le=action_items.MAX_LIMIT),
+    cursor: str | None = None,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+) -> dict:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        return action_items.list_unassigned(tx, who, limit=limit, cursor=cursor)
 
 
 @router.post("/meetings/join")

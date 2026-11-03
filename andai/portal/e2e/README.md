@@ -11,8 +11,9 @@ bot (`BROWSER_IMAGE=mock-bot:dev`) and bootstraps the first organisation through
 disabling, 403, team lead), `twofa` (voluntary enrollment, lockout, recovery codes,
 require-two-factor, admin reset), `meetings` (send the bot, live status and transcript, lobby
 instructions, failures, polling when the stream drops, a colleague's meeting, another organisation's
-404) and `dashboard` (the meeting list's sections, filters and Load more, what a member may see
-before and after a share is revoked, keyword search with snippets including a Roman query for
+404) and `dashboard` (the meeting list's sections, filters and Load more, the Unassigned action items
+between Upcoming and Past and their links to the cited line, what a member may see before and
+after a share is revoked, keyword search with snippets including a Roman query for
 Devanagari speech, and the first-list time with 1,000 meetings, desktop only) and `meeting-detail`
 (a finished meeting's transcript in both scripts, attendees, minutes whose evidence links scroll to
 and highlight the cited line, a search result opening at its line, sharing with a team and removing

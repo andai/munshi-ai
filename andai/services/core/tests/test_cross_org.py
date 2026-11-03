@@ -440,6 +440,7 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("GET", "/api/v1/meetings"): (ALL, None),
     ("GET", "/api/v1/org/directory"): (ALL, None),
     ("GET", "/api/v1/search"): (ALL, None),  # without `q`: 422; the searches are below
+    ("GET", "/api/v1/action-items/unassigned"): (ALL, None),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────
@@ -701,11 +702,18 @@ def test_org_a_lists_and_directory_hold_org_a_only(world: World) -> None:
         client = world.client(world.a, role)
         listed = client.get("/api/v1/meetings")
         directory = client.get("/api/v1/org/directory")
-        assert listed.status_code == directory.status_code == 200
+        unassigned = client.get("/api/v1/action-items/unassigned")
+        assert listed.status_code == directory.status_code == unassigned.status_code == 200
         assert leaked(listed.text, world.b) == [] and leaked(directory.text, world.b) == []
+        assert leaked(unassigned.text, world.b) == []
     owner = world.client(world.a, "owner")
     live = owner.get("/api/v1/meetings", params={"section": "live"}).json()
     assert str(world.a.meeting_id) in [i["id"] for i in live["sections"]["live"]["items"]]
+    # Both orgs' minutes hold an unassigned item: A's owner gets A's, B's owner gets B's.
+    for org, other in ((world.a, world.b), (world.b, world.a)):
+        items = world.client(org, "owner").get("/api/v1/action-items/unassigned").json()["items"]
+        assert {i["meeting_id"] for i in items} == {str(org.meeting_id)}, org.label
+        assert str(other.meeting_id) not in {i["meeting_id"] for i in items}
     names = {u["id"] for u in owner.get("/api/v1/org/directory").json()["users"]}
     assert names == {str(u) for u in world.a.users}
 
@@ -845,7 +853,7 @@ def test_canary_rows_never_reach_a_customer_org(
         assert _canary_leaks(response.text, canary) == [], path
     for path in (
         "/api/v1/me", "/api/v1/org/users", "/api/v1/teams", "/api/v1/org/security",
-        "/api/v1/meetings", "/api/v1/org/directory",
+        "/api/v1/meetings", "/api/v1/org/directory", "/api/v1/action-items/unassigned",
     ):
         response = client.get(path)
         assert _canary_leaks(response.text, canary) == [], path

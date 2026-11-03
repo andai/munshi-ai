@@ -8,14 +8,17 @@ import { JoinForm } from "@/components/meetings/join-form";
 import { MeetingFilters } from "@/components/meetings/meeting-filters";
 import { MeetingList } from "@/components/meetings/meeting-list";
 import { SearchResults } from "@/components/meetings/search-results";
+import { UnassignedActions } from "@/components/meetings/unassigned-actions";
 import { Input } from "@/components/ui/input";
 import type { ListFilter } from "@/lib/meetings";
 import { displayName, useSession } from "@/lib/session";
 
 // The meetings dashboard: the search box in the header, "Add notetaker", then the list of the
-// meetings the caller may open with its filters. While the search box holds a query the list is
-// swapped for the search results (kept mounted, so its pages and filter survive a search); the
-// query is sent 250 ms after the last keystroke.
+// meetings the caller may open with its filters: Live now, Upcoming, the Unassigned action items
+// and Past (D-42). The Unassigned items are not narrowed by the filters, so they show only under
+// "All I can see". While the search box holds a query the list is swapped for the search results
+// (kept mounted, so its pages and filter survive a search); the query is sent 250 ms after the last
+// keystroke.
 
 const DEBOUNCE_MS = 250;
 
@@ -53,7 +56,7 @@ export function Dashboard() {
       )}
       <div hidden={searching} className="mt-8" data-testid="dashboard-list">
         <MeetingFilters filter={filter} onChange={setFilter} />
-        <MeetingList filter={filter} />
+        <MeetingList filter={filter} between={filter === "all" ? <UnassignedActions /> : null} />
       </div>
     </>
   );
