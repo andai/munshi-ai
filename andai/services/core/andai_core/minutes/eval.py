@@ -12,6 +12,14 @@ the minutes must not pick up, and for long meetings one needle fact said only on
 * `run_fixture` runs one fixture exactly as the minutes job does — `minutes.generate` over the
   segments (`text_raw` as spoken, production-shaped segment ids), then the writer's generated-mode
   rules through `mom_writer.build_document` — and scores the stored document. No database.
+  Like the minutes job, it retries a meeting whose generation fails with a transient
+  `llm_unavailable` — the route unreachable or timed out (no status), or status 408, 429 or 5xx —
+  as a new attempt after a doubling, capped wait. The schedule is a deliberate scaling of the
+  production policy (8 attempts, 30 s doubling up to 30 min) so that a 40-meeting run stays
+  bounded: `RETRY_ATTEMPTS` 4 attempts with waits of 10, 20 and 40 s (`RETRY_BASE_S`, capped at
+  `RETRY_CAP_S`). An outage longer than about 70 s therefore still fails the meeting. Other 4xx
+  statuses, off-schema and truncated replies end the meeting at once: the schema stop must see
+  them. Every retry is recorded on the meeting and in the report's `retries`.
 * `score` compares a stored document with the labels: a label matches an item of its section when
   every one of its `match` groups has an alternative in the item's text (fold-normalised, so
   Devanagari and Roman spellings meet; words of 6+ letters fuzzy at a 0.8 ratio, shorter ones
@@ -19,7 +27,7 @@ the minutes must not pick up, and for long meetings one needle fact said only on
   one within ±2 segments of it. When several items match a label, the one answering it is taken:
   supported first, then with the labelled owner, then the labelled due date. Owners and due dates
   are compared exactly.
-* `report` aggregates the runs: recall on labelled decisions and action items, the stored-evidence
+* `report` aggregates the runs: retries, recall on labelled decisions and action items, the stored-evidence
   validity, labelled support of matched items, owner and date accuracy, needles, truncation, the
   pre-filter invalid-id rate and dropped items per section, distractor hits (informational),
   schema failures, what the model wrote per meeting, and per-meeting latency with n / median /
@@ -30,19 +38,28 @@ the minutes must not pick up, and for long meetings one needle fact said only on
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
 import statistics
 import time
 import uuid
-from collections.abc import Callable, Iterable, Sequence
+from collections import Counter
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from andai_core.llm.client import ChatJson, ChatResult, LlmError, LlmInvalidOutput, LlmTruncated
+from andai_core.llm.client import (
+    ChatJson,
+    ChatResult,
+    LlmError,
+    LlmInvalidOutput,
+    LlmTruncated,
+    LlmUnavailable,
+)
 from andai_core.meetings.mom import Document
 from andai_core.meetings.mom_writer import build_document
 from andai_core.meetings.transcript import segment_id
@@ -63,6 +80,10 @@ P95_MIN_N = 20
 RECALL_THRESHOLD = 0.8
 SCHEMA_FAILURE_LIMIT = 0.1
 DISTRACTOR_KINDS = ("not_agreed", "other_date")
+# Retry of transient route errors: attempts in all, and the doubling wait's start and cap (s).
+RETRY_ATTEMPTS = 4
+RETRY_BASE_S = 10.0
+RETRY_CAP_S = 60.0
 # The fixed profile id gold runs store (no route host goes into it).
 GOLD_PROFILE = uuid.UUID("00000000-0000-4000-8000-00000000901d")
 
@@ -503,6 +524,7 @@ class CallStats:
     schema_failures: int = 0  # calls that ended off-schema after the repair
     truncated: int = 0
     unavailable: int = 0
+    retried_calls: int = 0  # calls made in attempts that failed and were retried (in `calls` too)
 
 
 class Counting:
@@ -544,6 +566,9 @@ class MeetingRun:
     completion_tokens: int = 0
     coverage_ok: bool = True  # every segment id was in some prompt part
     error: str | None = None
+    attempts: int = 1  # generation attempts (more than 1 after a transient route error)
+    retry_errors: list[str] = field(default_factory=list)  # each retried attempt's error
+    retry_wait_s: float = 0.0  # time waited between attempts
     write: dict | None = None  # the writer's report (invalid ids, dropped items per section)
     cited_ids: int = 0  # ids the draft cited before the writer's filter
     draft: dict | None = None  # what the model wrote (decisions, action items), ids made local
@@ -575,6 +600,23 @@ def _as_written(draft: Draft, fixture: Fixture) -> dict:
     }
 
 
+def transient(exc: LlmError) -> bool:
+    """A route error worth another attempt: unreachable or timed out, or status 408, 429 or 5xx."""
+    if not isinstance(exc, LlmUnavailable):
+        return False
+    return exc.status is None or exc.status in (408, 429) or exc.status >= 500
+
+
+def retry_wait(attempt: int) -> float:
+    """The wait after the `attempt`-th failed attempt (1-based)."""
+    return min(RETRY_BASE_S * 2 ** max(attempt - 1, 0), RETRY_CAP_S)
+
+
+def _error_name(exc: LlmError) -> str:
+    status = getattr(exc, "status", None)
+    return exc.code if status is None else f"{exc.code}:{status}"
+
+
 def _cited(draft: Draft) -> int:
     return sum(
         len(item.evidence)
@@ -593,8 +635,13 @@ async def run_fixture(
     part_tokens: int = PART_TOKENS,
     template_id: str = templates.DEFAULT_TEMPLATE,
     clock: Callable[[], float] = time.monotonic,
+    attempts: int = RETRY_ATTEMPTS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    stats: CallStats | None = None,
 ) -> MeetingRun:
-    """Generate, apply the writer's rules and score one fixture (never raises for the model)."""
+    """Generate, apply the writer's rules and score one fixture (never raises for the model).
+    A transient route error is retried up to `attempts` in all; `stats` (the one the `Counting`
+    wrapper of `llm` updates) gets the calls of retried attempts in `retried_calls`."""
     template = templates.get(template_id)
     language = fixture.language
     segments = fixture.transcript()
@@ -608,17 +655,29 @@ async def run_fixture(
     )  # fmt: skip
     packed = {n for part in pack(segments, room) for n in refs_in(part)}
     run.coverage_ok = packed == set(refs(segments))
-    started = clock()
-    try:
-        generation = await generate(
-            llm, segments, fixture.attendees, template, language,  # type: ignore[arg-type]
-            fixture.meeting_date, context_tokens=context_tokens,
-            max_output_tokens=max_output_tokens, part_tokens=part_tokens,
-        )  # fmt: skip
-    except LlmError as exc:
-        run.seconds = clock() - started
-        run.error = exc.code
-        return run
+    while True:
+        started = clock()
+        calls_before = stats.calls if stats is not None else 0
+        try:
+            generation = await generate(
+                llm, segments, fixture.attendees, template, language,  # type: ignore[arg-type]
+                fixture.meeting_date, context_tokens=context_tokens,
+                max_output_tokens=max_output_tokens, part_tokens=part_tokens,
+            )  # fmt: skip
+        except LlmError as exc:
+            run.seconds = clock() - started
+            if not transient(exc) or run.attempts >= attempts:
+                run.error = exc.code
+                return run
+            if stats is not None:
+                stats.retried_calls += stats.calls - calls_before
+            run.retry_errors.append(_error_name(exc))
+            wait = retry_wait(run.attempts)
+            run.retry_wait_s += wait
+            run.attempts += 1
+            await sleep(wait)
+            continue
+        break
     doc, report = build_document(
         generation.draft,
         segment_ids=[s.id for s in segments],
@@ -696,6 +755,7 @@ def report(runs: Sequence[MeetingRun], stats: CallStats, *, expected: int) -> di
     due_ok = sum(1 for lr in actions if lr.due_ok)
     with_due = [lr for lr in actions if lr.due_expected is not None]
     expected_needles = len(long_runs)
+    retried = [r for r in runs if r.attempts > 1]
     sc3 = {
         "valid_evidence": {
             "rule": "100% of stored decisions/action items cite valid segment ids",
@@ -742,6 +802,13 @@ def report(runs: Sequence[MeetingRun], stats: CallStats, *, expected: int) -> di
         "processed": len(runs),
         "expected": expected,
         "failed_meetings": [{"fixture": r.fixture, "error": r.error} for r in runs if r.error],
+        "retries": {
+            "meetings": len(retried),
+            "extra_attempts": sum(r.attempts - 1 for r in runs),
+            "codes": dict(Counter(e for r in runs for e in r.retry_errors)),
+            "retried_calls": stats.retried_calls,
+            "wait_s": round(sum(r.retry_wait_s for r in runs), 2),
+        },
         "sc3": {**sc3, "pass": all(c["pass"] for c in sc3.values()) and len(runs) == expected},
         "labels": {
             "total": len(labels) + unscored,
@@ -815,6 +882,9 @@ def _meeting(run: MeetingRun) -> dict:
         "completion_tokens": run.completion_tokens,
         "coverage_ok": run.coverage_ok,
         "error": run.error,
+        "attempts": run.attempts,
+        "retry_errors": run.retry_errors,
+        "retry_wait_s": round(run.retry_wait_s, 2),
         "write": run.write,
         "cited_ids": run.cited_ids,
         "draft": run.draft,
@@ -850,6 +920,16 @@ def markdown(report_: dict, *, title: str) -> str:
         if isinstance(c, dict):
             lines.append(f"| {name}: {c['rule']} | {c['value']} | {'yes' if c['pass'] else 'NO'} |")
     lines += ["", f"Overall: {'pass' if report_['sc3']['pass'] else 'FAIL'}", ""]
+    retries = report_["retries"]
+    codes = ", ".join(f"{code} x{n}" for code, n in retries["codes"].items()) or "none"
+    lines += [
+        "## Retries",
+        "",
+        f"Retries: {retries['meetings']} meeting(s), {retries['extra_attempts']} extra attempt(s),"
+        f" {retries['retried_calls']} call(s) in retried attempts, {retries['wait_s']} s waited;"
+        f" errors retried: {codes}.",
+        "",
+    ]
     lines += ["## Latency (s)", "", "| band | n | median | max | p95 |", "|---|---|---|---|---|"]
     for name, b in report_["latency"]["bands"].items():
         lines.append(
@@ -857,8 +937,8 @@ def markdown(report_: dict, *, title: str) -> str:
         )
     lines += ["", report_["latency"]["claim_limit"], "", "## Meetings", ""]
     lines += [
-        "| fixture | s | parts | found | owner/due misses | error |",
-        "|---|---|---|---|---|---|",
+        "| fixture | s | parts | found | owner/due misses | attempts | error |",
+        "|---|---|---|---|---|---|---|",
     ]
     for m in report_["meetings"]:
         labels = m.get("labels", [])
@@ -868,9 +948,11 @@ def markdown(report_: dict, *, title: str) -> str:
             for x in labels
             if "owner" in x and (x["owner"][0] != x["owner"][1] or x["due"][0] != x["due"][1])
         ]
+        retried = f" ({', '.join(m['retry_errors'])})" if m["retry_errors"] else ""
         lines.append(
             f"| {m['fixture']} ({m['language']}) | {m['seconds']} | {m['parts']} | "
-            f"{found}/{len(labels)} | {', '.join(misses)} | {m['error'] or ''} |"
+            f"{found}/{len(labels)} | {', '.join(misses)} | {m['attempts']}{retried} | "
+            f"{m['error'] or ''} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -897,9 +979,12 @@ async def run_all(
     part_tokens: int = PART_TOKENS,
     on_meeting: Callable[[MeetingRun], None] | None = None,
     min_calls_for_stop: int = 10,
+    attempts: int = RETRY_ATTEMPTS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> tuple[list[MeetingRun], CallStats, bool]:
-    """Run every fixture in order. Returns the runs, the call counts and whether the run stopped
-    early because schema failures passed 10% of calls."""
+    """Run every fixture in order, retrying transient route errors per meeting. Returns the runs,
+    the call counts (every call, retried attempts included) and whether the run stopped early
+    because schema failures passed 10% of calls."""
     stats = CallStats()
     counted = Counting(llm, stats)
     runs: list[MeetingRun] = []
@@ -907,6 +992,7 @@ async def run_all(
         run = await run_fixture(
             counted, fixture, model=model, context_tokens=context_tokens,
             max_output_tokens=max_output_tokens, part_tokens=part_tokens,
+            attempts=attempts, sleep=sleep, stats=stats,
         )  # fmt: skip
         runs.append(run)
         if on_meeting is not None:
@@ -944,6 +1030,11 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "RETRY_ATTEMPTS",
+    "RETRY_BASE_S",
+    "RETRY_CAP_S",
+    "CallStats",
+    "Counting",
     "Fixture",
     "MeetingRun",
     "count",
@@ -954,7 +1045,9 @@ __all__ = [
     "report",
     "run_all",
     "run_fixture",
+    "retry_wait",
     "score",
+    "transient",
     "validate",
     "write_report",
 ]

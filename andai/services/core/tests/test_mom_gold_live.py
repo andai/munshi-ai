@@ -10,7 +10,9 @@ The report is written first, to `.work/phases/06-mom-pipeline/live/gold-<date>T<
 `.md` (or `GOLD_REPORT_DIR`); it never names the route's host or key. The SC3 thresholds are
 computed into its `sc3` block as pass or fail per criterion. This test asserts only the run's
 integrity: all 40 processed and the report written by this run. A route that fails schema output
-on more than 10% of calls stops the run, which then fails here with the report saved.
+on more than 10% of calls stops the run, which then fails here with the report saved. A meeting
+whose route is briefly unavailable is retried (`eval.RETRY_ATTEMPTS` in all, recorded in the
+report's `retries`).
 """
 
 from __future__ import annotations
@@ -51,9 +53,13 @@ def test_the_gold_set_through_the_live_route() -> None:
     def progress(run: gold.MeetingRun) -> None:
         labels = run.score.labels if run.score is not None else []
         found = sum(1 for lr in labels if lr.found)
+        tries = (
+            f", attempt {run.attempts} ({', '.join(run.retry_errors)})" if run.attempts > 1 else ""
+        )
         print(
             f"{run.language}/{run.fixture}: {run.seconds:.1f} s, {run.parts} part(s), "
-            f"{found}/{run.labels_total} labels{', error ' + run.error if run.error else ''}",
+            f"{found}/{run.labels_total} labels{tries}"
+            f"{', error ' + run.error if run.error else ''}",
             flush=True,
         )
 
@@ -67,6 +73,7 @@ def test_the_gold_set_through_the_live_route() -> None:
             max_output_tokens=config.max_output_tokens,
             part_tokens=config.part_tokens,
             on_meeting=progress,
+            attempts=gold.RETRY_ATTEMPTS,
         )
     )
     report = gold.report(runs, stats, expected=len(fixtures))
@@ -78,10 +85,12 @@ def test_the_gold_set_through_the_live_route() -> None:
         "max_output_tokens": config.max_output_tokens,
         "part_tokens": config.part_tokens,
         "template": "standard",
+        "retry_attempts": gold.RETRY_ATTEMPTS,
         "stopped_for_schema_failures": stopped,
         "claim_limit": (
             "40 synthetic scripted meetings, one route and model, one date; not real speech, "
-            "not other models."
+            "not other models. The owner rule was written after reading en/04 A3 and en/07 A3; "
+            "the gold set is not held out."
         ),
     }
     json_path, md_path = gold.write_report(report, out_dir, stem=stem)
