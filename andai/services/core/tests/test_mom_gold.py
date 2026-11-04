@@ -15,7 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from andai_core.llm.client import ChatResult, LlmInvalidOutput, Usage
+from andai_core.llm.client import (
+    ChatResult,
+    LlmError,
+    LlmInvalidOutput,
+    LlmTruncated,
+    LlmUnavailable,
+    Usage,
+)
 from andai_core.minutes import eval as gold
 from andai_core.minutes.chunking import refs
 from andai_core.minutes.generate import Merged
@@ -367,3 +374,204 @@ def test_of_several_matching_items_the_one_answering_the_label_is_scored() -> No
     stats = gold.CallStats()
     report = gold.report([run(SHORT, items, stats)], stats, expected=1)
     assert report["sc3"]["owners"]["pass"] and report["sc3"]["due_dates"]["pass"]
+
+
+# ─── retry of transient route errors ──────────────────────────────────────────────────────────────
+
+
+class Flaky:
+    """Raises `errors` in order on the first calls, then answers like `Answering`."""
+
+    def __init__(self, errors: list[LlmError], answer) -> None:
+        self.errors = list(errors)
+        self.answer = answer
+
+    async def __call__(self, messages: list[dict], schema, *, name: str) -> ChatResult:
+        if self.errors:
+            raise self.errors.pop(0)
+        return await self.answer(messages, schema, name=name)
+
+
+class Sleeps:
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+
+
+def _flaky_run(
+    errors: list[LlmError], *, attempts: int = gold.RETRY_ATTEMPTS, f: gold.Fixture = SHORT
+) -> tuple[gold.MeetingRun, gold.CallStats, Sleeps]:
+    stats = gold.CallStats()
+    sleeps = Sleeps()
+    llm = gold.Counting(Flaky(errors, Answering(perfect(f), f)), stats)
+    result = asyncio.run(
+        gold.run_fixture(
+            llm, f, model="fake", context_tokens=CONTEXT, max_output_tokens=MAX_OUTPUT,
+            attempts=attempts, sleep=sleeps, stats=stats,
+        )
+    )  # fmt: skip
+    return result, stats, sleeps
+
+
+def test_a_meeting_whose_route_is_briefly_unavailable_is_processed_on_a_later_attempt() -> None:
+    result, stats, sleeps = _flaky_run(
+        [LlmUnavailable("timeout"), LlmUnavailable("bad gateway", 502)]
+    )
+
+    assert result.error is None and result.score is not None
+    assert result.attempts == 3
+    assert result.retry_errors == ["llm_unavailable", "llm_unavailable:502"]
+    assert sleeps.waits == [gold.RETRY_BASE_S, gold.RETRY_BASE_S * 2]
+    assert result.retry_wait_s == gold.RETRY_BASE_S * 3
+    assert stats.calls == 3 and stats.retried_calls == 2 and stats.unavailable == 2
+    report = gold.report([result], stats, expected=1)
+    assert report["sc3"]["pass"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LlmUnavailable("timeout"),
+        LlmUnavailable("request timeout", 408),
+        LlmUnavailable("rate limited", 429),
+        LlmUnavailable("bad gateway", 502),
+        LlmUnavailable("unavailable", 503),
+    ],
+    ids=lambda e: str(e.status),
+)
+def test_transient_route_errors_are_retried(error: LlmUnavailable) -> None:
+    result, stats, _ = _flaky_run([error])
+    assert result.error is None and result.attempts == 2
+    assert stats.retried_calls == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LlmInvalidOutput("off schema"),
+        LlmTruncated("cut"),
+        LlmUnavailable("unauthorised", 401),
+        LlmUnavailable("not found", 404),
+        LlmUnavailable("bad request", 400),
+    ],
+    ids=lambda e: f"{e.code}:{getattr(e, 'status', None)}",
+)
+def test_other_failures_end_the_meeting_at_once(error: LlmError) -> None:
+    result, stats, sleeps = _flaky_run([error])
+    assert result.error == error.code and result.score is None
+    assert result.attempts == 1 and result.retry_errors == [] and sleeps.waits == []
+    assert stats.calls == 1 and stats.retried_calls == 0
+
+
+def test_a_meeting_failing_every_attempt_is_reported_failed() -> None:
+    errors: list[LlmError] = [LlmUnavailable("bad gateway", 502) for _ in range(10)]
+    result, stats, sleeps = _flaky_run(errors)
+
+    assert result.error == "llm_unavailable" and result.score is None
+    assert result.attempts == gold.RETRY_ATTEMPTS
+    assert len(result.retry_errors) == gold.RETRY_ATTEMPTS - 1
+    assert stats.calls == gold.RETRY_ATTEMPTS
+    assert stats.retried_calls == gold.RETRY_ATTEMPTS - 1  # the last attempt is not retried
+    assert len(sleeps.waits) == gold.RETRY_ATTEMPTS - 1
+    report = gold.report([result], stats, expected=1)
+    assert report["failed_meetings"] == [{"fixture": SHORT.id, "error": "llm_unavailable"}]
+    assert report["meetings"][0]["attempts"] == gold.RETRY_ATTEMPTS
+    assert report["retries"]["extra_attempts"] == gold.RETRY_ATTEMPTS - 1
+    assert not report["sc3"]["pass"]
+
+
+def test_a_transient_error_then_another_failure_stops_there() -> None:
+    result, _, sleeps = _flaky_run([LlmUnavailable("down", 503), LlmTruncated("cut")])
+    assert result.error == "llm_truncated" and result.attempts == 2
+    assert result.retry_errors == ["llm_unavailable:503"] and len(sleeps.waits) == 1
+
+
+def test_waits_double_and_are_capped() -> None:
+    errors: list[LlmError] = [LlmUnavailable("down") for _ in range(10)]
+    _, _, sleeps = _flaky_run(errors, attempts=7)
+    assert sleeps.waits == [min(gold.RETRY_BASE_S * 2**n, gold.RETRY_CAP_S) for n in range(6)]
+    assert sleeps.waits[-1] == gold.RETRY_CAP_S
+    assert sleeps.waits[:3] == [10.0, 20.0, 40.0]
+
+
+def test_a_failed_attempt_of_a_map_reduced_meeting_counts_all_its_calls() -> None:
+    long = next(f for f in FIXTURES if f.kind == "long" and f.duration_min == 60)
+
+    class FailsOnThirdCall:
+        def __init__(self, inner) -> None:
+            self.inner = inner
+            self.n = 0
+
+        async def __call__(self, messages, schema, *, name):
+            self.n += 1
+            if self.n == 3:
+                raise LlmUnavailable("bad gateway", 502)
+            return await self.inner(messages, schema, name=name)
+
+    stats = gold.CallStats()
+    llm = gold.Counting(FailsOnThirdCall(Answering(perfect(long), long)), stats)
+    result = asyncio.run(
+        gold.run_fixture(
+            llm, long, model="fake", context_tokens=9000, max_output_tokens=MAX_OUTPUT,
+            sleep=Sleeps(), stats=stats,
+        )
+    )  # fmt: skip
+    assert result.error is None and result.attempts == 2
+    assert stats.retried_calls == 3  # the failed attempt made three calls
+    assert stats.calls == 3 + result.parts + result.reduce_calls
+
+
+def test_run_all_retries_and_the_report_shows_retries(tmp_path: Path) -> None:
+    two = [SHORT, FIXTURES[1]]
+    answers = {f.id: Answering(perfect(f), f) for f in two}
+    failures = {SHORT.id: [LlmUnavailable("rate limited", 429)]}
+
+    class PerFixture:
+        def __init__(self) -> None:
+            self.current = SHORT.id
+
+        async def __call__(self, messages, schema, *, name):
+            if failures.get(self.current):
+                raise failures[self.current].pop(0)
+            return await answers[self.current](messages, schema, name=name)
+
+    llm = PerFixture()
+    seen: list[str] = []
+
+    def on_meeting(run: gold.MeetingRun) -> None:
+        seen.append(run.fixture)
+        llm.current = two[len(seen)].id if len(seen) < len(two) else ""
+
+    sleeps = Sleeps()
+    runs, stats, stopped = asyncio.run(
+        gold.run_all(
+            llm, two, model="fake", context_tokens=CONTEXT, max_output_tokens=MAX_OUTPUT,
+            on_meeting=on_meeting, sleep=sleeps,
+        )
+    )  # fmt: skip
+    assert not stopped and [r.attempts for r in runs] == [2, 1]
+    assert stats.calls == 3 and stats.retried_calls == 1
+    assert sleeps.waits == [gold.RETRY_BASE_S]
+
+    report = gold.report(runs, stats, expected=2)
+    assert report["retries"] == {
+        "meetings": 1,
+        "extra_attempts": 1,
+        "codes": {"llm_unavailable:429": 1},
+        "retried_calls": 1,
+        "wait_s": gold.RETRY_BASE_S,
+    }
+    assert report["calls"]["retried_calls"] == 1
+    first = report["meetings"][0]
+    assert (first["attempts"], first["retry_errors"]) == (2, ["llm_unavailable:429"])
+    assert first["retry_wait_s"] == gold.RETRY_BASE_S
+    assert report["sc3"]["pass"]
+
+    json_path, md_path = gold.write_report(report, tmp_path, stem="gold-retry")
+    saved = json.loads(json_path.read_text(encoding="utf-8"))
+    assert saved["retries"]["meetings"] == 1
+    md = md_path.read_text(encoding="utf-8")
+    assert "Retries: 1 meeting(s), 1 extra attempt(s)" in md
+    assert "llm_unavailable:429" in md

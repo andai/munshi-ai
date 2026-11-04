@@ -44,7 +44,13 @@ applies the owner and date rules below.
   `tests/mom_gold/`, runs each through `generate` and the writer's `build_document` (no database),
   scores the stored document against its labels (recall, labelled support within ±2 segments,
   owners, due dates, needles, truncation, invalid ids before the filter) and writes a JSON and
-  Markdown report with the SC3 verdict per criterion and latency per length band.
+  Markdown report with the SC3 verdict per criterion and latency per length band. A meeting whose
+  generation fails with a transient `llm_unavailable` (no status — unreachable or timed out — or
+  status 408, 429 or 5xx) is retried: 4 attempts in all, waiting 10, 20 and 40 s (doubling, capped
+  at 60 s), a scaled-down copy of the minutes job's policy. Other 4xx statuses, off-schema and
+  truncated replies are not retried. Attempts, retried errors and waits are in each meeting's entry
+  and in the report's `retries`; calls of retried attempts stay in the call counts
+  (`retried_calls`).
   `python -m andai_core.minutes.eval validate <gold dir>` lists problems in the fixtures.
 - `render.py` — a stored `MomDocument` as Markdown (`markdown`) or as the standalone HTML the PDF is
   printed from (`html`): the template's sections in order under its headings in the document's
