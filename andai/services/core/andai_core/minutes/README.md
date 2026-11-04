@@ -10,7 +10,9 @@ applies the owner and date rules below.
   `hinglish`) and prompt guidance. All fill the same `MomDocument` fields. Also the per-language
   "None recorded" and "Unassigned" labels and the output-language instructions.
 - `prompt.py` — the system message (cite the numbers of the transcript lines, omit what was not said, owner
-  only when named with `ownerConfidence`, `dueText` as said for this item, no decision or action
+  only when named with `ownerConfidence` (not a group, nor someone who only raised, discussed or
+  organised the task for others — scheduling it, logging it, finding someone to do it; null when
+  nobody has taken it), `dueText` as said for this item, no decision or action
   item from a suggestion nobody agreed to, the language instruction, the template guidance) and
   the user message (meeting date, attendees, transcript lines); the reduce prompt, which shows each
   partial item as one referenced line and asks only for a summary and the groups of items that say
@@ -34,7 +36,10 @@ applies the owner and date rules below.
   (`अय्यर` = `Iyer`; words of three letters or more); groups and several people are `unassigned`.
 - `dates.py` — due phrases in English, Hindi and Hinglish (`kal`, `परसों`, `next Friday`,
   `agle hafte`, `3 din mein`, `20 November` ...) resolved deterministically against the meeting's
-  local date; the rule list is in the module docstring. An unknown phrase gives no date.
+  local date; the rule list is in the module docstring. An unknown phrase gives no date. A count
+  before something (`2 days before 20 October`, `शिविर से दो दिन पहले`) is the stated anchor date
+  minus the count (a range counts its larger number); with no anchor date in the phrase, or a
+  result before the meeting date, it gives no date, never the meeting date plus the count (D-52).
 - `eval.py` — the gold-set evaluator (MOM-02, D-45): loads and validates the synthetic fixtures in
   `tests/mom_gold/`, runs each through `generate` and the writer's `build_document` (no database),
   scores the stored document against its labels (recall, labelled support within ±2 segments,

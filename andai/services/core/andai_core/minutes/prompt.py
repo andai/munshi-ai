@@ -29,7 +29,9 @@ the item are better than many.
 3. `owner` is the person who will do an action item, only when the transcript clearly names them \
 (write the name as said); otherwise null. `ownerConfidence` (0 to 1) is how sure you are that the \
 transcript names this person as the owner. Groups ("the team", "we", "everyone", "someone") are \
-not owners, and neither is a person who only raised or discussed the task.
+not owners, and neither is a person who only raised or discussed the task. Neither is a person \
+who only organises the task for others (for example by scheduling it, logging it, or finding \
+someone to do it); when nobody has taken the task, owner is null.
 4. `dueText` is the due phrase exactly as said (for example "kal tak", "next Friday", \
 "31 October"), or null when no due time was said for this item. A date said for something else \
 (another event, a later meeting, when an owner will be chosen) is not this item's due phrase. \

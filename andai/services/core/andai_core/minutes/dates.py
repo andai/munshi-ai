@@ -12,6 +12,15 @@ The phrase is folded (`andai_core.text.fold`), so Devanagari and Roman spellings
    phrase, that weekday of the following calendar week (weeks start on Monday).
 3. A count of days, weeks or months (`3 din mein`, `तीन दिन में`, `in two weeks`, `ek mahine`):
    the meeting date plus that many.
+
+Rule 3a runs before all of them: a count of days, weeks or months directly followed by a
+before-word (`before`, `prior` [to], `pehle`, `pahle`, `पहले`), as in `2 days before 20 October`,
+`20 अक्टूबर के शिविर से दो दिन पहले` or `do din pehle shukravar se`. The phrase's anchor is found
+outside that counted span by rule 1, then rule 2, and the due date is the anchor minus the count.
+A range (`2-3`, `दो-तीन`) counts its larger number, so the earlier date. Without an anchor date in
+the phrase ("two days before the camp"), or when the result is before the meeting date, the phrase
+has no date: it never falls through to the meeting date plus the count. A before-word without a
+count right before it (`Friday se pehle`, `pehle ye karo`) is not this rule; the others decide.
 4. A day word: today / `aaj` / EOD / end of day / tonight → the meeting date; tomorrow / `kal` /
    `कल` → +1; day after tomorrow / `parso` / `परसों` → +2; `narso` / `नरसों` → +3.
 5. Weeks and months: next week / `agle hafte` → Monday of the following week; end of next week
@@ -122,6 +131,8 @@ _NOT_A_DAY = _folds(
     "mins",
 )
 _NEXT = _folds("next", "agle", "agla", "अगले", "अगला")
+_BEFORE = _folds("before", "prior", "pehle", "pahle", "पहले")
+_TO = fold("to")
 _END = _folds("end", "ant", "अंत", "khatam")
 
 _TODAY = (("today",), ("aaj",), ("eod",), ("tonight",), ("end", "of", "day"), ("aaj", "shaam"))
@@ -234,18 +245,69 @@ def _weekday(tokens: list[str], meeting: date) -> date | None:
     return None
 
 
+def _number(word: str) -> int | None:
+    n = int(word) if word.isdigit() else _NUMBERS.get(word)
+    return n if n is not None and 0 < n <= 366 else None
+
+
+def _unit(word: str) -> str | None:
+    if word in _DAY_UNITS:
+        return "day"
+    if word in _WEEK_UNITS:
+        return "week"
+    if word in _MONTH_UNITS:
+        return "month"
+    return None
+
+
+# A digit count (or range) in the raw phrase followed by two words, read as unit and before-word.
+_RAW_COUNT = re.compile(r"\b(\d{1,3}(?:\s*[-\u2013]\s*\d{1,3})?)(?=\s+(\S+)\s+(\S+))")
+
+
+def _without_counts(raw: str) -> str:
+    """`raw` with every digit count of a counted before-span blanked, so rule 1 cannot read
+    `2-3 days before` as 2 March."""
+    out = raw
+    for m in _RAW_COUNT.finditer(raw):
+        if _unit(fold(m[2])) is not None and fold(m[3]) in _BEFORE:
+            out = out[: m.start(1)] + " " * (m.end(1) - m.start(1)) + out[m.end(1) :]
+    return out
+
+
+def _before(raw: str, tokens: list[str], meeting: date) -> tuple[bool, date | None]:
+    """Rule 3a: (whether a counted before-span is present, the date it gives)."""
+    for i in range(2, len(tokens)):
+        if tokens[i] not in _BEFORE or (unit := _unit(tokens[i - 1])) is None:
+            continue
+        if (n := _number(tokens[i - 2])) is None:
+            continue
+        start = i - 2
+        if i >= 3 and (low := _number(tokens[i - 3])) is not None and low < n:
+            start = i - 3  # a range, "2 3" or "do ti": the larger count is n
+        end = i + 2 if i + 1 < len(tokens) and tokens[i + 1] == _TO else i + 1
+        rest = tokens[:start] + tokens[end:]
+        anchor = _written(_without_counts(raw), rest, meeting) or _weekday(rest, meeting)
+        if anchor is None:
+            return True, None
+        if unit == "day":
+            found = anchor - timedelta(days=n)
+        elif unit == "week":
+            found = anchor - timedelta(weeks=n)
+        else:
+            found = _add_months(anchor, -n)
+        return True, found if found >= meeting else None
+    return False, None
+
+
 def _count(tokens: list[str], meeting: date) -> date | None:
     for i in range(len(tokens) - 1):
-        word, unit = tokens[i], tokens[i + 1]
-        n = int(word) if word.isdigit() else _NUMBERS.get(word)
-        if n is None or n <= 0 or n > 366:
+        if (n := _number(tokens[i])) is None or (unit := _unit(tokens[i + 1])) is None:
             continue
-        if unit in _DAY_UNITS:
+        if unit == "day":
             return meeting + timedelta(days=n)
-        if unit in _WEEK_UNITS:
+        if unit == "week":
             return meeting + timedelta(weeks=n)
-        if unit in _MONTH_UNITS:
-            return _add_months(meeting, n)
+        return _add_months(meeting, n)
     return None
 
 
@@ -281,6 +343,9 @@ def resolve(due_text: str | None, meeting_date: date) -> date | None:
         return None
     raw = due_text.translate(_DEVANAGARI_DIGITS)
     tokens = fold(raw).split()
+    applies, found = _before(raw, tokens, meeting_date)
+    if applies:
+        return found
     for rule in (
         lambda: _written(raw, tokens, meeting_date),
         lambda: _weekday(tokens, meeting_date),

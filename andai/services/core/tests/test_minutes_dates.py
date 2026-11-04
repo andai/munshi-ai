@@ -93,6 +93,67 @@ UNKNOWN = [
 ]
 
 
+# Tuesday 2026-10-13, the date of the gold meeting where "दो-तीन दिन पहले" was read as +3.
+TUE = date(2026, 10, 13)
+
+# A count of days, weeks or months before something: the anchor's date minus the count when the
+# phrase states the anchor's date, never the meeting date plus the count.
+BEFORE = [
+    ("20 अक्टूबर के शिविर से दो दिन पहले", TUE, "2026-10-18"),
+    ("two days before 20 October", TUE, "2026-10-18"),
+    ("2-3 days before 20 October", TUE, "2026-10-17"),  # a range: the larger count
+    ("दो-तीन दिन पहले 20 अक्टूबर", TUE, "2026-10-17"),
+    ("do din pehle shukravar se", TUE, "2026-10-14"),  # Friday 2026-10-16 minus 2
+    ("1 hafte pehle 30 November", TUE, "2026-11-23"),
+    ("a week prior to 30 November", TUE, "2026-11-23"),
+    ("ek mahine pahle 20 December", TUE, "2026-11-20"),
+    ("3 days before 2026-10-20", TUE, "2026-10-17"),
+]
+
+BEFORE_UNKNOWN = [
+    ("शिविर से दो-तीन दिन पहले", TUE),  # no anchor date said
+    ("camp se do din pehle", TUE),
+    ("2 days before the camp", TUE),
+    ("2-3 days before the launch", TUE),
+    ("5 days before 14 October", TUE),  # 9 October: already past on the meeting date
+]
+
+# "pehle" / "before" without a counted unit right before it is not this rule: the existing rules
+# decide as they did.
+BEFORE_FALLS_THROUGH = [
+    ("Friday se pehle", TUE, "2026-10-16"),
+    ("20 November se pehle", TUE, "2026-11-20"),
+    ("before Friday", TUE, "2026-10-16"),
+    ("kal se pehle", TUE, "2026-10-14"),
+]
+
+
+@pytest.mark.parametrize(("phrase", "meeting", "expected"), BEFORE)
+def test_a_count_before_a_stated_anchor_is_the_anchor_minus_the_count(
+    phrase: str, meeting: date, expected: str
+) -> None:
+    assert resolve(phrase, meeting) == date.fromisoformat(expected)
+
+
+@pytest.mark.parametrize(("phrase", "meeting"), BEFORE_UNKNOWN)
+def test_a_count_before_with_no_anchor_or_a_past_result_has_no_date(
+    phrase: str, meeting: date
+) -> None:
+    assert resolve(phrase, meeting) is None
+
+
+@pytest.mark.parametrize(("phrase", "meeting", "expected"), BEFORE_FALLS_THROUGH)
+def test_before_without_a_count_keeps_the_existing_rules(
+    phrase: str, meeting: date, expected: str
+) -> None:
+    assert resolve(phrase, meeting) == date.fromisoformat(expected)
+
+
+def test_pehle_without_a_count_or_a_date_has_no_date() -> None:
+    assert resolve("pehle ye karo", TUE) is None
+    assert resolve("पहले", TUE) is None
+
+
 @pytest.mark.parametrize(("phrase", "meeting", "expected"), CASES)
 def test_a_due_phrase_resolves_to_one_date(phrase: str, meeting: date, expected: str) -> None:
     assert resolve(phrase, meeting) == date.fromisoformat(expected)

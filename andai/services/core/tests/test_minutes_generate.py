@@ -6,6 +6,7 @@ language, and a draft schema without the fields andai fills itself."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from datetime import date
@@ -16,7 +17,7 @@ from andai_core.llm.client import ChatResult, Usage, strict_schema
 from andai_core.minutes import templates
 from andai_core.minutes.chunking import Segment, estimate_tokens, line, pack, refs
 from andai_core.minutes.generate import PART_TOKENS, Draft, Merged, budget, generate
-from andai_core.minutes.prompt import messages
+from andai_core.minutes.prompt import RULES, messages, system_message
 from andai_core.minutes.templates import LANGUAGE_INSTRUCTION, LANGUAGES, TEMPLATES
 
 MEETING = date(2026, 11, 2)
@@ -354,6 +355,29 @@ def test_each_template_and_language_has_its_prompt_and_headings(
         assert not any(
             "ऀ" <= c <= "ॿ" for s in template.sections for c in template.heading(s, "hinglish")
         )
+
+
+OWNER_ORGANISER = (
+    "Neither is a person who only organises the task for others (for example by scheduling it, "
+    "logging it, or finding someone to do it); when nobody has taken the task, owner is null."
+)
+# sha256 of every RULES line other than rule 3 (the owner rule), as they were before the organiser
+# sentence was added: a change to any other rule fails here.
+OTHER_RULES_SHA256 = "d4bffb148d63e31f3a75f6c207896d0d964dff21ff4b51aa871c0a3795646f93"
+
+
+def test_the_owner_rule_excludes_people_who_only_organise_the_task() -> None:
+    system = system_message(TEMPLATES["standard"], "en")["content"]
+    rule3 = next(line for line in system.splitlines() if line.startswith("3. "))
+    assert OWNER_ORGANISER in rule3
+    assert rule3.endswith("who only raised or discussed the task. " + OWNER_ORGANISER)
+
+
+def test_the_rules_other_than_the_owner_rule_are_unchanged() -> None:
+    lines = RULES.split("\n")
+    others = "\n".join(line for line in lines if not line.startswith("3. "))
+    assert len(lines) - len(others.split("\n")) == 1
+    assert hashlib.sha256(others.encode()).hexdigest() == OTHER_RULES_SHA256
 
 
 def test_four_templates_ship() -> None:
