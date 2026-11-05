@@ -735,7 +735,8 @@ def test_canary_org_id_and_join_stats_are_scan_owned_definer_functions(
         True, "andai_scan", path,
         "TABLE(platform text, source text, outcome text, reason text, count bigint)", False, True,
     )
-    assert org_columns == {"id", "is_canary"}
+    # 0013 adds allowed_email_domains for the mailbox's domain attribution (andai_orgs_for_domain).
+    assert org_columns == {"id", "is_canary", "allowed_email_domains"}
 
 
 def test_join_stats_counts_every_org_while_meetings_stay_hidden(
