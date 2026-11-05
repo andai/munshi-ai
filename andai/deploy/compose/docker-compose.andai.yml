@@ -200,6 +200,17 @@ services:
       - ANDAI_INTAKE_MAX_BYTES=${ANDAI_INTAKE_MAX_BYTES:-10485760}
       - ANDAI_INTAKE_RAW_RETENTION_DAYS=${ANDAI_INTAKE_RAW_RETENTION_DAYS:-7}
       - ANDAI_INTAKE_ROW_RETENTION_DAYS=${ANDAI_INTAKE_ROW_RETENTION_DAYS:-30}
+      # Sender verification (D-56): SPF/DKIM/ARC/DMARC lookups are the intake's only egress and go
+      # to this resolver (empty: the container's own). The ARC sealer allowlist ships empty.
+      - ANDAI_INTAKE_DNS_RESOLVER=${ANDAI_INTAKE_DNS_RESOLVER:-}
+      - ANDAI_INTAKE_DNS_TIMEOUT_S=${ANDAI_INTAKE_DNS_TIMEOUT_S:-3}
+      - ANDAI_INTAKE_DNS_MAX_QUERIES=${ANDAI_INTAKE_DNS_MAX_QUERIES:-30}
+      - ANDAI_INTAKE_ARC_SEALERS=${ANDAI_INTAKE_ARC_SEALERS:-}
+      # Invite rate limits per hour (D-58), counted in the same Valkey as andai-core.
+      - ANDAI_INTAKE_RATE_SENDER_PER_H=${ANDAI_INTAKE_RATE_SENDER_PER_H:-20}
+      - ANDAI_INTAKE_RATE_ORG_PER_H=${ANDAI_INTAKE_RATE_ORG_PER_H:-200}
+      - ANDAI_INTAKE_RATE_PEER_PER_H=${ANDAI_INTAKE_RATE_PEER_PER_H:-120}
+      - REDIS_URL=redis://redis:6379/1
     depends_on:
       postgres:
         condition: service_healthy
