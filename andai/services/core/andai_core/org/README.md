@@ -17,6 +17,15 @@ Org administration for andai-core, under `/api/v1`:
   and `DELETE /org/users/{id}/mfa` (an admin or the owner clears a member's TOTP and recovery codes
   and ends that member's sessions; an admin cannot reset the owner, nobody resets themselves
   here).
+- `bot_settings.py` — `GET/PUT /org/bot-settings` (owners and admins): `bot.autoJoin`
+  (`only_when_invited` by default, `all_with_link`, `off`) for the org and as a per-team override;
+  `null` removes an override, a team of another org is 404, every change is audited
+  (`bot.auto_join.update`). `effective_auto_join(tx, org_id, team_id)` gives the value that applies
+  to a team (its override, else the org's, else the default) for the notetaker intake.
+- `quarantine.py` — `GET /org/intake/quarantine?cursor=` (owners and admins): the org's quarantined
+  notetaker mail, newest first, 25 per keyset page — received time, sender, trimmed subject,
+  reason, the check verdict and a one-sentence check summary; never the message itself. Mail no org
+  was attributed is never listed.
 
 Role checks use `andai_core.auth.roles.require_role` (org roles, and team leads for a team route).
 Queries reach people through this org's memberships: `users` is a global table.

@@ -36,6 +36,8 @@ from andai_core.db.session import create_app_engine
 from andai_core.meetings import routes as meeting_routes
 from andai_core.meetings.reconciler import Reconciler
 from andai_core.meetings.service import MeetingError
+from andai_core.org import bot_settings as org_bot_settings
+from andai_core.org import quarantine as org_quarantine
 from andai_core.org import routes as org_routes
 from andai_core.org import security as org_security
 from andai_core.search import routes as search_routes
@@ -113,6 +115,8 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(auth_routes.router)
     app.include_router(org_security.router)
     app.include_router(org_routes.router)
+    app.include_router(org_bot_settings.router)
+    app.include_router(org_quarantine.router)
     app.include_router(meeting_routes.router)
     app.include_router(search_routes.router)
     app.include_router(platform_webhook.router)

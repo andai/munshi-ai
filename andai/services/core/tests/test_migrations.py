@@ -196,6 +196,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
             "meeting_removals",
             "platform_webhook_events",
             "inbound_mail",
+            "bot_settings",
         }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
@@ -234,6 +235,7 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
             "meeting_removals",
             "platform_webhook_events",
             "inbound_mail",
+            "bot_settings",
         }
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
@@ -288,6 +290,7 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
             "meeting_removals",
             "platform_webhook_events",
             "inbound_mail",
+            "bot_settings",
         }
         assert _search_state(engine) == (set(), False, False)
 
@@ -349,6 +352,7 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
             "meeting_removals",
             "platform_webhook_events",
             "inbound_mail",
+            "bot_settings",
         }
         present, functions, selectable, updatable, body_0008 = _deletion_state(engine)
         assert (present, functions, selectable, updatable) == (False, 0, set(), set())
@@ -1067,3 +1071,54 @@ def test_resolve_sender_returns_active_memberships_only(app_engine: Engine) -> N
     with transaction(app_engine) as tx:
         rows = tx.execute(text("SELECT * FROM andai_resolve_sender(:e)"), {"e": f"a@{domain}"}).all()
     assert {(r.org_id, r.team_id) for r in rows} == {(org_a, None), (org_b, None)}
+
+
+# ─── 0014: bot.autoJoin per org and team ──────────────────────────────────────────────────────────
+
+
+def _bot_settings_state(engine: Engine) -> tuple[bool, tuple, set[str], bool]:
+    """(table present, (RLS on, forced), policies, NULLS NOT DISTINCT on (org_id, team_id))."""
+    with engine.connect() as conn:
+        flags = conn.execute(
+            text(
+                "SELECT relrowsecurity, relforcerowsecurity FROM pg_class"
+                " WHERE relname = 'bot_settings' AND relkind = 'r'"
+            )
+        ).one_or_none()
+        policies = set(
+            conn.execute(
+                text("SELECT policyname FROM pg_policies WHERE tablename = 'bot_settings'")
+            ).scalars()
+        )
+        nulls_not_distinct = conn.execute(
+            text(
+                "SELECT i.indnullsnotdistinct FROM pg_index i"
+                " JOIN pg_class c ON c.oid = i.indexrelid"
+                " WHERE c.relname = 'uq_bot_settings_org_id_team_id'"
+            )
+        ).scalar_one_or_none()
+    return (
+        "bot_settings" in _tables(engine),
+        tuple(flags) if flags is not None else (),
+        policies,
+        bool(nulls_not_distinct),
+    )
+
+
+def test_bot_settings_downgrade_to_0013_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    at_head = (True, (True, True), {"org_isolation"}, True)
+    try:
+        assert _bot_settings_state(engine) == at_head
+
+        command.downgrade(config, "0013")
+        assert _revision(engine) == "0013"
+        assert _bot_settings_state(engine) == (False, (), set(), False)
+        assert _sender_lookup_state(engine)[0] == 2  # 0013 untouched
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == "0014"
+        assert _bot_settings_state(engine) == at_head
+    finally:
+        engine.dispose()
