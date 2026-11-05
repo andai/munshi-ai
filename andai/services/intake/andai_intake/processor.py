@@ -240,6 +240,7 @@ def load_group(tx: Tx, org_id: uuid.UUID, uid_norm: str) -> events.GroupState:
                 occurrence_key=m.occurrence_key,  # type: ignore[arg-type]
                 status=m.status,
                 scheduled_start=m.scheduled_start,
+                scheduled_end=m.scheduled_end,
                 skipped=m.skipped_at is not None,
                 # A deleted meeting is never brought back.
                 end_reason=None if m.deleted_at is not None else m.end_reason,
@@ -299,6 +300,7 @@ def write_plan(
             invite_event_id=new.invite_event_id,
             occurrence_key=new.occurrence_key,
             scheduled_start=new.scheduled_start,
+            scheduled_end=new.scheduled_end,
             requested_by=new.requested_by,
             team_id=new.team_id,
             join_url=new.join_url,

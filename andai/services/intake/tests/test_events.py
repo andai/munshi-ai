@@ -116,6 +116,7 @@ class World:
                 occurrence_key=new.occurrence_key,
                 status="scheduled",
                 scheduled_start=new.scheduled_start,
+                scheduled_end=new.scheduled_end,
                 join_url=new.join_url,
                 platform=new.platform,
                 title=new.title,
@@ -151,6 +152,7 @@ def test_a_new_invite_schedules_its_meeting() -> None:
     assert (plan.outcome, plan.reason) == ("scheduled", None)
     [new] = plan.creates
     assert (new.occurrence_key, new.scheduled_start, new.joined_now) == (TUE, TUE, False)
+    assert new.scheduled_end == TUE + timedelta(hours=1)  # no bot is sent after it
     assert (new.join_url, new.platform, new.title) == (MEET, "google_meet", "Weekly sync")
     assert (new.requested_by, new.team_id) == (ANA.user_id, ANA.team_id)
     [record] = plan.events
@@ -169,6 +171,7 @@ def test_a_higher_sequence_moves_the_meeting() -> None:
     [meeting] = world.meetings.values()  # the same meeting, keyed to the one-off's new start
     assert meeting.status == "scheduled" and not plan.creates and not plan.cancels
     assert meeting.occurrence_key == meeting.scheduled_start == TUE + timedelta(hours=2)
+    assert meeting.scheduled_end == TUE + timedelta(hours=3)
     assert (meeting.join_url, meeting.title) == (OTHER, "Moved sync")
 
 
@@ -359,6 +362,7 @@ def test_an_invite_already_running_is_joined_now_and_an_ended_one_ignored() -> N
     assert running.outcome == "joined_now"
     [new] = running.creates
     assert new.joined_now and new.scheduled_start == NOW
+    assert new.scheduled_end == datetime(2026, 11, 5, 9, 30, tzinfo=UTC)
     assert new.occurrence_key == datetime(2026, 11, 5, 8, 30, tzinfo=UTC)
 
     ended = World().send(ev(start="20261105T070000Z", end="20261105T080000Z"), now=NOW)

@@ -1,8 +1,9 @@
 """Join-time dispatch of scheduled meetings: the claim andai-worker takes due meetings with.
 
-* `meetings` gains `dispatch_attempts` (how often a scheduled meeting was claimed for dispatch) and
-  `dispatch_lease_until` (no worker claims it again before then). `ix_meetings_scheduled_due` reads
-  the scheduled, unskipped meetings in start order.
+* `meetings` gains `scheduled_end` (when the occurrence ends, UTC; andai-intake writes it with
+  `scheduled_start`), `dispatch_attempts` (how often a scheduled meeting was claimed for dispatch)
+  and `dispatch_lease_until` (no worker claims it again before then). `ix_meetings_scheduled_due`
+  reads the scheduled, unskipped meetings in start order.
 * `andai_claim_scheduled(max, lead_s, at)` hands andai-worker at most `max` meetings that are
   `scheduled`, not skipped, not deleted, have a `scheduled_start`, are due (`scheduled_start -
   lead_s <= at`) and have no live lease. Each is taken `FOR UPDATE SKIP LOCKED`, its attempts
@@ -69,6 +70,9 @@ def upgrade() -> None:
         )
 
     op.add_column(
+        "meetings", sa.Column("scheduled_end", sa.DateTime(timezone=True), nullable=True)
+    )
+    op.add_column(
         "meetings",
         sa.Column("dispatch_attempts", sa.Integer, nullable=False, server_default=sa.text("0")),
     )
@@ -127,3 +131,4 @@ def downgrade() -> None:
     op.drop_index("ix_meetings_scheduled_due", table_name="meetings")
     op.drop_column("meetings", "dispatch_lease_until")
     op.drop_column("meetings", "dispatch_attempts")
+    op.drop_column("meetings", "scheduled_end")

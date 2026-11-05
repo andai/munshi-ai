@@ -27,7 +27,9 @@ until andai-worker claims it at `scheduled_start` minus the join lead (`andai_cl
 on the existing row instead of inserting one: a live meeting of the same link in the org (checked
 again here, since the live-link index leaves `scheduled` rows out, and again by the index when the
 row turns `dispatching`) or a D-38 removal ends it `cancelled` with `end_reason`
-`already_in_meeting` or `removed_by_participant`, never retried; a platform 422 fails it
+`already_in_meeting` or `removed_by_participant`, never retried; one claimed at or after its
+`scheduled_end` (or one hour after its start when the end is unknown) ends `cancelled` with
+`meeting_ended`, so no bot is sent to a meeting that is over; a platform 422 fails it
 `meeting_not_found`; an org without a platform principal leaves it `scheduled` for the claim's
 backoff, and after `MAX_DISPATCH_ATTEMPTS` claims it fails `internal_error`. Otherwise it gets the
 full settings snapshot, turns `dispatching`, and the platform's answer is recorded and audited
@@ -132,6 +134,10 @@ NO_PLATFORM_PRINCIPAL = MeetingError(
     503, "no_platform_principal", "this organisation cannot send bots yet"
 )
 ALREADY_IN_MEETING = "already_in_meeting"
+# A scheduled meeting not dispatched before its occurrence ended (after a worker outage, say).
+MEETING_ENDED = "meeting_ended"
+# How long a scheduled meeting without a known end is taken to last (as andai-intake assumes).
+ASSUMED_DURATION = timedelta(hours=1)
 # How often andai-worker claims a scheduled meeting before it gives up on it (`start_scheduled`).
 MAX_DISPATCH_ATTEMPTS = 5
 
@@ -664,6 +670,9 @@ class Meetings:
                     or meeting.scheduled_start - lead > now
                 ):
                     return ScheduledStart("left")
+                if now >= _scheduled_end(meeting):
+                    _cancel(meeting, MEETING_ENDED, now)
+                    return ScheduledStart("cancelled", "cancelled", MEETING_ENDED)
                 if meeting.dispatch_attempts > MAX_DISPATCH_ATTEMPTS:
                     _fail(meeting, "internal_error", now)
                     return ScheduledStart("failed", "failed", "internal_error")
@@ -854,6 +863,14 @@ def _fail(meeting: Meeting, reason: str, now: datetime) -> None:
     meeting.failure_reason = reason
     meeting.ended_at = meeting.ended_at or now
     meeting.updated_at = now
+
+
+def _scheduled_end(meeting: Meeting) -> datetime:
+    """When a scheduled meeting's occurrence ends: its `scheduled_end`, else an assumed hour."""
+    if meeting.scheduled_end is not None:
+        return meeting.scheduled_end
+    assert meeting.scheduled_start is not None
+    return meeting.scheduled_start + ASSUMED_DURATION
 
 
 def _cancel(meeting: Meeting, end_reason: str, now: datetime) -> None:

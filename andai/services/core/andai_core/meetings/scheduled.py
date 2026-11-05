@@ -50,6 +50,7 @@ NOT_SCHEDULED = MeetingError(
 )
 CHANGEABLE = (
     "scheduled_start",
+    "scheduled_end",
     "occurrence_key",
     "invite_event_id",
     "join_url",
@@ -115,6 +116,7 @@ def insert_scheduled(
     invite_event_id: uuid.UUID,
     occurrence_key: datetime,
     scheduled_start: datetime,
+    scheduled_end: datetime | None = None,
     requested_by: uuid.UUID,
     team_id: uuid.UUID | None,
     join_url: str,
@@ -136,6 +138,7 @@ def insert_scheduled(
         status="scheduled",
         settings_snapshot={"language": language},
         scheduled_start=scheduled_start,
+        scheduled_end=scheduled_end,
         invite_event_id=invite_event_id,
         occurrence_key=occurrence_key,
         created_at=now,

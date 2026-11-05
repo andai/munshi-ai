@@ -1329,16 +1329,19 @@ def test_scheduled_claim_downgrade_to_0015_and_upgrade_again(migrated: Postgres)
     )
     try:
         assert _dispatch_claim_state(engine) == at_head
+        assert "scheduled_end" in _meeting_columns(engine)
 
         command.downgrade(config, "0015")
         assert _revision(engine) == "0015"
         assert _dispatch_claim_state(engine) == (set(), 0, None, set(), set())
+        assert "scheduled_end" not in _meeting_columns(engine)
         assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 2
         assert _invite_state(engine)[0] is True  # 0015 untouched
 
         command.upgrade(config, "head")
         assert _revision(engine) == "0016"
         assert _dispatch_claim_state(engine) == at_head
+        assert "scheduled_end" in _meeting_columns(engine)
         assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
     finally:
         engine.dispose()

@@ -629,8 +629,10 @@ class Meeting(Base):
     skipped_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
-    # Join-time dispatch (0016, `andai_claim_scheduled`): how often andai-worker claimed this
-    # scheduled meeting, and when it may claim it again (lease and backoff).
+    # Join-time dispatch (0016, `andai_claim_scheduled`): when the occurrence ends (no bot is sent
+    # after it), how often andai-worker claimed this scheduled meeting, and when it may claim it
+    # again (lease and backoff).
+    scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dispatch_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )

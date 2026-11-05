@@ -196,6 +196,37 @@ def assert_cancelled(world: World, meeting_id: uuid.UUID, end_reason: str) -> No
     )
 
 
+def test_a_meeting_claimed_after_its_end_is_cancelled_meeting_ended(world: World) -> None:
+    now = world.now()
+    over = world.scheduled(zoom_link(), start=now - timedelta(hours=2),
+                           scheduled_end=now - timedelta(hours=1))
+    ending_now = world.scheduled(zoom_link(), start=now - timedelta(minutes=30), scheduled_end=now)
+
+    for meeting_id in (over, ending_now):
+        assert world.start(meeting_id) == ScheduledStart("cancelled", "cancelled", "meeting_ended")
+        assert_cancelled(world, meeting_id, "meeting_ended")
+        assert world.start(meeting_id) == ScheduledStart("left")  # not retried
+    assert world.harness.gateway.dispatches == []
+
+
+def test_a_late_claim_before_the_end_still_dispatches(world: World) -> None:
+    now = world.now()
+    meeting_id = world.scheduled(zoom_link(), start=now - timedelta(minutes=10),
+                                 scheduled_end=now + timedelta(minutes=20))
+    assert world.start(meeting_id) == ScheduledStart("dispatched", "dispatching", None)
+    assert len(world.harness.gateway.dispatches) == 1
+
+
+def test_without_a_known_end_a_meeting_is_taken_to_last_an_hour(world: World) -> None:
+    now = world.now()
+    within = world.scheduled(zoom_link(), start=now - timedelta(minutes=59))
+    past = world.scheduled(zoom_link(), start=now - timedelta(minutes=61))
+
+    assert world.start(past) == ScheduledStart("cancelled", "cancelled", "meeting_ended")
+    assert world.start(within) == ScheduledStart("dispatched", "dispatching", None)
+    assert len(world.harness.gateway.dispatches) == 1
+
+
 def test_a_live_meeting_of_the_link_cancels_it_already_in_meeting(world: World) -> None:
     link = zoom_link()
     pasted = sign_in(world.harness, world.org.lead).post(JOIN, json={"join_url": link})
@@ -240,7 +271,8 @@ def test_the_platform_holding_the_meeting_for_another_live_row_cancels_it(world:
 
 def test_a_removal_within_12_hours_cancels_it_removed_by_participant(world: World) -> None:
     link = zoom_link()
-    earlier = world.scheduled(link, start=world.now() - timedelta(hours=2))
+    earlier = world.scheduled(link, start=world.now() - timedelta(hours=2),
+                              scheduled_end=world.now() + timedelta(minutes=30))
     assert world.start(earlier).outcome == "dispatched"
     at = world.now() - timedelta(hours=1)
     with transaction(world.engine, org_id=world.org_id) as tx:
