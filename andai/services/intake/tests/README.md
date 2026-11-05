@@ -8,9 +8,12 @@ Without Docker those tests skip; `ANDAI_REQUIRE_DOCKER=1` makes that a failure.
   smtplib as the sender. It covers recipient and size refusals, store-then-250, 451 on a store
   failure, dedup and replay.
 - `test_purge.py` covers the 7/30-day retention and the store's 24-hour dedup.
-- `mailkit.py` is not a test. It generates RSA keys at test time (never committed), signs mail with
-  DKIM, seals ARC sets as a forwarder would, and publishes keys, SPF and DMARC records in a stub DNS
-  zone.
+- `mailkit.py` is not a test. It re-exports `andai_intake.testing.sign`, which generates RSA keys at
+  test time (never committed), signs mail with DKIM, seals ARC sets as a forwarder would, and
+  publishes keys, SPF and DMARC records in a stub DNS zone.
+- `test_fake_dns.py` covers the e2e stack's stub DNS server: TXT and A answers over UDP and TCP,
+  NXDOMAIN outside the zone, truncation and the TCP retry for a large record, and a record the e2e
+  signer writes answered on the next query, up to a signed message passing the sender check.
 - `test_auth_spf_dkim.py` covers SPF and DKIM results on stub DNS, the resolver's cache and timeout,
   and the per-message query cap and deadline.
 - `test_auth_dmarc_arc.py` covers DMARC alignment by tree walk, the ARC trust rule, and the verdict,

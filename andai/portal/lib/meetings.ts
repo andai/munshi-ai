@@ -117,6 +117,10 @@ export type Meeting = {
   mom_state: MomState;
   /** The typed code of the last minutes failure (e.g. `llm_unavailable`), never a message. */
   mom_error: string | null;
+  /** When a meeting scheduled from an invitation starts (UTC); null for any other meeting. */
+  scheduled_start: string | null;
+  /** A scheduled meeting the bot will not join. */
+  skipped: boolean;
 };
 
 export type Script = "latn" | "deva" | "mixed" | "other";
@@ -164,6 +168,14 @@ export function joinMeeting(body: { join_url: string; language: Language | null;
 
 export function getMeeting(id: string): Promise<Meeting> {
   return api<Meeting>(`/meetings/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Skip a scheduled meeting (the bot will not join it), or join it again (`skip` false). For callers
+ * who may share it; 409 `not_scheduled` once the bot is on its way.
+ */
+export function setSkipped(id: string, skip: boolean): Promise<Meeting> {
+  return api<Meeting>(`/meetings/${encodeURIComponent(id)}/skip`, { method: skip ? "POST" : "DELETE", redirect: false });
 }
 
 export function stopMeeting(id: string): Promise<Meeting> {
@@ -346,6 +358,14 @@ export type MeetingItem = {
   duration_s: number | null;
   shared: boolean;
   has_minutes: boolean;
+  /** How the meeting came: `portal_link` (a pasted link), `invite_mail` (an invitation), … */
+  source: string;
+  /** When a meeting scheduled from an invitation starts (UTC); null for any other meeting. */
+  scheduled_start: string | null;
+  /** A scheduled meeting the bot will not join. */
+  skipped: boolean;
+  /** Whether the caller may share the meeting, and so skip it while it is scheduled. */
+  permissions: { can_share: boolean };
 };
 
 export type MeetingPage = { items: MeetingItem[]; next_cursor: string | null };

@@ -1,5 +1,6 @@
 // Shared e2e helpers: the Mailpit reader, a TOTP generator that never reuses a time step, unique
-// test addresses, account setup through the API (a second organisation too), mock-bot meeting
+// test addresses, account setup through the API (a second organisation too, and the email domains
+// an organisation claims), mock-bot meeting
 // links, status timing, seeded meetings and minutes (rows written inside the stack's andai-core
 // container), andai's row counts for one meeting and the object count under a storage prefix (for
 // the deletion purge), a meeting's pipeline state and the platform's status for it, stopping and
@@ -494,6 +495,18 @@ function psql(database: "andai" | "platform", sql: string): string {
     { input: sql, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] },
   );
   return output.trim();
+}
+
+/**
+ * Set the email domains an organisation claims (`orgs.allowed_email_domains`, no API sets it): mail
+ * from a non-member at one of them is quarantined for that organisation's admins. Written as the
+ * database superuser with psql inside the stack's postgres container.
+ */
+export function setOrgEmailDomains(orgId: string, domains: string[]): void {
+  if (!UUID_RE.test(orgId)) throw new Error("not an org id");
+  if (!domains.every((d) => /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(d))) throw new Error("not a domain");
+  const list = domains.map((d) => `'${d}'`).join(", ");
+  psql("andai", `UPDATE orgs SET allowed_email_domains = ARRAY[${list}]::text[] WHERE id = '${orgId}'`);
 }
 
 /** Where one meeting stands in andai's pipeline, read from andai's database (times as ISO strings). */
