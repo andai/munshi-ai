@@ -17,6 +17,16 @@ Without Docker those tests skip; `ANDAI_REQUIRE_DOCKER=1` makes that a failure.
   including the spoofed sender (`sender_unverified`).
 - `test_sender.py` covers sender resolution and quarantine attribution through the 0013 functions.
 - `test_limits.py` covers the per-sender, per-org and per-peer limits, on Valkey and in memory.
+- `invitekit.py` is not a test. It builds synthetic VEVENTs, VCALENDARs and invite mail.
+- `test_invite_mime.py` covers calendar extraction (inline, attached, one level of forwarded
+  message), deduplication, and the part, depth, size, VEVENT and time caps.
+- `test_invite_ics.py` covers METHOD, UID normalisation, RECURRENCE-ID, SEQUENCE, DTSTAMP,
+  ORGANIZER/ATTENDEE, SUMMARY and the forward flags.
+- `test_invite_tz_recur.py` covers Windows TZIDs and DST, custom VTIMEZONEs (no sharing between
+  messages), floating and all-day times, and recurrence with EXDATE, RDATE, overrides, COUNT/UNTIL
+  and the caps. It reads the BSD-2 calendars in `calendars/` (see the README there).
+- `test_invite_links.py` covers where join links are found, Safe Links, Proofpoint v1/v2/v3 and
+  Google unwrapping, Mimecast, and refused links.
 
 The sender-verification tests block dnspython's default resolver, so they cannot reach the network.
 

@@ -29,5 +29,15 @@ Licensing of that distribution:
     Attribute to "Vexa AI — FINOS Knowledge Graph" and preserve the per-entity
     `Source:` citations.
 
+icalendar test calendars (andai/services/intake/tests/calendars/)
+
+Five calendar files from the test corpus of the icalendar Python package 7.3.0 are used as test
+data, under its BSD 2-Clause license: Copyright (c) 2012-2013, Plone Foundation. The license text is
+in the README of that directory.
+
+Proofpoint URL Defense v3 decoding (andai/services/intake/andai_intake/invite/links.py)
+
+The decoder is a port of https://github.com/cardi/proofpoint-url-decoder (CC0-1.0, public domain).
+
 Third-party licenses for artifacts baked into the images are listed in
 THIRD_PARTY_LICENSES.md.

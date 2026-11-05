@@ -17,6 +17,8 @@ Python package of the andai-intake service.
 - `sender.py` — `resolve()`: the member a From address belongs to, and `attribute_org()`: whose
   admins see a quarantined message (migration 0013 functions).
 - `limits.py` — per-sender, per-org and per-peer-IP hourly limits in Valkey.
+- `invite/` — invite parsing: MIME, ICS fields, time zones, recurrence, join links and the forward
+  flags, offline and bounded (see `invite/README.md`).
 
 ## Who may schedule the notetaker
 
