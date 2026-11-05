@@ -126,3 +126,23 @@ Zlib asks only that its notice is kept in source distributions, and the installe
 | `pyspf` | `2.0.14` | PSF-2.0 | SPF checks |
 | `authres` | `1.2.0` | Apache-2.0 | parses the ARC-Authentication-Results of a sealing hop |
 | `dnspython` | `2.9.0` | ISC | DNS lookups (also a dependency of `email-validator` in andai-core) |
+
+## andai-intake: invite parsing
+
+andai-intake reads invites itself (`andai_intake.invite`): iCalendar with icalendar, recurrence
+rules with python-dateutil. The packages are pinned in `andai/uv.lock` and installed from PyPI into
+the andai-intake virtualenv. All three licences are permissive.
+
+| Package | Version | License | Why |
+| --- | --- | --- | --- |
+| `icalendar` | `7.3.0` | BSD-2-Clause | iCalendar parsing, VTIMEZONE offsets, Windows → IANA zone names (CLDR) |
+| `python-dateutil` | `4.0.0` | BSD-3-Clause (contributions since 2017-12-01 also Apache-2.0) | RRULE expansion; icalendar's VTIMEZONE zones |
+| `tzdata` | `2026.5` | Apache-2.0 | the IANA zone database for `zoneinfo` where the image has none (icalendar, dateutil) |
+
+Copied test data, not in any image: `andai/services/intake/tests/calendars/` holds five calendar
+files from icalendar 7.3.0's own test corpus (BSD-2-Clause, Copyright (c) 2012-2013, Plone
+Foundation); the licence text and the file list are in the README there.
+
+`andai_intake/invite/links.py` decodes Proofpoint URL Defense v3 links with a port of
+https://github.com/cardi/proofpoint-url-decoder, which is dedicated to the public domain under
+CC0-1.0. Proofpoint's own decoder script is GPL-3.0 and is not used.
