@@ -8,7 +8,7 @@ Two kinds of table:
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
   `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
-  (0008), `meeting_removals` (0009).
+  (0008), `meeting_removals` (0009), `bot_settings` (0014).
 * System tables with no org and no customer data (no row-level security): `canary_runs` and
   `alert_state` (0005), written by andai-worker, and `platform_webhook_events` (0010), written by
   andai-core's platform webhook.
@@ -130,6 +130,10 @@ QUARANTINE_REASONS = (
 SENDER_AUTH = ("dmarc_pass", "arc_trusted", "fail")
 SUBJECT_TRIM_MAX = 120
 
+# `bot.autoJoin` per org and team (migration 0014; SPEC `AutoJoinMode`, D-57).
+AUTO_JOIN_MODES = ("only_when_invited", "all_with_link", "off")
+DEFAULT_AUTO_JOIN = "only_when_invited"
+
 # Tables protected by row-level security on org_id (migration 0002).
 ORG_SCOPED_TABLES = (
     "orgs",
@@ -145,6 +149,7 @@ ORG_SCOPED_TABLES = (
     "meeting_shares",
     "mom_documents",
     "meeting_removals",
+    "bot_settings",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # Row-level security on a nullable org_id: a row is visible to no org until it is attributed (0012).
@@ -885,3 +890,31 @@ class InboundMail(Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BotSetting(Base):
+    """`bot.autoJoin` for one scope of an org: the org itself (`team_id` NULL) or one of its teams.
+    A team's effective value is its override, else the org's, else `only_when_invited`
+    (`org.bot_settings.effective_auto_join`)."""
+
+    __tablename__ = "bot_settings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["team_id", "org_id"], ["teams.id", "teams.org_id"], ondelete="CASCADE"
+        ),
+        UniqueConstraint("org_id", "team_id", postgresql_nulls_not_distinct=True),
+        CheckConstraint(_in("auto_join", AUTO_JOIN_MODES), name="auto_join"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    team_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    auto_join: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )

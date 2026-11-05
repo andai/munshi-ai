@@ -1,8 +1,8 @@
 """No org reaches another org's data through any andai-core route.
 
 Two orgs, A and B, each with an owner, an admin, a member and a team lead, a team, a pending
-invite, an enrolled TOTP, a platform principal and audit events — so every org-scoped table holds
-rows of both. Every route the application serves must sit in exactly one case table (a new route
+invite, an enrolled TOTP, a platform principal, audit events, auto-join settings and a quarantined
+notetaker message — so every org-scoped table holds rows of both. Every route the application serves must sit in exactly one case table (a new route
 fails `test_every_route_is_classified` until it is classified):
 
 * `ID_ROUTES` — path parameters filled with org B's ids, called as every role of org A: 403 or
@@ -17,6 +17,7 @@ After every call, B's rows in every table are exactly as they were.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -99,7 +100,34 @@ def _rename(engine: Engine, user_id: uuid.UUID, display_name: str) -> None:
         tx.execute(update(User).where(User.id == user_id).values(display_name=display_name))
 
 
-def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
+def _quarantine(superuser_engine: Engine, org_id: uuid.UUID, label: str, tag: str) -> None:
+    """A quarantined notetaker message attributed to the org, as andai-intake leaves one."""
+    sender = f"{label.lower()}-sender-{tag}@example.test"
+    raw = f"From: {sender}\r\nSubject: {label} invite {tag}\r\n\r\n".encode()
+    with superuser_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO inbound_mail (raw, raw_sha256, mail_from, rcpt_to, status, outcome,"
+                " quarantine_reason, org_id, sender, sender_auth, auth_summary, subject_trim,"
+                " processed_at)"
+                " VALUES (:raw, :sha, :sender, ARRAY['notetaker@munshi.test'], 'quarantined',"
+                " 'quarantined', 'unknown_user', :org, :sender, 'dmarc_pass',"
+                " CAST(:summary AS jsonb), :subject, now())"
+            ),
+            {
+                "raw": raw,
+                "sha": hashlib.sha256(raw).hexdigest(),
+                "sender": sender,
+                "org": org_id,
+                "summary": '{"verdict": "dmarc_pass", "from_domain": "example.test"}',
+                "subject": f"{label} invite {tag}",
+            },
+        )
+
+
+def seed_org(
+    harness: Harness, engine: Engine, superuser_engine: Engine, label: str
+) -> SeededOrg:
     tag = uuid.uuid4().hex[:10]
     name = f"{label} Org {tag}"
     owner_email = f"{label.lower()}-owner-{tag}@example.test"
@@ -206,6 +234,13 @@ def seed_org(harness: Harness, engine: Engine, label: str) -> SeededOrg:
                 org_id=org_id, join_url_key=f"zoom.us/j/removed-{tag}", removed_at=harness.clock()
             )
         )
+    # Auto-join settings at org and team scope, and a quarantined message carrying the tag.
+    settings = sign_in(harness, members["admin"]).put(
+        "/api/v1/org/bot-settings",
+        json={"autoJoin": "all_with_link", "teams": [{"teamId": str(team), "autoJoin": "off"}]},
+    )
+    assert settings.status_code == 200, settings.text
+    _quarantine(superuser_engine, org_id, label, tag)
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -261,10 +296,10 @@ class World:
 
 
 @pytest.fixture(scope="module")
-def world(app_engine: Engine) -> World:
+def world(app_engine: Engine, superuser_engine: Engine) -> World:
     harness = make_harness(app_engine, ANDAI_PLATFORM_WEBHOOK_SECRET="cross-org-webhook-secret")
-    a = seed_org(harness, app_engine, "Alpha")
-    b = seed_org(harness, app_engine, "Beta")
+    a = seed_org(harness, app_engine, superuser_engine, "Alpha")
+    b = seed_org(harness, app_engine, superuser_engine, "Beta")
     assert b.slug, "org B's slug is stored"
     b.values.add(b.slug)
     return World(harness, a, b)
@@ -307,6 +342,13 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         ),
         "meeting_removals": (
             "SELECT join_url_key, removed_at FROM meeting_removals WHERE org_id = :o"
+        ),
+        "bot_settings": (
+            "SELECT team_id, auto_join, updated_at, updated_by FROM bot_settings WHERE org_id = :o"
+        ),
+        "inbound_mail": (
+            "SELECT id, status, quarantine_reason, sender, subject_trim FROM inbound_mail"
+            " WHERE org_id = :o"
         ),
     }
     params = {"o": b.org_id, "u": b.users}
@@ -441,6 +483,9 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("GET", "/api/v1/org/directory"): (ALL, None),
     ("GET", "/api/v1/search"): (ALL, None),  # without `q`: 422; the searches are below
     ("GET", "/api/v1/action-items/unassigned"): (ALL, None),
+    ("GET", "/api/v1/org/bot-settings"): (ADMINS, None),
+    ("PUT", "/api/v1/org/bot-settings"): (ADMINS, {"autoJoin": "all_with_link"}),
+    ("GET", "/api/v1/org/intake/quarantine"): (ADMINS, None),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────
@@ -858,3 +903,40 @@ def test_canary_rows_never_reach_a_customer_org(
         response = client.get(path)
         assert _canary_leaks(response.text, canary) == [], path
     assert canary_state() == before
+
+
+def test_auto_join_settings_cannot_name_an_org_b_team(
+    world: World, superuser_engine: Engine
+) -> None:
+    before = b_state(superuser_engine, world.b)
+    admin = world.client(world.a, "admin")
+
+    for teams in (
+        [{"teamId": str(world.b.team), "autoJoin": "only_when_invited"}],
+        [{"teamId": str(world.b.team), "autoJoin": None}],
+        [
+            {"teamId": str(world.a.team), "autoJoin": "all_with_link"},
+            {"teamId": str(world.b.team), "autoJoin": "all_with_link"},
+        ],
+    ):
+        response = admin.put(
+            "/api/v1/org/bot-settings", json={"autoJoin": "off", "teams": teams}
+        )
+        assert response.status_code == 404, response.text
+        assert leaked(response.text, world.b) == []
+    assert b_state(superuser_engine, world.b) == before
+    # A's own settings and team are listed, and none of B's.
+    settings = admin.get("/api/v1/org/bot-settings")
+    assert str(world.a.team) in [t["teamId"] for t in settings.json()["teams"]]
+    assert leaked(settings.text, world.b) == []
+
+
+def test_each_org_s_quarantine_lists_its_own_mail_only(world: World) -> None:
+    """The positive half: each org's admins see their own quarantined message, never the other's."""
+    for org, other in ((world.a, world.b), (world.b, world.a)):
+        for role in ("owner", "admin"):
+            response = world.client(org, role).get("/api/v1/org/intake/quarantine")
+            assert response.status_code == 200, response.text
+            subjects = [item["subject"] for item in response.json()["items"]]
+            assert subjects == [f"{org.label} invite {org.tag}"], (org.label, role)
+            assert leaked(response.text, other) == [], (org.label, role)
