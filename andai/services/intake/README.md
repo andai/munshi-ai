@@ -5,8 +5,9 @@ The andai-intake service (FastAPI + aiosmtpd, Python 3.12): `Dockerfile`, `pypro
 an SMTP receiver that accepts mail for the configured notetaker addresses only and stores each
 message durably in the andai database (`inbound_mail`, migration 0012) before answering 250; a
 processor that turns verified members' invites into `scheduled` meetings (and keeps them in step
-with updates, cancellations and recurrences, `invite_events`, migration 0015); plus
-`GET /healthz` and the 7/30-day retention purge (D-58).
+with updates, cancellations and recurrences, `invite_events`, migration 0015) and mails the
+verified sender a plain-text confirmation (INV-04); plus `GET /healthz` and the 7/30-day retention
+purge (D-58). andai-worker sends the bot when a scheduled meeting is due.
 
 Captured mail is fed in with the replay client (D-54):
 

@@ -26,6 +26,10 @@ Scheduling (D-58, `andai_intake.processor`, `andai_intake.horizon`):
   (default 14); the hourly top-up adds the rest as they come within it.
 * `ANDAI_DEFAULT_TIMEZONE` (a floating invite time is read in it) and `ANDAI_DEFAULT_LANGUAGE` (the
   meeting's language) come from andai-core's settings.
+* `ANDAI_INTAKE_JOIN_LEAD_S` — how long before the start andai-worker sends the bot (default 120);
+  the confirmation says so.
+
+Confirmations (INV-04, `andai_intake.confirm`) go through andai-core's SMTP settings (`SMTP_*`).
 
 Rate limits (D-58, `andai_intake.limits`), per sliding hour:
 
@@ -77,6 +81,9 @@ class IntakeSettings(Settings):
     )
     intake_horizon_days: int = Field(
         default=14, ge=1, le=60, validation_alias="ANDAI_INTAKE_HORIZON_DAYS"
+    )
+    intake_join_lead_s: int = Field(
+        default=120, ge=0, le=900, validation_alias="ANDAI_INTAKE_JOIN_LEAD_S"
     )
 
     @field_validator("intake_dns_resolver")

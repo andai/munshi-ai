@@ -5,10 +5,14 @@ Python package of the andai-intake service.
 - `main.py` — the FastAPI app (`/healthz`); its lifespan starts the SMTP receiver, the processor,
   the horizon top-up and the purge loop when `ANDAI_DB_URL_APP` is set.
 - `settings.py` — andai-core's settings plus `ANDAI_INTAKE_*` (addresses, bind, size cap, retention,
-  DNS resolver and caps, ARC sealers, rate limits, scheduling horizon).
+  DNS resolver and caps, ARC sealers, rate limits, scheduling horizon, join lead).
 - `processor.py` — every stored message through the limits, the sender check, the sender, parsing,
   `bot.autoJoin` and the state machine, its result recorded with `andai_finish_inbound` in the same
-  transaction as its meetings (see below).
+  transaction as its meetings (see below); the confirmation is decided there and sent after the
+  commit.
+- `confirm.py` — the plain-text confirmation to the verified sender (scheduled, updated, cancelled,
+  joining now, ignored or could not schedule, with the time in the invite's zone and UTC, and the
+  forwarded-copy note), the RFC 3834 guard and 30 per recipient per hour.
 - `events.py` — the invite state machine, pure: one message against one (org, UID) group → event
   rows, meetings to create, move or cancel, and the outcome.
 - `horizon.py` — the hourly top-up: occurrences of active recurring invites that come within the

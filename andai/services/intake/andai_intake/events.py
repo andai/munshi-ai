@@ -256,6 +256,7 @@ class StoredMeeting:
     occurrence_key: datetime
     status: str
     scheduled_start: datetime | None
+    scheduled_end: datetime | None = None
     skipped: bool = False
     end_reason: str | None = None
     dispatched: bool = False  # a bot was sent for it (platform_meeting_id set)
@@ -295,6 +296,7 @@ class NewMeeting:
     invite_event_id: uuid.UUID
     occurrence_key: datetime
     scheduled_start: datetime
+    scheduled_end: datetime
     join_url: str
     platform: str
     title: str | None
@@ -615,6 +617,7 @@ def _reconcile(
                 invite_event_id=want.event_id,
                 occurrence_key=key,
                 scheduled_start=max(want.start, now),
+                scheduled_end=want.end,
                 join_url=want.join_url,
                 platform=want.platform,
                 title=want.title,
@@ -636,6 +639,7 @@ def _fields(want: _Want, now: datetime, current_start: datetime | None) -> dict[
         start = max(want.start, now)
     return {
         "scheduled_start": start,
+        "scheduled_end": want.end,
         "join_url": want.join_url,
         "platform": want.platform,
         "title": want.title,
@@ -650,6 +654,7 @@ def _moved(meeting: StoredMeeting, want: _Want, now: datetime) -> dict[str, Any]
         target.pop("platform")
     current = {
         "scheduled_start": meeting.scheduled_start,
+        "scheduled_end": meeting.scheduled_end,
         "join_url": meeting.join_url,
         "platform": meeting.platform,
         "title": meeting.title,

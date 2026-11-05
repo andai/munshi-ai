@@ -40,6 +40,10 @@ Without Docker those tests skip; `ANDAI_REQUIRE_DOCKER=1` makes that a failure.
   5-attempt cap, the 30-day purge next to invite events, and org-scoped writes.
 - `test_horizon.py` covers the hourly top-up: a weekly series' third occurrence, EXDATE, a cancelled
   series, `bot.autoJoin` off, and skips.
+- `test_confirm.py` covers the confirmations through Mailpit: one per outcome with title, time in
+  the invite's zone and UTC, platform and reason, the series count, the forwarded-copy note, none for
+  unverified, unknown, automatic, list or bulk mail or a null reverse-path, the RFC 3834 guard, 30
+  per recipient per hour, a header injection in SUMMARY, a relay failure, and nothing before commit.
 
 The sender-verification tests block dnspython's default resolver, so they cannot reach the network.
 

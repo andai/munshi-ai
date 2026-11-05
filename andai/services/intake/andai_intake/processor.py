@@ -18,7 +18,9 @@ takes each through, in this order:
 Step 7's event rows, meetings, and the message's result (`andai_finish_inbound`: status, outcome,
 reasons, org, user, sender, check summary, trimmed subject) are written in ONE transaction as the
 sender's org. A crash before that commit leaves nothing behind: the lease runs out and the message
-is processed again from the start, so meetings are never doubled. Any other error releases the
+is processed again from the start, so meetings are never doubled. The confirmation to the sender
+(`confirm.py`) is decided in that transaction and carried on the `Result`; the loop sends it only
+after the commit, and a failed send never re-runs the decision. Any other error releases the
 message (`andai_release_inbound`, the error's type kept) to be tried again; a message that has
 been claimed `MAX_ATTEMPTS` times is quarantined `parse_error`.
 
@@ -48,7 +50,7 @@ from andai_core.db.models import InviteEvent, Meeting
 from andai_core.db.session import transaction
 from andai_core.meetings import scheduled
 from andai_core.org.bot_settings import effective_auto_join
-from andai_intake import events, sender as senders
+from andai_intake import confirm, events, sender as senders
 from andai_intake.auth.verdict import Policy, SenderAuth, from_address, verify
 from andai_intake.invite import InviteParseError, ParsedEvent, parse
 from andai_intake.invite.ics import clean_text
@@ -93,6 +95,8 @@ class Result:
     joined_now: tuple[uuid.UUID, ...] = ()
     changed: tuple[uuid.UUID, ...] = ()
     cancelled: tuple[uuid.UUID, ...] = ()
+    # The confirmation to send once the result is committed (None: nobody may get one).
+    notice: confirm.Notice | None = None
 
 
 @dataclass
@@ -236,6 +240,7 @@ def load_group(tx: Tx, org_id: uuid.UUID, uid_norm: str) -> events.GroupState:
                 occurrence_key=m.occurrence_key,  # type: ignore[arg-type]
                 status=m.status,
                 scheduled_start=m.scheduled_start,
+                scheduled_end=m.scheduled_end,
                 skipped=m.skipped_at is not None,
                 # A deleted meeting is never brought back.
                 end_reason=None if m.deleted_at is not None else m.end_reason,
@@ -295,6 +300,7 @@ def write_plan(
             invite_event_id=new.invite_event_id,
             occurrence_key=new.occurrence_key,
             scheduled_start=new.scheduled_start,
+            scheduled_end=new.scheduled_end,
             requested_by=new.requested_by,
             team_id=new.team_id,
             join_url=new.join_url,
@@ -303,6 +309,36 @@ def write_plan(
             language=language,
             now=now,
         )
+
+
+def _occurrences(
+    tx: Tx, org_id: uuid.UUID, plans: list[events.Plan], outcome: str
+) -> tuple[confirm.Occurrence, ...]:
+    """The meetings the message's outcome is about, after the writes, soonest first (a meeting
+    joined now is shown at its own start)."""
+    ids = [
+        meeting_id
+        for plan in plans
+        if plan.outcome == outcome
+        for meeting_id in (
+            *(c.id for c in plan.creates), *(c.id for c in plan.changes), *plan.cancels
+        )
+    ]
+    if not ids:
+        return ()
+    rows = tx.execute(
+        select(Meeting.scheduled_start, Meeting.occurrence_key, Meeting.skipped_at)
+        .where(Meeting.org_id == org_id, Meeting.id.in_(ids), Meeting.scheduled_start.is_not(None))
+        .order_by(Meeting.scheduled_start, Meeting.id)
+    ).all()
+    return tuple(
+        confirm.Occurrence(
+            start=(r.occurrence_key or r.scheduled_start)
+            if outcome == "joined_now" else r.scheduled_start,
+            skipped=r.skipped_at is not None,
+        )
+        for r in rows
+    )
 
 
 def may_create(mode: str, auto_forwarded: bool) -> tuple[bool, str | None]:
@@ -340,6 +376,7 @@ class Processor:
         clock: Callable[[], datetime] = utcnow,
         horizon: timedelta = HORIZON,
         batch: int = BATCH,
+        confirmer: confirm.Confirmer | None = None,
     ) -> None:
         self.engine = engine
         self.settings = settings
@@ -348,6 +385,7 @@ class Processor:
         self.clock = clock
         self.horizon = horizon
         self.batch = batch
+        self.confirmer = confirmer
 
     # ── one message ──
 
@@ -362,7 +400,7 @@ class Processor:
             with transaction(self.engine) as tx:
                 if not _finish(tx, row.id, recorded):
                     raise LeaseLost(str(row.id))
-            return self._result(row, recorded)
+            return self._result(row, recorded, self._notice(row, recorded))
         except LeaseLost:
             log.warning("inbound %s: no longer in processing; result dropped", row.id)
             return Result(row.id, "lost")
@@ -464,11 +502,56 @@ class Processor:
             recorded.quarantine_reason = reason if outcome == "quarantined" else None
             recorded.ignore_reason = reason if outcome == "ignored" else None
             recorded.plans = plans
+            notice = self._notice(
+                row, recorded, parsed, _occurrences(tx, org_id, plans, outcome)
+            )
             if not _finish(tx, row.id, recorded):
                 raise LeaseLost(str(row.id))
-        return self._result(row, recorded)
+        return self._result(row, recorded, notice)
 
-    def _result(self, row: Claimed, recorded: _Recorded) -> Result:
+    def _notice(
+        self,
+        row: Claimed,
+        recorded: _Recorded,
+        parsed: list[ParsedEvent] | None = None,
+        occurrences: tuple[confirm.Occurrence, ...] = (),
+    ) -> confirm.Notice | None:
+        """The confirmation for `recorded`, or None when its sender may not get one."""
+        if recorded.sender is None or not confirm.may_confirm(
+            row.raw,
+            mail_from=row.mail_from,
+            sender=recorded.sender,
+            sender_auth=recorded.sender_auth,
+            user_id=recorded.user_id,
+            notetakers=self.settings.intake_addresses,
+        ):
+            return None
+        events_ = parsed or []
+        first = events_[0] if events_ else None
+        zone = first.zone if first is not None else None
+        tz, zone_name = confirm.zone_for(
+            None if zone is None else zone.name,
+            None if zone is None else zone.tzinfo,
+            self.settings.default_timezone,
+        )
+        return confirm.Notice(
+            to=recorded.sender,
+            outcome=recorded.outcome,
+            reason=recorded.quarantine_reason or recorded.ignore_reason,
+            title=(first.summary if first is not None else None) or recorded.subject or "",
+            platform=next((e.platform for e in events_ if e.platform), None),
+            zone=tz,
+            zone_name=zone_name,
+            occurrences=occurrences,
+            recurring=any(
+                e.recurrence_id is None and bool(e.rrule or e.rdates) for e in events_
+            ),
+            forwarded_copy=any(e.is_forwarded_copy for e in events_),
+        )
+
+    def _result(
+        self, row: Claimed, recorded: _Recorded, notice: confirm.Notice | None = None
+    ) -> Result:
         applied = [p for p in recorded.plans if p.outcome not in ("ignored", "quarantined")]
         return Result(
             inbound_id=row.id,
@@ -482,6 +565,7 @@ class Processor:
             joined_now=tuple(c.id for p in applied for c in p.creates if c.joined_now),
             changed=tuple(c.id for p in applied for c in p.changes),
             cancelled=tuple(m for p in applied for m in p.cancels),
+            notice=notice,
         )
 
     # ── the loop ──
@@ -489,10 +573,21 @@ class Processor:
     def run_once(self) -> list[Result]:
         return [self.process(row) for row in claim(self.engine, self.batch)]
 
+    async def confirm(self, results: list[Result]) -> int:
+        """Send the confirmations of committed results; returns how many the relay took."""
+        if self.confirmer is None:
+            return 0
+        sent = 0
+        for result in results:
+            if result.notice is not None and await self.confirmer.send(result.notice):
+                sent += 1
+        return sent
+
     async def run(self, every: float = TICK_S) -> None:
         while True:
             try:
                 results = await asyncio.to_thread(self.run_once)
+                await self.confirm(results)
                 if results:
                     log.info(
                         "inbound mail: %s",
