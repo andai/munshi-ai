@@ -40,7 +40,7 @@ from icalendar import Calendar
 from icalendar.cal.component import Component
 
 from andai_intake.invite import forward, links, mime
-from andai_intake.invite.tz import Zone, ZoneResolver, reset_icalendar_cache
+from andai_intake.invite.tz import Zone, ZoneResolver, reset_icalendar_cache, vtimezone_tzinfo
 
 MAX_VEVENTS = 200
 MAX_ATTENDEES = 500
@@ -382,6 +382,20 @@ def _calendars(text: str) -> list[Component]:
         return list(Calendar.from_ical(text, multiple=True))
     except Exception as exc:  # noqa: BLE001 - icalendar raises many types on bad input
         raise InviteParseError("unreadable calendar") from exc
+
+
+def stored_vtimezone(text: str) -> Any:
+    """The tzinfo of a VTIMEZONE text kept on a `Zone` (a stored series expanded again after its
+    message was purged). Raises ValueError for text that is not a readable VTIMEZONE."""
+    with _parse_lock:
+        try:
+            return vtimezone_tzinfo(text)
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - icalendar raises many types on bad input
+            raise ValueError("unreadable VTIMEZONE") from exc
+        finally:
+            reset_icalendar_cache()
 
 
 def parse(

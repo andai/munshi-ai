@@ -26,7 +26,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import ColumnElement, and_, exists, or_, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select, true
 from sqlalchemy.orm import Session as Tx
 from sqlalchemy.orm import aliased
 
@@ -87,6 +87,15 @@ def accessible(actor: Actor) -> ColumnElement[bool]:
         in_org,
         or_(Meeting.requested_by == actor.user_id, _leads_team(actor), shared_with(actor)),
     )
+
+
+def may_share(actor: Actor) -> ColumnElement[bool]:
+    """`can_share` as a condition on `Meeting` (the meeting list computes it per row in its own
+    query): admins and owners, the requester and a lead of the meeting's team. Combine it with
+    `accessible(actor)`, which it does not repeat."""
+    if actor.is_admin:
+        return true()
+    return or_(Meeting.requested_by == actor.user_id, _leads_team(actor))
 
 
 def _leads(tx: Tx, actor: Actor, meeting: Meeting) -> bool:
@@ -186,6 +195,7 @@ __all__ = [
     "can_read",
     "can_share",
     "can_stop",
+    "may_share",
     "permissions",
     "share_grants",
     "shared_with",

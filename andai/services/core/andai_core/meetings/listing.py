@@ -8,8 +8,9 @@ leaves the list in the transaction that deletes it.
 * Sections, by andai status: `live` (dispatching, awaiting admission, recording, processing),
   `upcoming` (scheduled) and `past` (done, failed, cancelled). Without `section` the answer holds
   all three, each capped at `limit`; with it, only that one.
-* Order: newest first by `coalesce(started_at, created_at)`, the meeting id breaking ties, read
-  through the `(org_id, status, sort time DESC, id DESC)` index.
+* Order: Live and Past newest first by `coalesce(started_at, created_at)`, the meeting id breaking
+  ties, read through the `(org_id, status, sort time DESC, id DESC)` index; Upcoming soonest first
+  by `coalesce(scheduled_start, created_at)`, then id, through `ix_meetings_org_id_upcoming`.
 * `filter`: `all` (default), `mine` (requested by the caller), `shared` (reaching the caller
   through a share, not their own) or `team:<id>` (that team's meetings among those readable).
 * `limit`: 1–50, default 25. Pages are keyset pages: `next_cursor` is an opaque token holding the
@@ -19,8 +20,10 @@ leaves the list in the transaction that deletes it.
 
 Each item: id, title (may be null), platform, status, failure and end reasons, team `{id, name}`
 (or null), the requester's id and display name, start, end and creation times, `duration_s`,
-`shared` (the meeting reaches the caller through a share) and `has_minutes` (a version of its
-minutes exists, `mom.py`).
+`shared` (the meeting reaches the caller through a share), `has_minutes` (a version of its
+minutes exists, `mom.py`), `source`, `scheduled_start` (a meeting scheduled from an invite),
+`skipped` and `permissions.can_share` (whether the caller may share it, and so skip it while it is
+scheduled; `access.may_share`, computed in the same query, never one query per row).
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from sqlalchemy import ColumnElement, Select, and_, exists, func, literal, selec
 from sqlalchemy.orm import Session as Tx
 
 from andai_core.db.models import Meeting, MomDocument, Team, User
-from andai_core.meetings.access import Actor, accessible, shared_with
+from andai_core.meetings.access import Actor, accessible, may_share, shared_with
 from andai_core.meetings.service import MeetingError
 
 SECTIONS: dict[str, tuple[str, ...]] = {
@@ -49,6 +52,13 @@ MAX_LIMIT = 50
 MAX_CURSOR_CHARS = 512
 
 SORT_TIME = func.coalesce(Meeting.started_at, Meeting.created_at)
+UPCOMING_TIME = func.coalesce(Meeting.scheduled_start, Meeting.created_at)
+# Sections read soonest first; the others newest first.
+ASCENDING = frozenset({"upcoming"})
+
+
+def sort_time(section: str):
+    return UPCOMING_TIME if section in ASCENDING else SORT_TIME
 
 BAD_FILTER = MeetingError(422, "bad_filter", "filter is all, mine, shared or team:<team id>")
 BAD_CURSOR = MeetingError(422, "bad_cursor", "this cursor is not valid for this list")
@@ -126,14 +136,19 @@ def _filtered(actor: Actor, filter_: str) -> ColumnElement[bool] | None:
 def query(
     actor: Actor, section: str, filter_: str, limit: int, after: Position | None
 ) -> Select:
-    """One section's rows readable by `actor`, newest first, at most `limit`, after `after`."""
+    """One section's rows readable by `actor`, in the section's order, at most `limit`, after
+    `after`."""
     conditions = [accessible(actor), Meeting.status.in_(SECTIONS[section])]
     narrowed = _filtered(actor, filter_)
     if narrowed is not None:
         conditions.append(narrowed)
+    when = sort_time(section)
+    ascending = section in ASCENDING
     if after is not None:
         last = tuple_(literal(after.sort_time), literal(after.meeting_id))
-        conditions.append(tuple_(SORT_TIME, Meeting.id) < last)
+        key = tuple_(when, Meeting.id)
+        conditions.append(key > last if ascending else key < last)
+    order = (when.asc(), Meeting.id.asc()) if ascending else (when.desc(), Meeting.id.desc())
     return (
         select(
             Meeting,
@@ -143,12 +158,13 @@ def query(
             exists()
             .where(MomDocument.meeting_id == Meeting.id, MomDocument.org_id == Meeting.org_id)
             .label("has_minutes"),
-            SORT_TIME.label("sort_time"),
+            may_share(actor).label("can_share"),
+            when.label("sort_time"),
         )
         .join(User, User.id == Meeting.requested_by)
         .outerjoin(Team, and_(Team.id == Meeting.team_id, Team.org_id == Meeting.org_id))
         .where(*conditions)
-        .order_by(SORT_TIME.desc(), Meeting.id.desc())
+        .order_by(*order)
         .limit(limit)
     )
 
@@ -163,6 +179,7 @@ def item(
     requester_name: str,
     shared: bool,
     has_minutes: bool,
+    can_share: bool = False,
 ) -> dict:
     duration = None
     if meeting.started_at is not None and meeting.ended_at is not None:
@@ -187,6 +204,10 @@ def item(
         "duration_s": duration,
         "shared": bool(shared),
         "has_minutes": bool(has_minutes),
+        "source": meeting.source,
+        "scheduled_start": _iso(meeting.scheduled_start),
+        "skipped": meeting.skipped_at is not None,
+        "permissions": {"can_share": bool(can_share)},
     }
 
 
@@ -200,7 +221,10 @@ def _page(tx: Tx, actor: Actor, section: str, filter_: str, limit: int, after: P
         next_cursor = encode_cursor(Position(section, filter_, last.sort_time, last.Meeting.id))
     return {
         "items": [
-            item(row.Meeting, row.team_name, row.requester_name, row.shared, row.has_minutes)
+            item(
+                row.Meeting, row.team_name, row.requester_name, row.shared, row.has_minutes,
+                row.can_share,
+            )
             for row in rows
         ],
         "next_cursor": next_cursor,

@@ -197,6 +197,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
             "platform_webhook_events",
             "inbound_mail",
             "bot_settings",
+            "invite_events",
         }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
@@ -236,6 +237,7 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
             "platform_webhook_events",
             "inbound_mail",
             "bot_settings",
+            "invite_events",
         }
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
@@ -291,6 +293,7 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
             "platform_webhook_events",
             "inbound_mail",
             "bot_settings",
+            "invite_events",
         }
         assert _search_state(engine) == (set(), False, False)
 
@@ -353,6 +356,7 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
             "platform_webhook_events",
             "inbound_mail",
             "bot_settings",
+            "invite_events",
         }
         present, functions, selectable, updatable, body_0008 = _deletion_state(engine)
         assert (present, functions, selectable, updatable) == (False, 0, set(), set())
@@ -1118,7 +1122,160 @@ def test_bot_settings_downgrade_to_0013_and_upgrade_again(migrated: Postgres) ->
         assert _sender_lookup_state(engine)[0] == 2  # 0013 untouched
 
         command.upgrade(config, "head")
-        assert _revision(engine) == "0014"
+        assert _revision(engine) == "0015"
         assert _bot_settings_state(engine) == at_head
     finally:
         engine.dispose()
+
+
+# ─── 0015: invite events and scheduled meetings ───────────────────────────────────────────────────
+
+SCHEDULING_COLUMNS = {
+    "scheduled_start",
+    "invite_event_id",
+    "occurrence_key",
+    "skipped_at",
+    "skipped_by",
+}
+
+
+def _invite_state(engine: Engine) -> tuple:
+    """(invite_events present, (RLS on, forced), policies, NULLS NOT DISTINCT on the event key,
+    scheduling columns on meetings, the live-link index predicate, the series function's owner)."""
+    with engine.connect() as conn:
+        flags = conn.execute(
+            text(
+                "SELECT relrowsecurity, relforcerowsecurity FROM pg_class"
+                " WHERE relname = 'invite_events' AND relkind = 'r'"
+            )
+        ).one_or_none()
+        policies = set(
+            conn.execute(
+                text("SELECT policyname FROM pg_policies WHERE tablename = 'invite_events'")
+            ).scalars()
+        )
+        nulls_not_distinct = conn.execute(
+            text(
+                "SELECT i.indnullsnotdistinct FROM pg_index i"
+                " JOIN pg_class c ON c.oid = i.indexrelid"
+                " WHERE c.relname = 'uq_invite_events_org_id_uid_norm_recurrence_id'"
+            )
+        ).scalar_one_or_none()
+        live = conn.execute(
+            text(
+                "SELECT pg_get_expr(i.indpred, i.indrelid) FROM pg_index i"
+                " JOIN pg_class c ON c.oid = i.indexrelid"
+                " WHERE c.relname = 'uq_meetings_live_join_url_key'"
+            )
+        ).scalar_one()
+        owner = conn.execute(
+            text(
+                "SELECT pg_get_userbyid(proowner) FROM pg_proc"
+                " WHERE proname = 'andai_invite_series_orgs'"
+            )
+        ).scalar_one_or_none()
+    return (
+        "invite_events" in _tables(engine),
+        tuple(flags) if flags is not None else (),
+        policies,
+        bool(nulls_not_distinct),
+        SCHEDULING_COLUMNS & _meeting_columns(engine),
+        "'scheduled'" in live,
+        owner,
+    )
+
+
+def test_invite_events_downgrade_to_0014_and_upgrade_again(
+    migrated: Postgres, app_engine: Engine, superuser_engine: Engine
+) -> None:
+    import uuid
+    from datetime import UTC, datetime
+
+    from andai_core.db.models import InviteEvent, Meeting
+    from andai_core.db.session import transaction
+    from conftest import bootstrap_org, new_user
+
+    at_head = (
+        True,
+        (True, True),
+        {"org_isolation", "scan_read"},
+        True,
+        SCHEDULING_COLUMNS,
+        True,
+        "andai_scan",
+    )
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    # A scheduled meeting from an invite, and one live meeting of the same link.
+    user = new_user(app_engine)
+    org = bootstrap_org(app_engine, user)
+    event_id, scheduled_id, live_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    start = datetime(2030, 1, 7, 9, 0, tzinfo=UTC)
+    with transaction(app_engine, org_id=org) as tx:
+        tx.add(
+            InviteEvent(
+                id=event_id, org_id=org, uid_norm="mig-0015@example.test", sequence=0,
+                state="active", requested_by=user,
+            )
+        )
+        tx.flush()
+        for meeting_id, status in ((scheduled_id, "scheduled"), (live_id, "recording")):
+            tx.add(
+                Meeting(
+                    id=meeting_id, org_id=org, requested_by=user, platform="zoom",
+                    join_url="https://zoom.us/j/150015", join_url_key="zoom.us/j/150015",
+                    status=status,
+                    invite_event_id=event_id if status == "scheduled" else None,
+                    occurrence_key=start if status == "scheduled" else None,
+                    scheduled_start=start if status == "scheduled" else None,
+                )
+            )
+    try:
+        assert _invite_state(engine) == at_head
+
+        command.downgrade(config, "0014")
+        assert _revision(engine) == "0014"
+        assert _invite_state(engine) == (False, (), set(), False, set(), False, None)
+        assert _bot_settings_state(engine)[0] is True  # 0014 untouched
+        with engine.connect() as conn:
+            statuses = dict(
+                conn.execute(
+                    text("SELECT id, status FROM meetings WHERE id IN (:a, :b)"),
+                    {"a": scheduled_id, "b": live_id},
+                ).all()
+            )
+        assert statuses == {scheduled_id: "cancelled", live_id: "recording"}
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == "0015"
+        assert _invite_state(engine) == at_head
+    finally:
+        engine.dispose()
+        with superuser_engine.begin() as conn:
+            conn.execute(text("DELETE FROM meetings WHERE org_id = :o"), {"o": org})
+
+
+def test_invite_series_function_belongs_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT p.prosecdef, pg_get_userbyid(p.proowner), p.proconfig,"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = 'andai_invite_series_orgs'"
+                )
+            ).one()
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.column_privileges"
+                        " WHERE grantee = 'andai_scan' AND table_name = 'invite_events'"
+                    )
+                ).scalars()
+            )
+    finally:
+        engine.dispose()
+    assert tuple(row) == (True, "andai_scan", ["search_path=public, pg_temp"], False, True)
+    assert columns == {"org_id", "state", "recurring"}

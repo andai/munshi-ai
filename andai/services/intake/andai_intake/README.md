@@ -2,10 +2,17 @@
 
 Python package of the andai-intake service.
 
-- `main.py` — the FastAPI app (`/healthz`); its lifespan starts the SMTP receiver and the purge loop
-  when `ANDAI_DB_URL_APP` is set.
+- `main.py` — the FastAPI app (`/healthz`); its lifespan starts the SMTP receiver, the processor,
+  the horizon top-up and the purge loop when `ANDAI_DB_URL_APP` is set.
 - `settings.py` — andai-core's settings plus `ANDAI_INTAKE_*` (addresses, bind, size cap, retention,
-  DNS resolver and caps, ARC sealers, rate limits).
+  DNS resolver and caps, ARC sealers, rate limits, scheduling horizon).
+- `processor.py` — every stored message through the limits, the sender check, the sender, parsing,
+  `bot.autoJoin` and the state machine, its result recorded with `andai_finish_inbound` in the same
+  transaction as its meetings (see below).
+- `events.py` — the invite state machine, pure: one message against one (org, UID) group → event
+  rows, meetings to create, move or cancel, and the outcome.
+- `horizon.py` — the hourly top-up: occurrences of active recurring invites that come within the
+  horizon.
 - `smtp.py` — the aiosmtpd handler: recipient check (550), recipient cap (452), size cap (552), store
   then 250, 451 on any store failure.
 - `store.py` — `save()`: one `inbound_mail` row through `andai_store_inbound`, deduplicated on the
@@ -73,3 +80,32 @@ org, so a forged From cannot use up a member's quota. Excess mail is quarantined
 **DNS.** All lookups go to `ANDAI_INTAKE_DNS_RESOLVER`, or the container's resolver when that is
 empty. Each lookup is capped at `ANDAI_INTAKE_DNS_TIMEOUT_S` (3 s), and one message may make at
 most `ANDAI_INTAKE_DNS_MAX_QUERIES` (30) lookups within 20 seconds.
+
+## From an invite to a scheduled meeting
+
+**Outcomes.** Every message ends with one SPEC `InboundInvite` outcome: `scheduled`, `updated`,
+`cancelled` or `joined_now` (status `done`), `quarantined` with a reason (`sender_unverified`,
+`unknown_user`, `rate_limited`, `parse_error`, `no_meeting_link`), or `ignored` with a reason:
+`method_not_handled` (REPLY, COUNTER, REFRESH, ADD, PUBLISH or no METHOD), `not_event_owner`,
+`stale`, `duplicate`, `ended`, `all_day`, `unsupported_recurrence`, `auto_join_off` or
+`auto_forwarded`. A message that keeps failing is quarantined `parse_error` after 5 attempts.
+
+**Events.** Invites are tracked per org by (normalised UID, RECURRENCE-ID) in `invite_events`, in RFC
+5546 order: a higher SEQUENCE wins, then a later DTSTAMP; an older or identical VEVENT changes
+nothing. REQUEST creates or updates; CANCEL without RECURRENCE-ID cancels the whole invite, with one
+cancels that occurrence. Once an invite is tracked, only its requester (the member whose mail
+created it) or a sender who is its ORGANIZER may change it.
+
+**Meetings.** One `scheduled` meeting (source `invite_mail`) per occurrence that starts within
+`ANDAI_INTAKE_HORIZON_DAYS` (14): requester = the verified sender, team = the sender's only team (else
+none), title = SUMMARY, `scheduled_start` in UTC, language = `ANDAI_DEFAULT_LANGUAGE`. An invite
+that has started but not ended gets a meeting due now (`joined_now`); one that has ended is
+ignored. Updates move a meeting, change its link or title, or cancel it — only while it is still
+`scheduled`; a skip set in the portal survives every update. The hourly top-up adds occurrences of
+recurring invites as they come within the horizon.
+
+**`bot.autoJoin` (D-57).** `off`: mail creates nothing (updates and cancellations of meetings
+already scheduled still apply). `only_when_invited`: an auto-forwarded copy (`Auto-Submitted:
+auto-forwarded`, an Exchange inbox rule, `X-Forwarded-For`/`-To`) creates nothing. `all_with_link`:
+those copies are scheduled too. The team override wins over the org value, as `effective_auto_join`
+resolves it when the mail is processed.

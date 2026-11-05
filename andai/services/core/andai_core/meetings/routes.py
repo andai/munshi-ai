@@ -44,6 +44,11 @@
   `DELETE /meetings/{id}/shares/{share_id}` — who the meeting is shared with, share it with a user
   or team of the org (201 new, 200 already shared), stop sharing (204). Requester, team lead,
   admins and owners; 404 for everyone else, grantees included (`shares.py`).
+* `POST /meetings/{id}/skip` and `DELETE /meetings/{id}/skip` — skip a meeting scheduled from an
+  invite, or take the skip back (`scheduled.py`): the bot will not (or will again) join it. 200
+  with the meeting. Requester, team lead, admins and owners (not grantees: 404); 409
+  `not_scheduled` once the meeting is no longer scheduled. Audited `meeting.skip` /
+  `meeting.unskip`.
 * `GET /action-items/unassigned?limit=&cursor=` — the action items owned by nobody in the latest
   minutes of the meetings the caller may read, newest meeting first, keyset-paginated
   (`action_items.py`). Any member; access filtered in SQL before the page limit.
@@ -64,7 +69,15 @@ from pydantic.alias_generators import to_camel
 from andai_core.auth.deps import Services, client_ip, get_services
 from andai_core.auth.roles import Caller, require_role
 from andai_core.db.session import transaction
-from andai_core.meetings import action_items, deletion, listing, mom, mom_edit, shares
+from andai_core.meetings import (
+    action_items,
+    deletion,
+    listing,
+    mom,
+    mom_edit,
+    scheduled,
+    shares,
+)
 from andai_core.meetings.live import open_stream
 from andai_core.meetings.service import Actor, MeetingError, Meetings
 from andai_core.meetings.transcript import read_transcript
@@ -193,6 +206,30 @@ async def stop(
     services: Services = Depends(get_services),
 ) -> dict:
     return await meetings(services).stop(actor(caller), meeting_id)
+
+
+@router.post("/meetings/{meeting_id}/skip")
+def skip_meeting(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+    ip: str | None = Depends(client_ip),
+) -> dict:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        return scheduled.skip(tx, who, meeting_id, now=services.clock(), ip=ip)
+
+
+@router.delete("/meetings/{meeting_id}/skip")
+def unskip_meeting(
+    meeting_id: uuid.UUID,
+    caller: Caller = Depends(require_role(*EVERYONE)),
+    services: Services = Depends(get_services),
+    ip: str | None = Depends(client_ip),
+) -> dict:
+    who = actor(caller)
+    with transaction(services.engine, org_id=who.org_id, user_id=who.user_id) as tx:
+        return scheduled.unskip(tx, who, meeting_id, now=services.clock(), ip=ip)
 
 
 @router.get("/meetings/{meeting_id}/transcript")

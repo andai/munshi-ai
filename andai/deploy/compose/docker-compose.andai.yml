@@ -190,7 +190,8 @@ services:
     # addresses only and stores each message in the andai database before answering 250. It
     # connects as the RLS-bound app role and writes inbound_mail only through the 0012 functions.
     # The SMTP port is published on 127.0.0.1 only: no public MX until the VM (D-54); captured mail
-    # is replayed into it (python -m andai_intake.replay).
+    # is replayed into it (python -m andai_intake.replay). Its processor turns verified members'
+    # invites into scheduled meetings, written as the sender's org.
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
       - ANDAI_ENV=${ANDAI_ENV:-dev}
@@ -210,6 +211,11 @@ services:
       - ANDAI_INTAKE_RATE_SENDER_PER_H=${ANDAI_INTAKE_RATE_SENDER_PER_H:-20}
       - ANDAI_INTAKE_RATE_ORG_PER_H=${ANDAI_INTAKE_RATE_ORG_PER_H:-200}
       - ANDAI_INTAKE_RATE_PEER_PER_H=${ANDAI_INTAKE_RATE_PEER_PER_H:-120}
+      # Scheduling (D-58): how far ahead an invite's occurrences get scheduled meetings, the zone a
+      # floating invite time is read in, and the language of meetings scheduled from mail.
+      - ANDAI_INTAKE_HORIZON_DAYS=${ANDAI_INTAKE_HORIZON_DAYS:-14}
+      - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
+      - ANDAI_DEFAULT_LANGUAGE=${ANDAI_DEFAULT_LANGUAGE:-en}
       - REDIS_URL=redis://redis:6379/1
     depends_on:
       postgres:
