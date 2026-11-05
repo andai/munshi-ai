@@ -8,11 +8,13 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /src
-# The whole uv workspace definition is needed to resolve the lock; only andai-intake is installed.
+# The whole uv workspace definition is needed to resolve the lock. andai-intake is installed with
+# its workspace dependency andai-core (settings, the RLS-bound database engine).
 COPY pyproject.toml uv.lock ./
 COPY services/core/pyproject.toml services/core/pyproject.toml
 COPY services/worker/pyproject.toml services/worker/pyproject.toml
 COPY services/intake/pyproject.toml services/intake/pyproject.toml
+COPY services/core/andai_core services/core/andai_core
 COPY services/intake/andai_intake services/intake/andai_intake
 RUN uv sync --frozen --no-dev --no-editable --package andai-intake
 
@@ -23,5 +25,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     ANDAI_VERSION=dev
 USER 10001
-EXPOSE 8000
+# 8000: health (HTTP); 2525: the SMTP receiver (ANDAI_INTAKE_SMTP_BIND).
+EXPOSE 8000 2525
 CMD ["python", "-m", "uvicorn", "andai_intake.main:app", "--host", "0.0.0.0", "--port", "8000"]

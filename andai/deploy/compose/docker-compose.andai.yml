@@ -186,10 +186,28 @@ services:
       dockerfile: services/intake/Dockerfile
     image: ghcr.io/andai/munshi-andai-intake:${IMAGE_TAG:-dev}
     pull_policy: never
+    # The notetaker mailbox (INV-01, D-4): an SMTP receiver that accepts mail for the notetaker
+    # addresses only and stores each message in the andai database before answering 250. It
+    # connects as the RLS-bound app role and writes inbound_mail only through the 0012 functions.
+    # The SMTP port is published on 127.0.0.1 only: no public MX until the VM (D-54); captured mail
+    # is replayed into it (python -m andai_intake.replay).
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
+      - ANDAI_ENV=${ANDAI_ENV:-dev}
+      - ANDAI_DB_URL_APP=postgresql+psycopg://andai_app:${ANDAI_DB_PASSWORD_APP?ANDAI_DB_PASSWORD_APP must be in the env file (gen-secrets.sh mints it)}@postgres:5432/andai
+      - ANDAI_INTAKE_ADDRESSES=${ANDAI_INTAKE_ADDRESSES:-}
+      - ANDAI_INTAKE_SMTP_BIND=0.0.0.0:2525
+      - ANDAI_INTAKE_MAX_BYTES=${ANDAI_INTAKE_MAX_BYTES:-10485760}
+      - ANDAI_INTAKE_RAW_RETENTION_DAYS=${ANDAI_INTAKE_RAW_RETENTION_DAYS:-7}
+      - ANDAI_INTAKE_ROW_RETENTION_DAYS=${ANDAI_INTAKE_ROW_RETENTION_DAYS:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      andai-core:
+        condition: service_healthy
     ports: !override
       - "127.0.0.1:${ANDAI_INTAKE_PORT:-18302}:8000"
+      - "127.0.0.1:${ANDAI_INTAKE_SMTP_PORT:-18325}:2525"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
       interval: 10s

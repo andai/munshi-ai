@@ -21,7 +21,7 @@
       "package": "psycopg",
       "license": "LGPL-3.0-only",
       "reason": "PostgreSQL driver (psycopg 3, with its psycopg-binary wheel) used by andai-core through SQLAlchemy. LGPL is weak copyleft; the library is used unmodified as a separately installed Python package loaded at runtime, never copied into or statically linked with munshi.ai source, so it qualifies as FINOS/ASF Category B.",
-      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv, where it stays replaceable by the user.",
+      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv (and the andai-worker and andai-intake virtualenvs, which carry andai-core's dependencies), where it stays replaceable by the user.",
       "scope": "andai/services/core (andai-core runtime dependency: psycopg, psycopg-binary)",
       "approved": "ADR-0004"
     },
@@ -29,7 +29,7 @@
       "package": "certifi",
       "license": "MPL-2.0",
       "reason": "Mozilla's CA certificate bundle, a required dependency of httpx, which andai-core uses to call the meeting platform's admin-api. MPL-2.0 is file-level weak copyleft; the package is used unmodified as a separately installed Python package (a data file plus a path lookup), never copied into munshi.ai source, so it qualifies as FINOS/ASF Category B.",
-      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv.",
+      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core image's virtualenv (and the andai-worker and andai-intake virtualenvs, which carry andai-core's dependencies).",
       "scope": "andai/services/core (andai-core runtime dependency via httpx)",
       "approved": "ADR-0004"
     },
@@ -45,7 +45,7 @@
       "package": "pyphen",
       "license": "GPL-2.0-or-later OR LGPL-2.1-or-later OR MPL-1.1",
       "reason": "Hyphenation library and dictionaries, a required dependency of WeasyPrint. It is tri-licensed and used under the LGPL-2.1-or-later / MPL-1.1 option: an unmodified, separately installed Python package loaded at runtime, never copied into munshi.ai source. That qualifies as FINOS/ASF Category B; the GPL option is not relied on.",
-      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core (and andai-worker, which carries andai-core's dependencies but never renders a PDF) virtualenv.",
+      "disposition": "Logged exception; installed unmodified from PyPI into the andai-core (and andai-worker and andai-intake, which carry andai-core's dependencies but never render a PDF) virtualenv.",
       "scope": "andai/services/core (andai-core runtime dependency via weasyprint)",
       "approved": "ADR-0004"
     }

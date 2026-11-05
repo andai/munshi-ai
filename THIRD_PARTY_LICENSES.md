@@ -99,3 +99,15 @@ The andai-core image's runtime stage installs these Debian bookworm packages for
 > The fonts are OFL-1.1 and Bitstream Vera, both Category A for fonts: they may be bundled and
 > redistributed with software provided they are not sold on their own, and their notices travel
 > with them in the image.
+
+## andai-intake: SMTP receiver
+
+andai-intake receives the notetaker mailbox's mail with aiosmtpd (`andai_intake.smtp`). The packages
+are pinned in `andai/uv.lock` and installed from PyPI into the andai-intake virtualenv, which also
+carries andai-core and its dependencies (listed above and in `license-exceptions.json`).
+
+| Package | Version | License | Why |
+| --- | --- | --- | --- |
+| `aiosmtpd` | `1.4.6` | Apache-2.0 | asyncio SMTP server (ships its own `NOTICE`) |
+| `atpublic` | `9.0.0` | Apache-2.0 | `@public` decorator (aiosmtpd) |
+| `attrs` | `26.1.0` | MIT | classes without boilerplate (aiosmtpd) |

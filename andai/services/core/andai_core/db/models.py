@@ -12,6 +12,10 @@ Two kinds of table:
 * System tables with no org and no customer data (no row-level security): `canary_runs` and
   `alert_state` (0005), written by andai-worker, and `platform_webhook_events` (0010), written by
   andai-core's platform webhook.
+* The notetaker mailbox's store, `inbound_mail` (0012): every message andai-intake accepted. A row has
+  no org until the intake attributes it; row-level security shows a row to the app role only under
+  its own `org_id`, so an unattributed row is visible to no org. andai-intake writes it only through
+  the 0012 functions.
 
 One org may carry `is_canary`: the org whose principal sends canary bots (`canary-setup`).
 
@@ -36,6 +40,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     PrimaryKeyConstraint,
     Text,
@@ -112,6 +117,19 @@ CANARY_OUTCOMES = ("success", "failure")
 ALERT_KINDS = ("canary_failures", "join_rate")
 ALERT_NOTICES = ("open", "recovery")
 
+# The notetaker mailbox (migration 0012; SPEC `InboundInvite`).
+INBOUND_STATUSES = ("received", "processing", "done", "quarantined", "ignored")
+INBOUND_OUTCOMES = ("scheduled", "updated", "cancelled", "joined_now", "quarantined", "ignored")
+QUARANTINE_REASONS = (
+    "sender_unverified",
+    "unknown_user",
+    "no_meeting_link",
+    "parse_error",
+    "rate_limited",
+)
+SENDER_AUTH = ("dmarc_pass", "arc_trusted", "fail")
+SUBJECT_TRIM_MAX = 120
+
 # Tables protected by row-level security on org_id (migration 0002).
 ORG_SCOPED_TABLES = (
     "orgs",
@@ -129,6 +147,8 @@ ORG_SCOPED_TABLES = (
     "meeting_removals",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
+# Row-level security on a nullable org_id: a row is visible to no org until it is attributed (0012).
+INTAKE_TABLES = ("inbound_mail",)
 # No org, no customer data, no row-level security (migrations 0005 and 0010).
 SYSTEM_TABLES = ("canary_runs", "alert_state", "platform_webhook_events")
 
@@ -782,3 +802,86 @@ class PlatformWebhookEvent(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class InboundMail(Base):
+    """One message the notetaker mailbox accepted (andai-intake, migration 0012): the raw bytes as
+    received (nulled by the 7-day purge), the SMTP envelope, peer address and HELO, and, once
+    processed, what came of it (SPEC `InboundInvite`). `org_id` stays NULL until the intake
+    attributes the message to an org; the whole row goes after 30 days."""
+
+    __tablename__ = "inbound_mail"
+    __table_args__ = (
+        CheckConstraint("raw_sha256 ~ '^[0-9a-f]{64}$'", name="raw_sha256"),
+        CheckConstraint(_in("status", INBOUND_STATUSES), name="status"),
+        CheckConstraint(f"outcome IS NULL OR {_in('outcome', INBOUND_OUTCOMES)}", name="outcome"),
+        CheckConstraint(
+            f"quarantine_reason IS NULL OR {_in('quarantine_reason', QUARANTINE_REASONS)}",
+            name="quarantine_reason",
+        ),
+        CheckConstraint(
+            f"sender_auth IS NULL OR {_in('sender_auth', SENDER_AUTH)}", name="sender_auth"
+        ),
+        CheckConstraint(
+            f"char_length(subject_trim) <= {SUBJECT_TRIM_MAX}", name="subject_trim_length"
+        ),
+        CheckConstraint(
+            "(status IN ('received', 'processing')) = (outcome IS NULL)", name="open_has_no_outcome"
+        ),
+        CheckConstraint(
+            "(status = 'quarantined') = (outcome IS NOT DISTINCT FROM 'quarantined')",
+            name="quarantined_outcome",
+        ),
+        CheckConstraint(
+            "(status = 'ignored') = (outcome IS NOT DISTINCT FROM 'ignored')",
+            name="ignored_outcome",
+        ),
+        CheckConstraint(
+            "(status = 'quarantined') = (quarantine_reason IS NOT NULL)",
+            name="quarantined_has_reason",
+        ),
+        CheckConstraint(
+            "ignore_reason IS NULL OR status = 'ignored'", name="ignore_reason_when_ignored"
+        ),
+        CheckConstraint(
+            "(status = 'processing') = (lease_until IS NOT NULL)", name="processing_has_lease"
+        ),
+        Index("ix_inbound_mail_raw_sha256_received_at", "raw_sha256", "received_at"),
+        Index("ix_inbound_mail_received_at", "received_at"),
+        Index(
+            "ix_inbound_mail_open",
+            "received_at",
+            postgresql_where=text("status IN ('received', 'processing')"),
+        ),
+        Index("ix_inbound_mail_org_id_status_received_at", "org_id", "status", "received_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    message_id: Mapped[str | None] = mapped_column(Text)
+    raw_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    raw: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    mail_from: Mapped[str] = mapped_column(Text, nullable=False)
+    rcpt_to: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    peer_ip: Mapped[str | None] = mapped_column(INET)
+    helo: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'received'"))
+    outcome: Mapped[str | None] = mapped_column(Text)
+    quarantine_reason: Mapped[str | None] = mapped_column(Text)
+    ignore_reason: Mapped[str | None] = mapped_column(Text)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE")
+    )
+    resolved_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    sender: Mapped[str | None] = mapped_column(Text)
+    sender_auth: Mapped[str | None] = mapped_column(Text)
+    auth_summary: Mapped[dict | None] = mapped_column(JSONB)
+    subject_trim: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
