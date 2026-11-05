@@ -87,11 +87,13 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   `start_scheduled` dispatches a due scheduled meeting (claimed by andai-worker through
   `andai_claim_scheduled`, migration 0016) as its requester (`requester_actor`) through the same
   checks and steps as a paste, on the existing row: a live meeting of the same link or a D-38
-  removal ends it `cancelled` with `end_reason` `already_in_meeting` / `removed_by_participant`,
-  one claimed once its occurrence is over (`scheduled_end`, or an hour after its start when the
-  end is unknown) ends `cancelled` with `meeting_ended` and sends nothing, a platform 422 fails it
-  `meeting_not_found`, no platform principal leaves it scheduled for the claim's backoff (`failed`
-  after 5 claims); a skipped meeting is never dispatched.
+  removal ends it `cancelled` with `end_reason` `already_in_meeting` / `removed_by_participant`, one
+  claimed once its occurrence is over (`scheduled_end`, or an hour after its start when the end is
+  unknown) ends `cancelled` with `meeting_ended` and sends nothing, a platform 422 fails it
+  `meeting_not_found`, an unreachable gateway, a timeout or a 5xx puts it back to `scheduled` for
+  the claim's backoff (failing it `internal_error` on the last claim or once the occurrence ended),
+  no platform principal leaves it scheduled for the claim's backoff (`failed` after 5 claims); a
+  skipped meeting is never dispatched.
   `drop_scheduled` cancels one whose requester is no longer an active member.
 - `deletion.py` — `request_delete` (requester, admins, owners; 409 `meeting_live` while the bot is
   in the meeting) hides the meeting and writes `meeting.delete` in one transaction; `purge`, run by

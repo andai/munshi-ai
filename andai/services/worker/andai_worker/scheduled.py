@@ -13,12 +13,12 @@ Every `ANDAI_SCHEDULED_TICK_S` seconds (default 15, at most 30), on any number o
    cancelled (`end_reason` `requester_inactive`).
 3. **Dispatch.** `Meetings.start_scheduled` as that requester: the paste-link path on the existing
    row (live duplicate and D-38 re-checked, settings snapshot, recording notice, platform key,
-   audit). A meeting whose occurrence is already over (claimed late, say after a worker outage)
-   ends `cancelled` with `meeting_ended` and no bot is sent. A refusal ends the meeting
-   `cancelled` or `failed` and is never retried; an org with no
-   platform principal leaves it scheduled until the lease runs out (30 s, doubling) and fails it
-   after 5 claims. A worker that dies mid-way leaves the meeting to the next claim once the lease
-   expires.
+   audit). A meeting whose occurrence is already over (claimed late, say after a worker outage) ends
+   `cancelled` with `meeting_ended` and no bot is sent. A gateway that cannot be reached, times out
+   or answers 5xx leaves it scheduled for the next claim after the backoff. A refusal ends the
+   meeting `cancelled` or `failed` and is never retried; an org with no platform principal leaves it
+   scheduled until the lease runs out (30 s, doubling) and fails it after 5 claims. A worker that
+   dies mid-way leaves the meeting to the next claim once the lease expires.
 
 The worker connects as `andai_app` and needs nothing beyond the claim function: every read and
 write of a meeting happens under that meeting's org. Links are never logged.

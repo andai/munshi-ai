@@ -27,6 +27,7 @@ from andai_core.meetings.service import (
     join_url_key,
     requester_actor,
 )
+from andai_core.platform.gateway_client import GatewayError
 from conftest import (
     Harness,
     RoleOrg,
@@ -311,6 +312,59 @@ def test_platform_capacity_fails_it_like_a_paste(world: World) -> None:
     world.harness.gateway.fail["dispatch"] = 429
     meeting_id = world.scheduled(zoom_link())
     assert world.start(meeting_id) == ScheduledStart("dispatched", "failed", "capacity_exhausted")
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_a_gateway_5xx_puts_it_back_for_the_claims_backoff(world: World, status: int) -> None:
+    world.harness.gateway.fail["dispatch"] = status
+    meeting_id = world.scheduled(zoom_link(), dispatch_attempts=2)
+
+    assert world.start(meeting_id) == ScheduledStart("retry", "scheduled", "gateway_unavailable")
+    row = world.row(meeting_id)
+    assert (row.status, row.failure_reason, row.ended_at) == ("scheduled", None, None)
+    assert row.dispatch_lease_until == world.now() + timedelta(seconds=60)  # 30 s doubled once
+
+    del world.harness.gateway.fail["dispatch"]
+    assert world.start(meeting_id) == ScheduledStart("dispatched", "dispatching", None)
+    assert len(world.harness.gateway.dispatches) == 1
+
+
+def test_a_timed_out_dispatch_whose_bot_started_is_found_again(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = world.meetings.gateway
+    sent = gateway.dispatch
+
+    async def times_out(key: str, body: dict) -> dict:
+        await sent(key, body)  # the platform starts the bot, but the answer never arrives
+        raise GatewayError("dispatch", None, "ReadTimeout")
+
+    monkeypatch.setattr(gateway, "dispatch", times_out)
+    meeting_id = world.scheduled(zoom_link(), dispatch_attempts=1)
+    assert world.start(meeting_id) == ScheduledStart("retry", "scheduled", "gateway_unavailable")
+    assert world.row(meeting_id).dispatch_lease_until == world.now() + timedelta(seconds=30)
+
+    monkeypatch.setattr(gateway, "dispatch", sent)
+    assert world.start(meeting_id) == ScheduledStart("dispatched", "dispatching", None)
+
+    [platform_id] = world.harness.gateway.meetings  # one bot, now held by the scheduled row
+    assert world.row(meeting_id).platform_meeting_id == platform_id
+
+
+def test_a_gateway_error_on_the_last_claim_fails_it(world: World) -> None:
+    world.harness.gateway.fail["dispatch"] = 503
+    meeting_id = world.scheduled(zoom_link(), dispatch_attempts=MAX_DISPATCH_ATTEMPTS)
+    assert world.start(meeting_id) == ScheduledStart("dispatched", "failed", "internal_error")
+    row = world.row(meeting_id)
+    assert (row.status, row.failure_reason) == ("failed", "internal_error")
+
+
+def test_a_pasted_link_still_fails_at_once_on_a_gateway_error(world: World) -> None:
+    world.harness.gateway.fail["dispatch"] = 503
+    pasted = sign_in(world.harness, world.org.member).post(JOIN, json={"join_url": zoom_link()})
+    assert (pasted.json()["status"], pasted.json()["failure_reason"]) == (
+        "failed", "internal_error"
+    )
 
 
 def test_no_principal_stays_due_for_the_backoff_then_fails(app_engine: Engine) -> None:
