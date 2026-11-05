@@ -931,3 +931,139 @@ def test_app_role_cannot_write_inbound_mail_or_read_its_raw_bytes(
         with pytest.raises(ProgrammingError, match="permission denied"):
             with transaction(app_engine) as tx:
                 tx.execute(text(statement))
+
+
+# ─── 0013: sender lookup for the notetaker mailbox ────────────────────────────────────────────────
+
+SENDER_FUNCTIONS = ("andai_resolve_sender", "andai_orgs_for_domain")
+# What andai_scan may SELECT on the identity tables at head: 0005 (orgs id, is_canary) and 0013.
+SENDER_SCAN_SELECT = {
+    "users": {"id", "email", "status"},
+    "org_memberships": {"org_id", "user_id"},
+    "team_memberships": {"team_id", "org_id", "user_id"},
+    "orgs": {"id", "is_canary", "allowed_email_domains"},
+}
+
+
+def _sender_lookup_state(engine: Engine) -> tuple[int, dict[str, set[str]], set[str]]:
+    """(functions, andai_scan SELECT columns per identity table, tables with a scan_read policy)."""
+    with engine.connect() as conn:
+        functions = conn.execute(
+            text("SELECT count(*) FROM pg_proc WHERE proname = ANY(:n)"),
+            {"n": list(SENDER_FUNCTIONS)},
+        ).scalar_one()
+        columns: dict[str, set[str]] = {table: set() for table in SENDER_SCAN_SELECT}
+        for table, column in conn.execute(
+            text(
+                "SELECT table_name, column_name FROM information_schema.column_privileges"
+                " WHERE grantee = 'andai_scan' AND privilege_type = 'SELECT'"
+                " AND table_name = ANY(:t)"
+            ),
+            {"t": list(SENDER_SCAN_SELECT)},
+        ):
+            columns[table].add(column)
+        policies = set(
+            conn.execute(
+                text(
+                    "SELECT tablename FROM pg_policies WHERE policyname = 'scan_read'"
+                    " AND tablename IN ('org_memberships', 'team_memberships')"
+                )
+            ).scalars()
+        )
+    return functions, columns, policies
+
+
+def test_sender_lookup_downgrade_to_0012_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    at_head = (2, SENDER_SCAN_SELECT, {"org_memberships", "team_memberships"})
+    try:
+        assert _sender_lookup_state(engine) == at_head
+
+        command.downgrade(config, "0012")
+        assert _revision(engine) == "0012"
+        assert _sender_lookup_state(engine) == (
+            0,
+            {"users": set(), "org_memberships": set(), "team_memberships": set(),
+             "orgs": {"id", "is_canary"}},
+            set(),
+        )
+        assert _inbound_state(engine) == (True, 5)  # 0012 untouched
+
+        command.upgrade(config, "head")
+        assert _sender_lookup_state(engine) == at_head
+    finally:
+        engine.dispose()
+
+
+def test_sender_lookup_functions_belong_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT p.proname, p.prosecdef, pg_get_userbyid(p.proowner), p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = ANY(:n)"
+                ),
+                {"n": list(SENDER_FUNCTIONS)},
+            ).all()
+    finally:
+        engine.dispose()
+    results = {row[0]: row[4] for row in rows}
+    assert results == {
+        "andai_resolve_sender": "TABLE(user_id uuid, org_id uuid, team_id uuid)",
+        "andai_orgs_for_domain": "SETOF uuid",
+    }
+    for name, definer, owner, config, _, public_may, app_may in rows:
+        assert (definer, owner, public_may, app_may) == (True, "andai_scan", False, True), name
+        assert config == ["search_path=public, pg_temp"], name
+
+
+def test_resolve_sender_returns_active_memberships_only(app_engine: Engine) -> None:
+    import uuid
+
+    from andai_core.db.models import Org, OrgMembership, Team, TeamMembership, User
+    from andai_core.db.session import transaction
+
+    domain = f"d{uuid.uuid4().hex[:12]}.example.test"
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    active, disabled = uuid.uuid4(), uuid.uuid4()
+    team_1, team_2 = uuid.uuid4(), uuid.uuid4()
+    with transaction(app_engine) as tx:
+        tx.add(User(id=active, email=f"a@{domain}", display_name="A", status="active"))
+        tx.add(User(id=disabled, email=f"d@{domain}", display_name="D", status="disabled"))
+    for org in (org_a, org_b):
+        with transaction(app_engine, org_id=org) as tx:
+            tx.add(Org(id=org, name=f"O {org.hex[:6]}", slug=f"o-{org.hex}",
+                       allowed_email_domains=[domain] if org == org_a else []))
+            tx.flush()
+            tx.add(OrgMembership(org_id=org, user_id=active, role="member"))
+            tx.add(OrgMembership(org_id=org, user_id=disabled, role="member"))
+    with transaction(app_engine, org_id=org_b) as tx:
+        tx.add(Team(id=team_1, org_id=org_b, name="T1"))
+        tx.add(Team(id=team_2, org_id=org_b, name="T2"))
+        tx.flush()
+        tx.add(TeamMembership(team_id=team_1, org_id=org_b, user_id=active, role="member"))
+
+    with transaction(app_engine) as tx:
+        rows = tx.execute(
+            text("SELECT * FROM andai_resolve_sender(:e)"), {"e": f" A@{domain.upper()} "}
+        ).all()
+        none = tx.execute(text("SELECT * FROM andai_resolve_sender(:e)"), {"e": f"d@{domain}"}).all()
+        orgs = list(
+            tx.execute(text("SELECT andai_orgs_for_domain(:d)"), {"d": domain.upper()}).scalars()
+        )
+    assert {(r.user_id, r.org_id, r.team_id) for r in rows} == {
+        (active, org_a, None), (active, org_b, team_1)
+    }
+    assert none == []
+    assert orgs == [org_a]
+
+    with transaction(app_engine, org_id=org_b) as tx:  # a second team: no team
+        tx.add(TeamMembership(team_id=team_2, org_id=org_b, user_id=active, role="member"))
+    with transaction(app_engine) as tx:
+        rows = tx.execute(text("SELECT * FROM andai_resolve_sender(:e)"), {"e": f"a@{domain}"}).all()
+    assert {(r.org_id, r.team_id) for r in rows} == {(org_a, None), (org_b, None)}
