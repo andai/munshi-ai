@@ -250,6 +250,29 @@ services:
     networks: [munshi]
     restart: unless-stopped
 
+  # e2e only (COMPOSE_PROFILES=e2e): a stub DNS server (andai_intake.testing.fake_dns) that answers
+  # the sender check's TXT/A lookups from a zone file inside this container, which the e2e suite
+  # writes as it signs its synthetic invites (andai_intake.testing.sign, run here). It shares
+  # andai-intake's network namespace and listens on 127.0.0.1:5353 only, so the e2e env file sets
+  # ANDAI_INTAKE_DNS_RESOLVER=127.0.0.1:5353. Never started by the default stack; not published.
+  fake-dns:
+    image: ghcr.io/andai/munshi-andai-intake:${IMAGE_TAG:-dev}
+    pull_policy: never
+    profiles: [e2e]
+    command: ["python", "-m", "andai_intake.testing.fake_dns", "--zone", "/tmp/fake-dns/zone.json", "--host", "127.0.0.1", "--port", "5353"]
+    network_mode: "service:andai-intake"
+    depends_on:
+      andai-intake:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-m", "andai_intake.testing.fake_dns", "--probe", "--host", "127.0.0.1", "--port", "5353"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    init: true
+    restart: unless-stopped
+
   andai-portal:
     build:
       context: ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/portal

@@ -8,7 +8,7 @@ build never moves the images another stack runs), runs `make up` with the mock b
 bot (`BROWSER_IMAGE=mock-bot:dev`) and bootstraps the first organisation through the portal;
 `global-teardown.ts` removes the stack with its volumes and the bot containers it started. Specs:
 `smoke` (sign in/out, dark theme), `auth` (invite, reset, rate limit), `admin` (teams, roles,
-disabling, 403, team lead), `twofa` (voluntary enrollment, lockout, recovery codes,
+disabling, 403, team lead), `intake` (below), `twofa` (voluntary enrollment, lockout, recovery codes,
 require-two-factor, admin reset), `meetings` (send the bot, live status and transcript, lobby
 instructions, failures, polling when the stream drops, a colleague's meeting, another organisation's
 404) and `dashboard` (the meeting list's sections, filters and Load more, the Unassigned action items
@@ -56,6 +56,22 @@ checks one version and one recap. Times come from andai's database (`pipelineRow
 `ANDAI_LLM_*` keys) recreates andai-core and andai-worker on that route for the chain alone
 (`useLlmRoute`; values never printed) and back on the fake route afterwards: use it only with the
 mock bot's synthetic lines and a route you are allowed to send them to.
+
+Invite intake runs on the e2e stack too: the `e2e` profile also starts `fake-dns`
+(`andai_intake.testing.fake_dns`), a stub DNS server in andai-intake's network namespace, so the env
+file must set `ANDAI_INTAKE_DNS_RESOLVER=127.0.0.1:5353` (setup refuses otherwise) and the sender
+check never asks a real resolver. `smtp.ts` builds a synthetic calendar invitation (`inviteMail`) and
+`deliver`s it inside the fake-dns container: `andai_intake.testing.sign` publishes the From domain's
+SPF and DMARC records and, when signed, its DKIM key, then `andai_intake.replay` sends it to
+andai-intake's receiver. `intake` covers, in an organisation of its own whose test domain it claims
+(`setOrgEmailDomains`): an admin setting auto-join for the organisation and a team on `/admin/bot`
+(a member gets the 403 page there and on `/admin/intake`); a forged invite and one from a non-member
+listed on `/admin/intake` with plain reasons and the sender check, and a forged invite naming
+another organisation's member not listed; a member's signed invite under Upcoming at its start in
+the viewer's zone (the page runs in America/New_York), the confirmation in Mailpit, Skip marking the
+row and un-skipping restoring it, and the mock bot joining two minutes before the start (the row
+moves to Live; about two minutes of real time per project); and with auto-join off, a new invite
+scheduling nothing, with a confirmation that says why.
 
 ```bash
 cd andai/portal

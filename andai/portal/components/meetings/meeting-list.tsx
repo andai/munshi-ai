@@ -14,13 +14,17 @@ import {
   meetingTitle,
   shortTime,
   whenText,
+  zonedWhenText,
 } from "@/components/meetings/display";
 import { StatusPill } from "@/components/meetings/status-badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { ApiError, sentence } from "@/lib/api";
 import {
   SECTIONS,
   listMeetings,
+  setSkipped,
   type ListFilter,
   type MeetingItem,
   type MeetingPage,
@@ -35,7 +39,9 @@ import { cn } from "@/lib/utils";
 // mount beyond that first page, and a filter change starts again from the first page (an answer
 // for an older filter is dropped). Under the `md` breakpoint the Past table becomes stacked rows.
 // `between` (the dashboard's Unassigned action items) sits between Upcoming and Past once the list
-// has loaded.
+// has loaded. An Upcoming row shows when the meeting starts in the viewer's time zone and, for
+// callers andai-core lets share the meeting, a Skip switch (POST/DELETE /meetings/{id}/skip) that
+// changes the row at once and puts it back if andai-core refuses; a skipped row is marked.
 
 type Pages = Record<Section, MeetingPage>;
 
@@ -124,6 +130,16 @@ export function MeetingList({ filter, between }: { filter: ListFilter; between?:
     return filter === "all" ? <NothingYet /> : <NothingMatches />;
   }
 
+  const patchItem = (section: Section, id: string, patch: Partial<MeetingItem>) =>
+    setPages((before) =>
+      before
+        ? {
+            ...before,
+            [section]: { ...before[section], items: before[section].items.map((i) => (i.id === id ? { ...i, ...patch } : i)) },
+          }
+        : before,
+    );
+
   const more = (section: Section): More => ({
     cursor: pages[section].next_cursor,
     loading: loadingMore === section,
@@ -134,7 +150,7 @@ export function MeetingList({ filter, between }: { filter: ListFilter; between?:
   return (
     <div className="mt-6 grid gap-10" data-testid="meeting-list">
       <LiveSection page={pages.live} more={more("live")} />
-      <UpcomingSection page={pages.upcoming} more={more("upcoming")} />
+      <UpcomingSection page={pages.upcoming} more={more("upcoming")} onSkipped={(id, skipped) => patchItem("upcoming", id, { skipped })} />
       {between}
       <PastSection page={pages.past} more={more("past")} />
     </div>
@@ -264,7 +280,15 @@ function LiveSection({ page, more }: { page: MeetingPage; more: More }) {
   );
 }
 
-function UpcomingSection({ page, more }: { page: MeetingPage; more: More }) {
+function UpcomingSection({
+  page,
+  more,
+  onSkipped,
+}: {
+  page: MeetingPage;
+  more: More;
+  onSkipped: (id: string, skipped: boolean) => void;
+}) {
   return (
     <section aria-labelledby="upcoming-heading" data-testid="section-upcoming">
       <SectionHeading id="upcoming-heading" section="upcoming" count={`${page.items.length}${plus(page)} scheduled`} />
@@ -273,30 +297,92 @@ function UpcomingSection({ page, more }: { page: MeetingPage; more: More }) {
       ) : (
         <ul className="divide-y divide-border rounded-2xl border border-border bg-card">
           {page.items.map((item) => (
-            <li
-              key={item.id}
-              data-testid="upcoming-row"
-              data-meeting-id={item.id}
-              className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
-            >
-              <span className="w-full text-sm font-medium tabular-nums sm:w-44">{whenText(sortTime(item))}</span>
-              <PlatformMark platform={item.platform} />
-              <div className="grid min-w-0 flex-1 gap-0.5">
-                <Link href={`/meetings/${item.id}`} className="font-semibold break-words hover:text-primary hover:underline" data-testid="meeting-row-title">
-                  {meetingTitle(item.title, item.platform, sortTime(item))}
-                </Link>
-                <span className="truncate text-xs text-muted-foreground">
-                  {[PLATFORM_NAME[item.platform], item.team?.name].filter(Boolean).join(" · ")}
-                </span>
-              </div>
-              <StatusPill status={item.status} />
-              <SharedTag item={item} />
-            </li>
+            <UpcomingRow key={item.id} item={item} onSkipped={(skipped) => onSkipped(item.id, skipped)} />
           ))}
         </ul>
       )}
       <LoadMore section="upcoming" more={more} />
     </section>
+  );
+}
+
+function UpcomingRow({ item, onSkipped }: { item: MeetingItem; onSkipped: (skipped: boolean) => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const start = item.scheduled_start ?? sortTime(item);
+  const title = meetingTitle(item.title, item.platform, start);
+  const canSkip = item.status === "scheduled" && item.permissions?.can_share === true;
+
+  async function toggle(skip: boolean) {
+    setPending(true);
+    setError(null);
+    onSkipped(skip); // shown at once; put back if andai-core refuses
+    try {
+      onSkipped((await setSkipped(item.id, skip)).skipped);
+    } catch (err) {
+      onSkipped(!skip);
+      setError(errorText(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <li
+      data-testid="upcoming-row"
+      data-meeting-id={item.id}
+      data-skipped={item.skipped ? "true" : "false"}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+    >
+      <span className={cn("w-full text-sm font-medium tabular-nums sm:w-52", item.skipped && "text-muted-foreground")} data-testid="upcoming-time">
+        {start && <time dateTime={start}>{zonedWhenText(start)}</time>}
+      </span>
+      <PlatformMark platform={item.platform} className={cn(item.skipped && "opacity-50")} />
+      <div className="grid min-w-0 flex-1 gap-0.5">
+        <Link
+          href={`/meetings/${item.id}`}
+          className={cn("font-semibold break-words hover:text-primary hover:underline", item.skipped && "text-muted-foreground")}
+          data-testid="meeting-row-title"
+        >
+          {title}
+        </Link>
+        <span className="truncate text-xs text-muted-foreground">
+          {[PLATFORM_NAME[item.platform], item.team?.name].filter(Boolean).join(" · ")}
+        </span>
+      </div>
+      <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status={item.status} />
+          {item.skipped && (
+            <span className="rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground" data-testid="skipped-tag">
+              Skipped · the bot will not join
+            </span>
+          )}
+          <SharedTag item={item} />
+        </div>
+        {canSkip && (
+          <div className="flex items-center gap-2">
+            <Switch
+              id={`skip-${item.id}`}
+              checked={item.skipped}
+              disabled={pending}
+              aria-busy={pending || undefined}
+              aria-label={`Skip ${title}`}
+              onCheckedChange={(checked) => void toggle(checked)}
+              data-testid="skip-switch"
+            />
+            <Label htmlFor={`skip-${item.id}`} className="font-normal">
+              Skip
+            </Label>
+          </div>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="w-full text-xs text-destructive" data-testid="skip-error">
+          {error}
+        </p>
+      )}
+    </li>
   );
 }
 

@@ -12,7 +12,10 @@
 //    OpenAI-compatible route, andai_core.testing.fake_llm) and andai-worker writes the minutes of
 //    every finished meeting through it; the env file must name it as the LLM route
 //    (`ANDAI_LLM_BASE_URL=http://fake-llm:8000`, no `/v1`, and an `ANDAI_LLM_MODEL`), so no test
-//    ever reaches a real model.
+//    ever reaches a real model. The same profile runs `fake-dns`, a stub DNS server inside
+//    andai-intake's network namespace that answers the sender check from the zone the specs write
+//    as they sign their synthetic invites (e2e/smtp.ts); the env file must point andai-intake at it
+//    (`ANDAI_INTAKE_DNS_RESOLVER=127.0.0.1:5353`), so no lookup leaves the stack.
 // 4. Bootstrap the first organisation through the portal (the only bootstrap in the suite), and
 //    set the owner's password in a browser from the emailed link.
 // 5. Hand the owner's credentials to the specs in a temporary file (E2E_OWNER_FILE).
@@ -34,12 +37,20 @@ const REPO_ROOT = resolve(__dirname, "../../..");
 export const MOCK_BOT_IMAGE = "mock-bot:dev";
 // The e2e profile's fake LLM, as andai-core and andai-worker reach it on the stack's network.
 export const FAKE_LLM_URL = "http://fake-llm:8000";
+// The e2e profile's stub DNS server, as andai-intake reaches it (it shares andai-intake's network).
+export const FAKE_DNS_RESOLVER = "127.0.0.1:5353";
 
-/** The env file's compose profiles plus `e2e`; refuses an env file whose LLM route is not the fake one. */
+/**
+ * The env file's compose profiles plus `e2e`; refuses an env file whose LLM route is not the fake
+ * one, or whose intake resolver is not the fake DNS server.
+ */
 function e2eProfiles(env: string): string {
   const values = parseEnvFile(env);
   if ((values.ANDAI_LLM_BASE_URL ?? "").replace(/\/+$/, "") !== FAKE_LLM_URL || !values.ANDAI_LLM_MODEL?.trim()) {
     throw new Error(`the e2e env file must set ANDAI_LLM_BASE_URL=${FAKE_LLM_URL} and an ANDAI_LLM_MODEL (see e2e/README.md)`);
+  }
+  if ((values.ANDAI_INTAKE_DNS_RESOLVER ?? "").trim() !== FAKE_DNS_RESOLVER) {
+    throw new Error(`the e2e env file must set ANDAI_INTAKE_DNS_RESOLVER=${FAKE_DNS_RESOLVER} (see e2e/README.md)`);
   }
   const profiles = new Set((values.COMPOSE_PROFILES ?? "").split(",").map((p) => p.trim()).filter(Boolean));
   profiles.add("e2e");

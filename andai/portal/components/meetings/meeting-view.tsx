@@ -344,7 +344,7 @@ export function MeetingView({ id }: { id: string }) {
       {stopError && <FormAlert>{stopError}</FormAlert>}
       {m.status === "failed" && <FailurePanel reason={m.failure_reason} />}
       {m.status === "awaiting_admission" && m.admit_instructions && <AdmitInstructions text={m.admit_instructions} />}
-      {m.status === "done" && ending && (
+      {(m.status === "done" || m.status === "cancelled") && ending && (
         <p className="text-sm text-muted-foreground" data-testid="meeting-ended">
           {ending}
         </p>

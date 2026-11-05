@@ -89,6 +89,12 @@ const END: Record<string, string> = {
   max_bot_time_exceeded: "The bot left when it reached the longest time it may stay.",
   stopped_with_no_audio: "The bot left because it heard no audio.",
   stopped_before_admission: "The bot was stopped before anyone let it in.",
+  // A meeting scheduled from an invitation that ended without the bot being sent.
+  already_in_meeting: "The bot was not sent again: it was already in this meeting for another request.",
+  removed_by_participant: "The bot was not sent: someone removed it from this meeting in the last 12 hours.",
+  invite_cancelled: "The invitation was cancelled, so the bot was not sent.",
+  requester_inactive: "The bot was not sent: the person who scheduled it is no longer an active member.",
+  meeting_ended: "The bot was not sent: the meeting was already over when it was due to join.",
 };
 
 export function endText(reason: string | null): string | null {
@@ -157,6 +163,21 @@ export function meetingTitle(title: string | null, platform: string, at: string 
 export function whenText(iso: string | null): string {
   const date = parsed(iso);
   return date ? whenFormat.format(date) : "";
+}
+
+const zonedWhenFormat = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
+
+/** `whenText` with the viewer's time zone, e.g. "Fri, 23 Oct, 11:00 GMT+5:30" (the browser's zone). */
+export function zonedWhenText(iso: string | null): string {
+  const date = parsed(iso);
+  return date ? zonedWhenFormat.format(date) : "";
 }
 
 const shortTimeFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });

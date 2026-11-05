@@ -28,6 +28,8 @@ Python package of the andai-intake service.
 - `sender.py` — `resolve()`: the member a From address belongs to, and `attribute_org()`: whose
   admins see a quarantined message (migration 0013 functions).
 - `limits.py` — per-sender, per-org and per-peer-IP hourly limits in Valkey.
+- `testing/` — test tooling only: the signing kit and the e2e stack's stub DNS server (`fake-dns`,
+  `e2e` compose profile).
 - `invite/` — invite parsing: MIME, ICS fields, time zones, recurrence, join links and the forward
   flags, offline and bounded (see `invite/README.md`).
 
