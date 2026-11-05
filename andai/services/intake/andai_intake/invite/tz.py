@@ -42,6 +42,7 @@ from icalendar.timezone.zoneinfo import ZONEINFO
 VALIDATE_DAYS_BEFORE = 30
 VALIDATE_DAYS_AFTER = 400
 VTIMEZONE_CACHE_SIZE = 64
+VTIMEZONE_TEXT_MAX = 16 * 1024
 
 _PROVIDER = ZONEINFO()
 _vtz_cache: OrderedDict[bytes, tzinfo] = OrderedDict()
@@ -55,6 +56,7 @@ class Zone:
     source: str  # utc | iana | windows | global | vtimezone | default
     assumed: bool = False  # floating value or unknown TZID read in the default zone
     mismatch: bool = False  # the VTIMEZONE disagreed with the mapped IANA zone
+    vtimezone: str | None = None  # the VTIMEZONE's own text when its offsets are used
 
 
 UTC_ZONE = Zone(UTC, "UTC", "utc")
@@ -102,6 +104,22 @@ def _vtimezone_tz(component: Timezone) -> tuple[tzinfo, str]:
     return built, digest.hex()[:12]
 
 
+def _text(component: Timezone) -> str | None:
+    """The VTIMEZONE as iCalendar text, kept so a stored series can be expanded again after the
+    message is purged; None above `VTIMEZONE_TEXT_MAX`."""
+    text = component.to_ical().decode("utf-8", "replace")
+    return text if len(text) <= VTIMEZONE_TEXT_MAX else None
+
+
+def vtimezone_tzinfo(text: str) -> tzinfo:
+    """The tzinfo of a VTIMEZONE kept by `Zone.vtimezone` (cached by content hash like any other).
+    The caller holds the parse lock and empties icalendar's cache afterwards (`ics.stored_zone`)."""
+    component = Timezone.from_ical(text)
+    if not isinstance(component, Timezone):
+        raise ValueError("not a VTIMEZONE")
+    return _vtimezone_tz(component)[0]
+
+
 def _agree(a: tzinfo, b: tzinfo, near: datetime) -> bool:
     wall = near.replace(tzinfo=None)
     for day in range(-VALIDATE_DAYS_BEFORE, VALIDATE_DAYS_AFTER + 1):
@@ -147,9 +165,12 @@ class ZoneResolver:
                 if near is None or _agree(candidate, own, near):
                     result = Zone(candidate, mapped[0], mapped[1])
                 else:
-                    result = Zone(own, f"vtimezone:{digest}", "vtimezone", mismatch=True)
+                    result = Zone(
+                        own, f"vtimezone:{digest}", "vtimezone", mismatch=True,
+                        vtimezone=_text(component),
+                    )
             elif own is not None:
-                result = Zone(own, f"vtimezone:{digest}", "vtimezone")
+                result = Zone(own, f"vtimezone:{digest}", "vtimezone", vtimezone=_text(component))
             elif candidate is not None and mapped is not None:
                 result = Zone(candidate, mapped[0], mapped[1])
             else:

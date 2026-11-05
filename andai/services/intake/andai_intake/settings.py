@@ -20,6 +20,13 @@ Sender verification (D-56, `andai_intake.auth`):
 * `ANDAI_INTAKE_ARC_SEALERS` — comma-separated ARC sealer domains whose hop may vouch for a DMARC
   pass. It ships empty; a change needs the CTO.
 
+Scheduling (D-58, `andai_intake.processor`, `andai_intake.horizon`):
+
+* `ANDAI_INTAKE_HORIZON_DAYS` — how far ahead an invite's occurrences get scheduled meetings
+  (default 14); the hourly top-up adds the rest as they come within it.
+* `ANDAI_DEFAULT_TIMEZONE` (a floating invite time is read in it) and `ANDAI_DEFAULT_LANGUAGE` (the
+  meeting's language) come from andai-core's settings.
+
 Rate limits (D-58, `andai_intake.limits`), per sliding hour:
 
 * `ANDAI_INTAKE_RATE_SENDER_PER_H` (20) and `ANDAI_INTAKE_RATE_ORG_PER_H` (200) count verified mail
@@ -28,6 +35,7 @@ Rate limits (D-58, `andai_intake.limits`), per sliding hour:
 
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import lru_cache
 
 from pydantic import Field, field_validator, model_validator
@@ -66,6 +74,9 @@ class IntakeSettings(Settings):
     )
     intake_rate_peer_per_h: int = Field(
         default=120, ge=1, validation_alias="ANDAI_INTAKE_RATE_PEER_PER_H"
+    )
+    intake_horizon_days: int = Field(
+        default=14, ge=1, le=60, validation_alias="ANDAI_INTAKE_HORIZON_DAYS"
     )
 
     @field_validator("intake_dns_resolver")
@@ -111,6 +122,10 @@ class IntakeSettings(Settings):
         return frozenset(
             d.strip().rstrip(".").lower() for d in self.intake_arc_sealers_raw.split(",") if d.strip()
         )
+
+    @property
+    def horizon(self) -> timedelta:
+        return timedelta(days=self.intake_horizon_days)
 
     @property
     def smtp_listen(self) -> tuple[str, int]:

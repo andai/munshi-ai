@@ -8,10 +8,13 @@ Two kinds of table:
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
   `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
-  (0008), `meeting_removals` (0009), `bot_settings` (0014).
+  (0008), `meeting_removals` (0009), `bot_settings` (0014), `invite_events` (0015).
 * System tables with no org and no customer data (no row-level security): `canary_runs` and
   `alert_state` (0005), written by andai-worker, and `platform_webhook_events` (0010), written by
   andai-core's platform webhook.
+* Invite events (0015, `invite_events`): one row per (org, calendar UID, RECURRENCE-ID) andai-intake
+  tracks; org-scoped like the tables above. A meeting created from an invite names its event and
+  the occurrence's original start (`invite_event_id`, `occurrence_key`).
 * The notetaker mailbox's store, `inbound_mail` (0012): every message andai-intake accepted. A row has
   no org until the intake attributes it; row-level security shows a row to the app role only under
   its own `org_id`, so an unattributed row is visible to no org. andai-intake writes it only through
@@ -134,6 +137,9 @@ SUBJECT_TRIM_MAX = 120
 AUTO_JOIN_MODES = ("only_when_invited", "all_with_link", "off")
 DEFAULT_AUTO_JOIN = "only_when_invited"
 
+# Invite events (migration 0015): the state of one (UID, RECURRENCE-ID) of an org's invites.
+INVITE_EVENT_STATES = ("active", "cancelled")
+
 # Tables protected by row-level security on org_id (migration 0002).
 ORG_SCOPED_TABLES = (
     "orgs",
@@ -150,6 +156,7 @@ ORG_SCOPED_TABLES = (
     "mom_documents",
     "meeting_removals",
     "bot_settings",
+    "invite_events",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # Row-level security on a nullable org_id: a row is visible to no org until it is attributed (0012).
@@ -164,6 +171,11 @@ def _in(column: str, values: tuple[str, ...]) -> str:
 
 def _not_terminal() -> str:
     return f"status NOT IN ({', '.join(repr(v) for v in TERMINAL_STATUSES)})"
+
+
+def _live() -> str:
+    """A meeting the bot is in or on its way to: neither over nor only scheduled (0015)."""
+    return f"status NOT IN ({', '.join(repr(v) for v in (*TERMINAL_STATUSES, 'scheduled'))})"
 
 
 def _uuid_pk() -> Mapped[uuid.UUID]:
@@ -426,7 +438,14 @@ class Meeting(Base):
         ForeignKeyConstraint(
             ["team_id", "org_id"], ["teams.id", "teams.org_id"], ondelete="SET NULL (team_id)"
         ),
+        ForeignKeyConstraint(
+            ["invite_event_id", "org_id"],
+            ["invite_events.id", "invite_events.org_id"],
+            ondelete="SET NULL (invite_event_id)",
+        ),
         UniqueConstraint("id", "org_id"),
+        # One meeting per occurrence of an invite (0015).
+        UniqueConstraint("invite_event_id", "occurrence_key"),
         CheckConstraint(_in("platform", PLATFORMS), name="platform"),
         CheckConstraint(_in("source", MEETING_SOURCES), name="source"),
         CheckConstraint(_in("status", MEETING_STATUSES), name="status"),
@@ -440,12 +459,15 @@ class Meeting(Base):
         Index("ix_meetings_org_id_created_at", "org_id", "created_at"),
         Index("ix_meetings_org_id_platform_meeting_id", "org_id", "platform_meeting_id"),
         Index("ix_meetings_org_id_join_url_key", "org_id", "join_url_key"),
+        # One live bot per link per org. `scheduled` rows are left out (0015): a weekly invite holds
+        # one row per occurrence under the same link, and a paste of that link still dispatches;
+        # a scheduled meeting is checked against live rows again when it is dispatched.
         Index(
             "uq_meetings_live_join_url_key",
             "org_id",
             "join_url_key",
             unique=True,
-            postgresql_where=text(_not_terminal()),
+            postgresql_where=text(_live()),
         ),
         Index(
             "uq_meetings_live_native_id",
@@ -465,6 +487,14 @@ class Meeting(Base):
             text("id DESC"),
         ),
         Index("ix_meetings_org_id_requested_by", "org_id", "requested_by"),
+        # The Upcoming section: soonest scheduled start first (0015).
+        Index(
+            "ix_meetings_org_id_upcoming",
+            "org_id",
+            text("(coalesce(scheduled_start, created_at))"),
+            "id",
+            postgresql_where=text("status = 'scheduled'"),
+        ),
         Index(
             "ix_meetings_title_search_fts",
             text("to_tsvector('simple'::regconfig, title_search)"),
@@ -583,6 +613,80 @@ class Meeting(Base):
     recap_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     recap_lease: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     recap_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Scheduling from invites (0015): when the meeting starts (UTC), the invite event it came from
+    # and that occurrence's original start (its key, unchanged when the occurrence moves), and the
+    # skip a `can_share` caller set (a skipped meeting is never dispatched).
+    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invite_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    occurrence_key: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skipped_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
+class InviteEvent(Base):
+    """One (calendar UID, RECURRENCE-ID) of an org's invites, as andai-intake last accepted it
+    (RFC 5546 order: higher SEQUENCE, then later DTSTAMP). `recurrence_id` is NULL for the event
+    or series itself and the original start (UTC) for one instance. `timing` holds what expanding it
+    again needs (start, end, wall-clock start and zone, RDATE/EXDATE, STATUS); `rrule` the rule.
+    `requested_by` is the member whose verified mail created it, `organizer` the invite's
+    ORGANIZER: only they may change it by mail. `last_inbound_id` is the last message applied, a
+    plain id (the 30-day mail purge never touches events)."""
+
+    __tablename__ = "invite_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["team_id", "org_id"], ["teams.id", "teams.org_id"], ondelete="SET NULL (team_id)"
+        ),
+        UniqueConstraint("id", "org_id"),
+        UniqueConstraint(
+            "org_id", "uid_norm", "recurrence_id", postgresql_nulls_not_distinct=True
+        ),
+        CheckConstraint(_in("state", INVITE_EVENT_STATES), name="state"),
+        CheckConstraint("char_length(uid_norm) BETWEEN 1 AND 1024", name="uid_norm_length"),
+        CheckConstraint(f"platform IS NULL OR {_in('platform', PLATFORMS)}", name="platform"),
+        CheckConstraint("sequence >= 0", name="sequence"),
+        Index(
+            "ix_invite_events_active_series",
+            "org_id",
+            postgresql_where=text("state = 'active' AND recurring"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    uid_norm: Mapped[str] = mapped_column(Text, nullable=False)
+    recurrence_id: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    dtstamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    organizer: Mapped[str | None] = mapped_column(Text)
+    join_url: Mapped[str | None] = mapped_column(Text)
+    platform: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    team_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    rrule: Mapped[str | None] = mapped_column(Text)
+    timing: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    forwarded_copy: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    auto_forwarded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    last_inbound_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class TranscriptSegment(Base):

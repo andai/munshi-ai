@@ -7,7 +7,8 @@ platform parses the link; andai stores the `platform`, `native_meeting_id` and m
 lower-cased, query dropped — is what makes "the same link" in one org.
 
 **One bot per link per org.** `join` first inserts a `dispatching` row and commits it. The partial
-unique index on `(org_id, join_url_key)` over live rows means a second paste of a live link (even a
+unique index on `(org_id, join_url_key)` over live rows (not `scheduled` ones: an invite's
+occurrences do not hold their link, `scheduled.py`) means a second paste of a live link (even a
 concurrent one) finds the first row instead of dispatching again: the caller gets that meeting if
 they may read it, else 409 `already_in_meeting` with no id. Only then does andai call the platform,
 with the org's key unsealed for that call. A structured platform 409 (the platform already runs a
@@ -84,6 +85,9 @@ HINGLISH_STT_LANGUAGE = "hi"
 REMOVAL_WINDOW = timedelta(hours=12)
 PASSCODE_PARAMS = frozenset({"pwd", "p", "password", "passcode"})
 NOT_TERMINAL = Meeting.status.not_in(TERMINAL_STATUSES)
+# A bot is in the meeting or on its way: the rows `uq_meetings_live_join_url_key` keeps one of per
+# link. A `scheduled` meeting (from an invite) does not hold its link.
+LIVE = Meeting.status.not_in((*TERMINAL_STATUSES, "scheduled"))
 
 MEET_HOSTS = ("meet.google.com",)
 TEAMS_HOSTS = ("teams.microsoft.com", "teams.live.com", "teams.microsoft.us")
@@ -227,6 +231,11 @@ def view(tx: Tx, actor: Actor, meeting: Meeting) -> dict:
         # and the typed code of the last failure (no message, no content).
         "mom_state": meeting.mom_state,
         "mom_error": meeting.mom_error,
+        # A meeting scheduled from an invite: its start and whether a caller skipped it.
+        "scheduled_start": (
+            None if meeting.scheduled_start is None else meeting.scheduled_start.isoformat()
+        ),
+        "skipped": meeting.skipped_at is not None,
     }
 
 
@@ -320,9 +329,7 @@ def recently_removed(tx: Tx, org_id: uuid.UUID, key: str, now: datetime) -> bool
 
 def _live_by_key(tx: Tx, org_id: uuid.UUID, key: str) -> Meeting | None:
     return tx.scalar(
-        select(Meeting).where(
-            Meeting.org_id == org_id, Meeting.join_url_key == key, NOT_TERMINAL
-        )
+        select(Meeting).where(Meeting.org_id == org_id, Meeting.join_url_key == key, LIVE)
     )
 
 

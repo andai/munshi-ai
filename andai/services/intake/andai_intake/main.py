@@ -6,9 +6,13 @@
   andai database (`inbound_mail`, through `store.py`) before answering 250.
 * The retention loop (`purge.py`): raw bytes go after `ANDAI_INTAKE_RAW_RETENTION_DAYS`, rows after
   `ANDAI_INTAKE_ROW_RETENTION_DAYS`.
+* The processor (`processor.py`, every 2 s): sender check, sender, limits, parsing, `bot.autoJoin`
+  and the invite state machine; scheduled meetings are written as the sender's org.
+* The horizon top-up (`horizon.py`, hourly): occurrences of recurring invites that come within
+  `ANDAI_INTAKE_HORIZON_DAYS`.
 
-Without `ANDAI_DB_URL_APP` neither starts (health only): a receiver that cannot store would only
-answer 451. The service connects as the RLS-bound `andai_app` and touches `inbound_mail` only
+Without `ANDAI_DB_URL_APP` none of them starts (health only): a receiver that cannot store would
+only answer 451. The service connects as the RLS-bound `andai_app` and touches `inbound_mail` only
 through the migration 0012 functions. The compose overlay publishes both ports on 127.0.0.1 only.
 """
 
@@ -27,7 +31,9 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from andai_core.db.session import create_app_engine
-from andai_intake import purge, store
+from andai_intake import horizon, processor, purge, store
+from andai_intake.auth.verdict import Policy
+from andai_intake.limits import IntakeLimits
 from andai_intake.settings import IntakeSettings, get_intake_settings
 from andai_intake.smtp import IntakeHandler, start_smtp
 
@@ -45,7 +51,7 @@ class IntakeServices:
 def build_services(settings: IntakeSettings) -> IntakeServices | None:
     """The production services, or None without `ANDAI_DB_URL_APP` (health only)."""
     if settings.db_url_app is None:
-        log.warning("ANDAI_DB_URL_APP is not set: no SMTP receiver, no purge")
+        log.warning("ANDAI_DB_URL_APP is not set: no SMTP receiver, processor or purge")
         return None
     return IntakeServices(settings=settings, engine=create_app_engine(settings=settings))
 
@@ -71,7 +77,21 @@ async def start(services: IntakeServices) -> tuple[asyncio.Server, list[asyncio.
         raw_days=settings.intake_raw_retention_days,
         row_days=settings.intake_row_retention_days,
     )
-    return server, [asyncio.create_task(purger.run(purge.TICK_S))]
+    runner = processor.Processor(
+        services.engine,
+        settings,
+        IntakeLimits.from_settings(settings),
+        policy=Policy.from_settings(settings),
+        horizon=settings.horizon,
+    )
+    top_up = horizon.HorizonRunner(
+        services.engine, language=settings.default_language, horizon=settings.horizon
+    )
+    return server, [
+        asyncio.create_task(purger.run(purge.TICK_S)),
+        asyncio.create_task(runner.run(processor.TICK_S)),
+        asyncio.create_task(top_up.run(horizon.TICK_S)),
+    ]
 
 
 def create_app(services: IntakeServices | None = None, *, run_jobs: bool = True) -> FastAPI:

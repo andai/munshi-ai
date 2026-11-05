@@ -52,6 +52,10 @@ ITEM_FIELDS = {
     "duration_s",
     "shared",
     "has_minutes",
+    "source",
+    "scheduled_start",
+    "skipped",
+    "permissions",
 }
 SECTIONS = {
     "live": ("dispatching", "awaiting_admission", "recording", "processing"),
@@ -146,6 +150,10 @@ def test_an_item_carries_what_the_dashboard_shows(world: AccessOrg) -> None:
     assert item["duration_s"] == 42 * 60 + 5
     assert item["shared"] is True
     assert item["has_minutes"] is False
+    assert item["permissions"] == {"can_share": False}  # a grantee reads, never shares
+    assert (item["source"], item["scheduled_start"], item["skipped"]) == (
+        "portal_link", None, False
+    )
     assert (item["platform"], item["status"]) == ("zoom", "done")
     own = world.client("requester").get(PATH, params={"section": "past", "limit": 50}).json()
     [mine] = [i for i in own["sections"]["past"]["items"] if i["id"] == str(meeting_id)]
@@ -421,12 +429,19 @@ def test_a_thousand_meetings_list_within_300_ms_at_p95(
 
     for caller, samples in timings.items():
         assert _p95(samples) <= P95_BUDGET_S, (caller, report[caller])
-    # The access predicate's path (a member) reads each section through the list index. An admin
-    # reads the whole org: the planner may scan when most of the table qualifies (Past here), and
-    # that stays fast.
+    # The access predicate's path (a member) reads each section through an org-leading index of
+    # that section's rows: Past through the list index, Upcoming (soonest first) through its own,
+    # and Live through the list index or the live-link index, whose predicate is exactly the Live
+    # statuses since scheduled rows left it (0015). An admin reads the whole org: the planner may
+    # scan when most of the table qualifies (Past here), and that stays fast.
+    indexes = {
+        "live": ({"ix_meetings_org_id_status_sort_time"}, {"uq_meetings_live_join_url_key"}),
+        "upcoming": ({"ix_meetings_org_id_upcoming"},),
+        "past": ({"ix_meetings_org_id_status_sort_time"},),
+    }
     for section in SECTIONS:
-        assert _meetings_reads(plans[("lead", section)]["Plan"]) == {
-            "ix_meetings_org_id_status_sort_time"
-        }, report[f"lead/{section}"]
+        assert _meetings_reads(plans[("lead", section)]["Plan"]) in indexes[section], report[
+            f"lead/{section}"
+        ]
     for (caller, section), plan in plans.items():
         assert plan["Execution Time"] < 20, report[f"{caller}/{section}"]

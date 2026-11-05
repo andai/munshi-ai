@@ -1,8 +1,9 @@
 """No org reaches another org's data through any andai-core route.
 
 Two orgs, A and B, each with an owner, an admin, a member and a team lead, a team, a pending
-invite, an enrolled TOTP, a platform principal, audit events, auto-join settings and a quarantined
-notetaker message — so every org-scoped table holds rows of both. Every route the application serves must sit in exactly one case table (a new route
+invite, an enrolled TOTP, a platform principal, audit events, auto-join settings, a quarantined
+notetaker message and a meeting scheduled from an invite — so every org-scoped table holds rows of
+both. Every route the application serves must sit in exactly one case table (a new route
 fails `test_every_route_is_classified` until it is classified):
 
 * `ID_ROUTES` — path parameters filled with org B's ids, called as every role of org A: 403 or
@@ -21,6 +22,7 @@ import hashlib
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import Engine, select, text, update
@@ -29,6 +31,7 @@ from andai_core.auth.passwords import hash_password
 from andai_core.db.models import (
     ConsentRecord,
     Invite,
+    InviteEvent,
     Meeting,
     MeetingRemoval,
     MeetingShare,
@@ -37,7 +40,7 @@ from andai_core.db.models import (
 )
 from andai_core.db.session import transaction
 from andai_core.main import create_app
-from andai_core.meetings import mom
+from andai_core.meetings import mom, scheduled
 from andai_core.meetings.title import set_title
 from andai_core.org.service import create_org
 from andai_core.text import fold
@@ -76,6 +79,7 @@ class SeededOrg:
     meeting_id: uuid.UUID
     meeting_link: str
     share_id: uuid.UUID
+    scheduled_id: uuid.UUID
     tag: str = ""
     values: set[str] = field(default_factory=set)
 
@@ -241,6 +245,26 @@ def seed_org(
     )
     assert settings.status_code == 200, settings.text
     _quarantine(superuser_engine, org_id, label, tag)
+    # A meeting scheduled from an invite the lead sent, with its event (whose summary carries the
+    # tag; the meeting's title does not, so the search tests keep finding one meeting per org).
+    event_id, scheduled_id = uuid.uuid4(), uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(
+            InviteEvent(
+                id=event_id, org_id=org_id, uid_norm=f"{label}-{tag}@example.test", sequence=0,
+                state="active", summary=f"{label} planning {tag}",
+                requested_by=members["lead"].user_id, team_id=team,
+            )
+        )
+        tx.flush()
+        scheduled.insert_scheduled(
+            tx, meeting_id=scheduled_id, org_id=org_id, invite_event_id=event_id,
+            occurrence_key=harness.clock() + timedelta(days=2),
+            scheduled_start=harness.clock() + timedelta(days=2),
+            requested_by=members["lead"].user_id, team_id=team,
+            join_url=zoom_link(passcode=f"sch{tag}"), platform="zoom",
+            title=f"{label} planning", language="en", now=harness.clock(),
+        )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -259,11 +283,14 @@ def seed_org(
         meeting_id=meeting_id,
         meeting_link=meeting_link,
         share_id=share_id,
+        scheduled_id=scheduled_id,
         tag=tag,
     )
     seeded.values = {
         str(meeting_id),
         str(share_id),
+        str(scheduled_id),
+        str(event_id),
         meeting_link,
         f"pw{tag}",
         native_meeting_id,
@@ -323,7 +350,8 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "sessions": "SELECT count(*) FROM sessions WHERE user_id = ANY(:u)",
         "meetings": (
             "SELECT id, status, failure_reason, platform_meeting_id, join_url, updated_at,"
-            " deleted_at, deletion_state, mom_state, mom_attempts, mom_next_at, mom_request"
+            " deleted_at, deletion_state, mom_state, mom_attempts, mom_next_at, mom_request,"
+            " scheduled_start, skipped_at, skipped_by"
             " FROM meetings WHERE org_id = :o"
         ),
         "consent_records": (
@@ -345,6 +373,10 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         ),
         "bot_settings": (
             "SELECT team_id, auto_join, updated_at, updated_by FROM bot_settings WHERE org_id = :o"
+        ),
+        "invite_events": (
+            "SELECT id, uid_norm, sequence, state, summary, join_url, updated_at"
+            " FROM invite_events WHERE org_id = :o"
         ),
         "inbound_mail": (
             "SELECT id, status, quarantine_reason, sender, subject_trim FROM inbound_mail"
@@ -449,6 +481,13 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ],
     ("DELETE", "/api/v1/meetings/{meeting_id}/shares/{share_id}"): lambda b: [
         ("revoke B share", {"meeting_id": b.meeting_id, "share_id": b.share_id}, None),
+    ],
+    ("POST", "/api/v1/meetings/{meeting_id}/skip"): lambda b: [
+        ("skip B scheduled meeting", {"meeting_id": b.scheduled_id}, None),
+        ("skip B live meeting", {"meeting_id": b.meeting_id}, None),
+    ],
+    ("DELETE", "/api/v1/meetings/{meeting_id}/skip"): lambda b: [
+        ("unskip B scheduled meeting", {"meeting_id": b.scheduled_id}, None),
     ],
     ("PUT", "/api/v1/teams/{team_id}/members"): lambda b: [
         ("empty B team", {"team_id": b.team}, {"members": []}),

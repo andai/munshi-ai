@@ -28,6 +28,19 @@ Without Docker those tests skip; `ANDAI_REQUIRE_DOCKER=1` makes that a failure.
 - `test_invite_links.py` covers where join links are found, Safe Links, Proofpoint v1/v2/v3 and
   Google unwrapping, Mimecast, and refused links.
 
+- `test_events.py` covers the invite state machine without a database: create, update by SEQUENCE
+  and DTSTAMP, stale and duplicate messages, out-of-order arrival, series and instance cancels,
+  instance-only invites, overrides, skips kept through updates, the owner rule, joined-now and
+  ended invites, and the top-up.
+- `schedulekit.py` is not a test. It builds an org whose domain signs its mail in a stub DNS zone,
+  signed invite mail from its members, delivery into `inbound_mail`, and runs the processor until a
+  message has its result.
+- `test_processor.py` covers the processor end to end: scheduled meetings, every quarantine and
+  ignore reason, `bot.autoJoin` with team overrides, joined-now, the lease after a crash, the
+  5-attempt cap, the 30-day purge next to invite events, and org-scoped writes.
+- `test_horizon.py` covers the hourly top-up: a weekly series' third occurrence, EXDATE, a cancelled
+  series, `bot.autoJoin` off, and skips.
+
 The sender-verification tests block dnspython's default resolver, so they cannot reach the network.
 
 Run from the repo root:

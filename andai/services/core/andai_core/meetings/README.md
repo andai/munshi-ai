@@ -8,17 +8,26 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   `GET/PUT /api/v1/meetings/{id}/mom`, `GET /api/v1/meetings/{id}/mom/versions`,
   `POST /api/v1/meetings/{id}/mom/regenerate`, `GET /api/v1/meetings/{id}/mom/export.md` and
   `export.pdf`, `GET/POST /api/v1/meetings/{id}/shares` and
-  `DELETE /api/v1/meetings/{id}/shares/{share_id}` (access per `.work/AUTH_MATRIX.md`; 404 for
-  anyone who may not read the meeting), and `GET /api/v1/action-items/unassigned`.
+  `DELETE /api/v1/meetings/{id}/shares/{share_id}`, `POST/DELETE /api/v1/meetings/{id}/skip`
+  (access per `.work/AUTH_MATRIX.md`; 404 for anyone who may not read the meeting), and
+  `GET /api/v1/action-items/unassigned`.
 - `access.py` — the one access predicate, `accessible(actor)`, used as SQL by every read path
   (detail, transcript, live, minutes, list, search): admins and owners, the requester, a lead of
   the meeting's team, and the users and current team members it is shared with. A deleted meeting
   is readable by no one. `can_read`, `can_stop` and
   `can_share` (requester, team lead, admins, owners — not grantees), `can_delete` (requester,
   admins, owners), the view's `permissions`, and who a meeting is shared with.
-- `listing.py` — the dashboard list: Live / Upcoming / Past sections by status, newest first,
-  filters `all | mine | shared | team:<id>`, keyset pages with an opaque cursor; access filtered in
-  SQL before the limit, no totals. `has_minutes` says whether a minutes version exists.
+- `listing.py` — the dashboard list: Live / Upcoming / Past sections by status (Live and Past
+  newest first, Upcoming soonest `scheduled_start` first), filters `all | mine | shared | team:<id>`,
+  keyset pages with an opaque cursor; access filtered in SQL before the limit, no totals.
+  `has_minutes` says whether a minutes version exists; each row also carries `source`,
+  `scheduled_start`, `skipped` and `permissions.can_share`, computed in the same query
+  (`access.may_share`).
+- `scheduled.py` — meetings scheduled from invites: the skip toggle (`can_share` callers, 409
+  `not_scheduled` once the meeting is no longer scheduled, audited `meeting.skip` /
+  `meeting.unskip`), and the writes andai-intake makes as the sender's org (`insert_scheduled`,
+  `update_scheduled`, `cancel_scheduled`), which touch a meeting only while it is still scheduled.
+  Scheduled meetings do not hold their link in the one-live-bot-per-link index.
 - `action_items.py` — the dashboard's Unassigned section: the action items whose owner is
   `unassigned` (any case) in the latest minutes version of each meeting `accessible(actor)` admits,
   newest meeting first then in the minutes' order, keyset pages of 25 (at most 50) with an opaque
