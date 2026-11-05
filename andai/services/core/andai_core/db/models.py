@@ -535,6 +535,12 @@ class Meeting(Base):
             postgresql_where=text("recap_state = 'pending'"),
         ),
         Index("ix_meetings_platform_meeting_id", "platform_meeting_id"),
+        # Due scheduled meetings in start order, for andai-worker's dispatch claim (0016).
+        Index(
+            "ix_meetings_scheduled_due",
+            "scheduled_start",
+            postgresql_where=text("status = 'scheduled' AND skipped_at IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -623,6 +629,12 @@ class Meeting(Base):
     skipped_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+    # Join-time dispatch (0016, `andai_claim_scheduled`): how often andai-worker claimed this
+    # scheduled meeting, and when it may claim it again (lease and backoff).
+    dispatch_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    dispatch_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class InviteEvent(Base):

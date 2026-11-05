@@ -7,7 +7,8 @@
 * The retention loop (`purge.py`): raw bytes go after `ANDAI_INTAKE_RAW_RETENTION_DAYS`, rows after
   `ANDAI_INTAKE_ROW_RETENTION_DAYS`.
 * The processor (`processor.py`, every 2 s): sender check, sender, limits, parsing, `bot.autoJoin`
-  and the invite state machine; scheduled meetings are written as the sender's org.
+  and the invite state machine; scheduled meetings are written as the sender's org, and the
+  verified sender gets a plain-text confirmation through the SMTP relay (`confirm.py`, `SMTP_*`).
 * The horizon top-up (`horizon.py`, hourly): occurrences of recurring invites that come within
   `ANDAI_INTAKE_HORIZON_DAYS`.
 
@@ -27,11 +28,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
+import redis
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from andai_core.db.session import create_app_engine
-from andai_intake import horizon, processor, purge, store
+from andai_core.mail import SmtpMailer
+from andai_intake import confirm, horizon, processor, purge, store
 from andai_intake.auth.verdict import Policy
 from andai_intake.limits import IntakeLimits
 from andai_intake.settings import IntakeSettings, get_intake_settings
@@ -77,12 +80,22 @@ async def start(services: IntakeServices) -> tuple[asyncio.Server, list[asyncio.
         raw_days=settings.intake_raw_retention_days,
         row_days=settings.intake_row_retention_days,
     )
+    confirmer = confirm.Confirmer(
+        SmtpMailer(settings),
+        confirm.valkey_limiter(
+            redis.Redis.from_url(settings.redis_url, socket_timeout=5, socket_connect_timeout=5)
+        ),
+        lead_s=settings.intake_join_lead_s,
+        horizon_days=settings.intake_horizon_days,
+        notetakers=settings.intake_addresses,
+    )
     runner = processor.Processor(
         services.engine,
         settings,
         IntakeLimits.from_settings(settings),
         policy=Policy.from_settings(settings),
         horizon=settings.horizon,
+        confirmer=confirmer,
     )
     top_up = horizon.HorizonRunner(
         services.engine, language=settings.default_language, horizon=settings.horizon

@@ -1,10 +1,13 @@
-"""andai-worker: transcript ingest, minutes of meeting and their recap mail, meeting deletion, canary
-joins, metrics and operator alerts (BOT-04, D-34, PORT-04, MOM-01, MOM-05).
+"""andai-worker: join-time dispatch of scheduled meetings, transcript ingest, minutes of meeting and
+their recap mail, meeting deletion, canary joins, metrics and operator alerts (BOT-04, D-34,
+PORT-04, MOM-01, MOM-05, INV-01).
 
 * `GET /healthz` — liveness.
 * `GET /metrics` — join, deletion and minutes metrics in Prometheus text format (`metrics.py`),
   read from the andai database on every scrape; 503 while the worker has no database URL.
 * Background loops, started by the lifespan:
+  - scheduled dispatch (`scheduled.py`), always: meetings scheduled from invites, as their
+    requester, `ANDAI_INTAKE_JOIN_LEAD_S` before they start;
   - transcript ingest (`ingest.py`), always: andai's own copy of every finished meeting;
   - minutes (`minutes.py`) when the LLM route is configured (`ANDAI_LLM_BASE_URL` and
     `ANDAI_LLM_MODEL`): the minutes of every finished meeting with a stored transcript;
@@ -40,7 +43,7 @@ from andai_core.llm.client import LlmClient, LlmConfig
 from andai_core.mail import Mailer, SmtpMailer
 from andai_core.meetings.service import Meetings
 from andai_core.platform.gateway_client import HttpPlatformGateway
-from andai_worker import alerts, canary, deletion, ingest, metrics, minutes, recap
+from andai_worker import alerts, canary, deletion, ingest, metrics, minutes, recap, scheduled
 from andai_worker.settings import WorkerSettings, get_worker_settings
 
 SERVICE_NAME = "andai-worker"
@@ -82,6 +85,18 @@ def build_services(settings: WorkerSettings) -> WorkerServices | None:
 def jobs(services: WorkerServices) -> list[asyncio.Task]:
     settings = services.settings
     tasks = []
+    dispatcher = scheduled.ScheduledRunner(
+        services.engine,
+        services.meetings,
+        lead_s=settings.join_lead_s,
+        clock=services.clock,
+    )
+    tasks.append(asyncio.create_task(dispatcher.run(settings.scheduled_tick_s)))
+    log.info(
+        "scheduled meetings dispatched %s s before they start, checked every %s s",
+        settings.join_lead_s,
+        settings.scheduled_tick_s,
+    )
     ingester = ingest.IngestRunner(
         services.engine,
         services.meetings.keyring,

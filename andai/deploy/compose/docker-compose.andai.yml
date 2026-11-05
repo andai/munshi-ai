@@ -130,6 +130,10 @@ services:
       - ANDAI_CANARY_INTERVAL_S=${ANDAI_CANARY_INTERVAL_S:-14400}
       # The operator address alert mail goes to; empty turns alert mail off.
       - ANDAI_ALERT_EMAIL=${ANDAI_ALERT_EMAIL:-}
+      # Meetings scheduled from invites go this many seconds before they start (D-58), checked
+      # every ANDAI_SCHEDULED_TICK_S seconds (at most 30).
+      - ANDAI_INTAKE_JOIN_LEAD_S=${ANDAI_INTAKE_JOIN_LEAD_S:-120}
+      - ANDAI_SCHEDULED_TICK_S=${ANDAI_SCHEDULED_TICK_S:-15}
       # The language model minutes are written with (D-47): one OpenAI-compatible route inside the
       # perimeter; the base URL has no /v1. An empty base URL turns minutes off.
       - ANDAI_LLM_BASE_URL=${ANDAI_LLM_BASE_URL:-}
@@ -191,7 +195,8 @@ services:
     # connects as the RLS-bound app role and writes inbound_mail only through the 0012 functions.
     # The SMTP port is published on 127.0.0.1 only: no public MX until the VM (D-54); captured mail
     # is replayed into it (python -m andai_intake.replay). Its processor turns verified members'
-    # invites into scheduled meetings, written as the sender's org.
+    # invites into scheduled meetings, written as the sender's org, and mails the sender a
+    # plain-text confirmation.
     environment:
       - ANDAI_VERSION=${ANDAI_VERSION:-dev}
       - ANDAI_ENV=${ANDAI_ENV:-dev}
@@ -216,7 +221,17 @@ services:
       - ANDAI_INTAKE_HORIZON_DAYS=${ANDAI_INTAKE_HORIZON_DAYS:-14}
       - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
       - ANDAI_DEFAULT_LANGUAGE=${ANDAI_DEFAULT_LANGUAGE:-en}
+      # The confirmation says the bot joins this many seconds before the start (andai-worker).
+      - ANDAI_INTAKE_JOIN_LEAD_S=${ANDAI_INTAKE_JOIN_LEAD_S:-120}
       - REDIS_URL=redis://redis:6379/1
+      # Plain-text confirmations to the verified sender of each processed invite (INV-04), through
+      # the same relay as andai-core (Mailpit in dev and e2e).
+      - SMTP_HOST=${SMTP_HOST:-mailpit}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-munshi.ai <no-reply@munshi.invalid>}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
     depends_on:
       postgres:
         condition: service_healthy

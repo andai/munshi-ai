@@ -136,8 +136,9 @@ def test_app_role_grants(migrated: Postgres) -> None:
 
 
 # andai_scan's UPDATE column grants at head: the ingest columns (0006), the deletion lease (0009),
-# the MoM and recap state and leases (0010), and the inbound mail state (0012).
-HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15
+# the MoM and recap state and leases (0010), the inbound mail state (0012) and the scheduled
+# dispatch claim (0016).
+HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15 + 2
 
 TRANSCRIPT_COLUMNS = {
     "title",
@@ -672,7 +673,7 @@ def test_inbound_mail_downgrade_to_0011_and_upgrade_again(migrated: Postgres) ->
         command.downgrade(config, "0011")
         assert _revision(engine) == "0011"
         assert _inbound_state(engine) == (False, 0)
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 15
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 15 - 2  # 0012's and 0016's
 
         command.upgrade(config, "head")
         assert _inbound_state(engine) == (True, 5)
@@ -1122,7 +1123,7 @@ def test_bot_settings_downgrade_to_0013_and_upgrade_again(migrated: Postgres) ->
         assert _sender_lookup_state(engine)[0] == 2  # 0013 untouched
 
         command.upgrade(config, "head")
-        assert _revision(engine) == "0015"
+        assert _revision(engine) == "0016"
         assert _bot_settings_state(engine) == at_head
     finally:
         engine.dispose()
@@ -1247,7 +1248,7 @@ def test_invite_events_downgrade_to_0014_and_upgrade_again(
         assert statuses == {scheduled_id: "cancelled", live_id: "recording"}
 
         command.upgrade(config, "head")
-        assert _revision(engine) == "0015"
+        assert _revision(engine) == "0016"
         assert _invite_state(engine) == at_head
     finally:
         engine.dispose()
@@ -1279,3 +1280,90 @@ def test_invite_series_function_belongs_to_the_scan_role(migrated: Postgres) -> 
         engine.dispose()
     assert tuple(row) == (True, "andai_scan", ["search_path=public, pg_temp"], False, True)
     assert columns == {"org_id", "state", "recurring"}
+
+
+# ─── 0016: the scheduled dispatch claim ───────────────────────────────────────────────────────────
+
+DISPATCH_COLUMNS = {"dispatch_attempts", "dispatch_lease_until"}
+
+
+def _dispatch_claim_state(engine: Engine) -> tuple:
+    """(claim columns on meetings, the due index, the claim function's owner, andai_scan's SELECT
+    and UPDATE grants on the columns 0016 added or reads)."""
+    with engine.connect() as conn:
+        index = conn.execute(
+            text("SELECT count(*) FROM pg_class WHERE relname = 'ix_meetings_scheduled_due'")
+        ).scalar_one()
+        owner = conn.execute(
+            text(
+                "SELECT pg_get_userbyid(proowner) FROM pg_proc"
+                " WHERE proname = 'andai_claim_scheduled'"
+            )
+        ).scalar_one_or_none()
+        grants = conn.execute(
+            text(
+                "SELECT privilege_type, column_name FROM information_schema.column_privileges"
+                " WHERE grantee = 'andai_scan' AND table_name = 'meetings'"
+                " AND column_name = ANY(:c)"
+            ),
+            {"c": ["scheduled_start", "skipped_at", "requested_by", *sorted(DISPATCH_COLUMNS)]},
+        ).all()
+    return (
+        DISPATCH_COLUMNS & _meeting_columns(engine),
+        index,
+        owner,
+        {c for p, c in grants if p == "SELECT"},
+        {c for p, c in grants if p == "UPDATE"},
+    )
+
+
+def test_scheduled_claim_downgrade_to_0015_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    at_head = (
+        DISPATCH_COLUMNS,
+        1,
+        "andai_scan",
+        {"scheduled_start", "skipped_at", *DISPATCH_COLUMNS},
+        DISPATCH_COLUMNS,
+    )
+    try:
+        assert _dispatch_claim_state(engine) == at_head
+
+        command.downgrade(config, "0015")
+        assert _revision(engine) == "0015"
+        assert _dispatch_claim_state(engine) == (set(), 0, None, set(), set())
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 2
+        assert _invite_state(engine)[0] is True  # 0015 untouched
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == "0016"
+        assert _dispatch_claim_state(engine) == at_head
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
+    finally:
+        engine.dispose()
+
+
+def test_scheduled_claim_belongs_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT p.prosecdef, pg_get_userbyid(p.proowner), p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = 'andai_claim_scheduled'"
+                )
+            ).one()
+    finally:
+        engine.dispose()
+    assert tuple(row) == (
+        True,
+        "andai_scan",
+        ["search_path=public, pg_temp"],
+        "TABLE(org_id uuid, meeting_id uuid, attempts integer)",
+        False,
+        True,
+    )

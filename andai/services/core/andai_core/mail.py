@@ -28,6 +28,8 @@ class Mail:
     to: str
     subject: str
     text: str
+    # Extra header fields, e.g. `Auto-Submitted: auto-replied` on andai-intake's confirmations.
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 class MailError(Exception):
@@ -47,6 +49,8 @@ class SmtpMailer:
         message["From"] = self.settings.smtp_from
         message["To"] = mail.to
         message["Subject"] = mail.subject
+        for name, value in mail.headers:
+            message[name] = value
         message.set_content(mail.text)
         return message
 

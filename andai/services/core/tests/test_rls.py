@@ -634,15 +634,17 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert fn[3] == "SETOF uuid"
     assert (fn[4], fn[5]) == (False, True)
     # 0004 (open meetings), 0005 (join statistics), 0006 (the ingest claim), 0009 (the deletion
-    # claim and backlog) and 0010 (the MoM and recap claims and stats) together; never the link,
-    # the title, attendees, people, the minutes request or the error.
+    # claim and backlog), 0010 (the MoM and recap claims and stats) and 0016 (the scheduled
+    # dispatch claim) together; never the link, the title, attendees, people, the minutes request
+    # or the error.
     assert readable == {
         "org_id", "status", "platform", "source", "failure_reason", "end_reason", "started_at",
         "created_at", "id", "platform_meeting_id", "transcript_state", "transcript_attempts",
         "transcript_next_at", "deleted_at", "deletion_state", "deletion_attempts",
         "deletion_next_at", "ended_at", "mom_state", "mom_attempts", "mom_next_at", "mom_at",
         "mom_lease", "mom_lease_until", "recap_state", "recap_attempts", "recap_next_at",
-        "recap_lease",
+        "recap_lease", "scheduled_start", "skipped_at", "dispatch_attempts",
+        "dispatch_lease_until",
     }
     assert consent_columns == 0
     assert can_create is False
@@ -918,10 +920,12 @@ def test_claim_ingest_is_a_scan_owned_definer_function(superuser_engine: Engine)
     assert fn[2] == ["search_path=public, pg_temp"]
     assert fn[3] == "TABLE(org_id uuid, meeting_id uuid)"
     assert (fn[4], fn[5]) == (False, True)
-    # 0006's three ingest columns, 0009's deletion lease, 0010's MoM and recap state and leases.
+    # 0006's three ingest columns, 0009's deletion lease, 0010's MoM and recap state and leases,
+    # 0016's scheduled dispatch claim.
     assert updatable == {
         "transcript_state", "transcript_attempts", "transcript_next_at", "deletion_next_at",
         "mom_state", "mom_lease", "mom_lease_until", "recap_lease", "recap_next_at",
+        "dispatch_attempts", "dispatch_lease_until",
     }
     assert (segments, segment_columns) == (False, 0)
 

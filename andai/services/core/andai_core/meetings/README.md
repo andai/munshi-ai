@@ -84,6 +84,13 @@ Sending the bot to a meeting, following it, listing, sharing, reading its minute
   and admins; also `title`, `attendees`, `transcript_state`, `mom_state` and `mom_error`, team and requester names, the
   caller's `permissions`, and `shared_with` for those who may share). Source `canary` only from the
   canary org, which sends nothing else; `canary_actor` is how andai-worker acts as that org.
+  `start_scheduled` dispatches a due scheduled meeting (claimed by andai-worker through
+  `andai_claim_scheduled`, migration 0016) as its requester (`requester_actor`) through the same
+  checks and steps as a paste, on the existing row: a live meeting of the same link or a D-38
+  removal ends it `cancelled` with `end_reason` `already_in_meeting` / `removed_by_participant`, a
+  platform 422 fails it `meeting_not_found`, no platform principal leaves it scheduled for the
+  claim's backoff (`failed` after 5 claims); a skipped meeting is never dispatched.
+  `drop_scheduled` cancels one whose requester is no longer an active member.
 - `deletion.py` — `request_delete` (requester, admins, owners; 409 `meeting_live` while the bot is
   in the meeting) hides the meeting and writes `meeting.delete` in one transaction; `purge`, run by
   andai-worker for each deletion `andai_claim_deletions()` hands out, deletes the platform's

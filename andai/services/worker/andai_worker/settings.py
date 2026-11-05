@@ -1,4 +1,5 @@
-"""andai-worker settings: andai-core's settings class plus the canary and alert settings.
+"""andai-worker settings: andai-core's settings class plus the canary, alert and scheduled-dispatch
+settings.
 
 The worker reads the andai database as `andai_app` (`ANDAI_DB_URL_APP`), unseals the canary org's
 platform key with the same KEK (`ANDAI_KEK`), dispatches through the platform gateway and mails
@@ -7,6 +8,9 @@ through the same SMTP relay as andai-core, so it shares `andai_core.settings.Set
 Canary links are standing test meetings that admit guests without a human (one per platform; an
 empty value turns that platform's canary off). A Zoom link may carry its passcode, so the links are
 `SecretStr` and never logged.
+
+Meetings scheduled from invites are dispatched `ANDAI_INTAKE_JOIN_LEAD_S` seconds before they start
+(default 120, D-58), checked every `ANDAI_SCHEDULED_TICK_S` seconds (default 15, at most 30).
 """
 
 from __future__ import annotations
@@ -19,6 +23,9 @@ from andai_core.settings import Settings
 
 # BOT-04: a canary on each platform at least every 4 hours.
 MAX_CANARY_INTERVAL_S = 4 * 3600
+# INV-01: a due scheduled meeting is dispatched within one tick of its start minus the lead.
+MAX_SCHEDULED_TICK_S = 30.0
+MAX_JOIN_LEAD_S = 15 * 60
 
 
 class WorkerSettings(Settings):
@@ -35,6 +42,12 @@ class WorkerSettings(Settings):
     )
     # The operator address join alerts go to; empty turns alert mail off.
     alert_email: str = Field(default="", validation_alias="ANDAI_ALERT_EMAIL")
+    scheduled_tick_s: float = Field(
+        default=15.0, gt=0, le=MAX_SCHEDULED_TICK_S, validation_alias="ANDAI_SCHEDULED_TICK_S"
+    )
+    join_lead_s: int = Field(
+        default=120, ge=0, le=MAX_JOIN_LEAD_S, validation_alias="ANDAI_INTAKE_JOIN_LEAD_S"
+    )
 
     @property
     def canary_urls(self) -> dict[str, str]:

@@ -21,6 +21,18 @@ removal is read from the meeting's consent record, or, once the meeting is delet
 from the content-free marker the purge leaves (`meeting_removals`). A deleted meeting is terminal,
 so it never holds a link against a new dispatch.
 
+**Scheduled meetings (invites).** A meeting andai-intake scheduled from an invite is `scheduled`
+until andai-worker claims it at `scheduled_start` minus the join lead (`andai_claim_scheduled`,
+0016) and calls `start_scheduled` as its requester. That runs the same checks and steps as a paste
+on the existing row instead of inserting one: a live meeting of the same link in the org (checked
+again here, since the live-link index leaves `scheduled` rows out, and again by the index when the
+row turns `dispatching`) or a D-38 removal ends it `cancelled` with `end_reason`
+`already_in_meeting` or `removed_by_participant`, never retried; a platform 422 fails it
+`meeting_not_found`; an org without a platform principal leaves it `scheduled` for the claim's
+backoff, and after `MAX_DISPATCH_ATTEMPTS` claims it fails `internal_error`. Otherwise it gets the
+full settings snapshot, turns `dispatching`, and the platform's answer is recorded and audited
+(`meeting.dispatch`) exactly as for a paste. A skipped or no longer scheduled meeting is left alone.
+
 **Canaries.** Source `canary` is accepted only from the canary org (`orgs.is_canary`, created once
 by `python -m andai_core canary-setup`), and that org sends nothing else, so canary bots never use
 a customer org's bot cap or appear in its data. `canary_actor` is how andai-worker acts as it.
@@ -111,6 +123,17 @@ NO_SUCH_MEETING = MeetingError(404, "no_such_meeting", "no such meeting")
 PLATFORM_REJECTED_LINK = MeetingError(
     422, "not_a_meeting_link", "the meeting platform did not accept this link"
 )
+REMOVED_BY_PARTICIPANT = MeetingError(
+    409,
+    "removed_by_participant",
+    "participants removed the bot from this meeting; it will not rejoin for 12 hours",
+)
+NO_PLATFORM_PRINCIPAL = MeetingError(
+    503, "no_platform_principal", "this organisation cannot send bots yet"
+)
+ALREADY_IN_MEETING = "already_in_meeting"
+# How often andai-worker claims a scheduled meeting before it gives up on it (`start_scheduled`).
+MAX_DISPATCH_ATTEMPTS = 5
 
 
 # ─── links ────────────────────────────────────────────────────────────────────────────────────────
@@ -287,6 +310,18 @@ class _Provisional:
     key: str
 
 
+@dataclass(frozen=True)
+class ScheduledStart:
+    """What `start_scheduled` did with a scheduled meeting: `dispatched` (the platform was asked;
+    `status` is the meeting's status after its answer, `failed` included), `cancelled` (with the
+    `end_reason`), `failed` (with the `failure_reason`, nothing sent), `retry` (still scheduled;
+    the claim's backoff brings it back) or `left` (skipped, not scheduled any more, or not due)."""
+
+    outcome: str
+    status: str | None = None
+    reason: str | None = None
+
+
 def _check_team(tx: Tx, actor: Actor, team_id: uuid.UUID | None) -> None:
     if team_id is None:
         return
@@ -378,27 +413,7 @@ class Meetings:
         meeting_id = uuid.uuid4()
         try:
             with self._tx(actor) as tx:
-                is_canary = bool(tx.scalar(select(Org.is_canary).where(Org.id == actor.org_id)))
-                if (source == "canary") != is_canary:
-                    raise MeetingError(
-                        403,
-                        "canary_org_only",
-                        "canary meetings come only from the canary organisation, and it sends "
-                        "nothing else",
-                    )
-                _check_team(tx, actor, team_id)
-                if source != "canary" and recently_removed(tx, actor.org_id, key, now):
-                    raise MeetingError(
-                        409,
-                        "removed_by_participant",
-                        "participants removed the bot from this meeting; it will not rejoin "
-                        "for 12 hours",
-                    )
-                secret = principals.open_key(tx, self.keyring, actor.org_id)
-                if secret is None:
-                    raise MeetingError(
-                        503, "no_platform_principal", "this organisation cannot send bots yet"
-                    )
+                secret = self._admit(tx, actor, key, source, now, team_id=team_id)
                 meeting = Meeting(
                     id=meeting_id,
                     org_id=actor.org_id,
@@ -426,12 +441,49 @@ class Meetings:
                 return _existing_answer(tx, actor, existing)
         return _Provisional(meeting_id=meeting_id, body=body, key=secret)
 
+    def _admit(
+        self,
+        tx: Tx,
+        actor: Actor,
+        key: str,
+        source: str,
+        now: datetime,
+        *,
+        team_id: uuid.UUID | None,
+        check_team: bool = True,
+    ) -> str:
+        """The checks every dispatch passes before a row turns `dispatching`: canaries only from
+        the canary org, the caller's team, no rejoin within 12 hours of a removal (D-38), and the
+        org's platform key (returned in clear for the one call). Raises the refusal."""
+        is_canary = bool(tx.scalar(select(Org.is_canary).where(Org.id == actor.org_id)))
+        if (source == "canary") != is_canary:
+            raise MeetingError(
+                403,
+                "canary_org_only",
+                "canary meetings come only from the canary organisation, and it sends nothing else",
+            )
+        if check_team:
+            _check_team(tx, actor, team_id)
+        if source != "canary" and recently_removed(tx, actor.org_id, key, now):
+            raise REMOVED_BY_PARTICIPANT
+        secret = principals.open_key(tx, self.keyring, actor.org_id)
+        if secret is None:
+            raise NO_PLATFORM_PRINCIPAL
+        return secret
+
     def _finish(
-        self, actor: Actor, meeting_id: uuid.UUID, outcome: dict | GatewayError
+        self,
+        actor: Actor,
+        meeting_id: uuid.UUID,
+        outcome: dict | GatewayError,
+        *,
+        scheduled: bool = False,
     ) -> tuple[JoinResult | MeetingError, bool]:
         """Record the platform's answer on the provisional row and answer the caller (a refusal is
         returned, not raised, so the transaction commits). The flag says the platform started a bot
-        that no live row holds any more (stopped meanwhile)."""
+        that no live row holds any more (stopped meanwhile). A `scheduled` row (`start_scheduled`)
+        is kept rather than deleted: another live row holding the platform meeting cancels it
+        (`already_in_meeting`), a platform 422 fails it (`meeting_not_found`)."""
         now = self.clock()
         with self._tx(actor) as tx:
             meeting = tx.get(Meeting, meeting_id, with_for_update=True)
@@ -453,6 +505,10 @@ class Meetings:
                             NOT_TERMINAL,
                         )
                     )
+                if held is not None and scheduled:
+                    _cancel(meeting, ALREADY_IN_MEETING, now)
+                    tx.flush()
+                    return JoinResult(created=False, meeting=view(tx, actor, meeting)), False
                 if held is not None:
                     tx.delete(meeting)
                     tx.flush()
@@ -468,11 +524,11 @@ class Meetings:
                         outcome.native_meeting_id, now,
                     )
             elif isinstance(outcome, GatewayError):
-                if outcome.status == 422:
+                if outcome.status == 422 and not scheduled:
                     tx.delete(meeting)
                     tx.flush()
                     return PLATFORM_REJECTED_LINK, False
-                _fail(meeting, "capacity_exhausted" if outcome.status == 429 else "internal_error", now)
+                _fail(meeting, _refused_reason(outcome.status), now)
             else:
                 self._attach(tx, meeting, outcome, now)
             audit.record(tx, actor.org_id, actor.user_id, "meeting.dispatch", f"meeting:{meeting.id}")
@@ -557,6 +613,15 @@ class Meetings:
         )
         if isinstance(provisional, JoinResult):
             return provisional
+        result = await self._dispatch(actor, provisional, join_url)
+        if isinstance(result, MeetingError):
+            raise result
+        return result
+
+    async def _dispatch(
+        self, actor: Actor, provisional: _Provisional, join_url: str, *, scheduled: bool = False
+    ) -> JoinResult | MeetingError:
+        """Ask the platform for the bot of a `dispatching` row and record its answer."""
         try:
             outcome: dict | GatewayError = await self.gateway.dispatch(
                 provisional.key, provisional.body
@@ -568,14 +633,117 @@ class Meetings:
             )
             outcome = exc
         result, orphaned = await anyio.to_thread.run_sync(
-            lambda: self._finish(actor, provisional.meeting_id, outcome)
+            lambda: self._finish(actor, provisional.meeting_id, outcome, scheduled=scheduled)
         )
         if orphaned and isinstance(outcome, dict):
             # A stop landed while the dispatch was in flight: take the new bot down again.
             await self._stop_on_platform(provisional.key, outcome)
-        if isinstance(result, MeetingError):
-            raise result
         return result
+
+    # ── scheduled meetings (invites) ──
+
+    def _provision_scheduled(
+        self, actor: Actor, meeting_id: uuid.UUID, lead: timedelta
+    ) -> _Provisional | ScheduledStart:
+        """Turn a due scheduled meeting of `actor`'s into a `dispatching` one, or settle it."""
+        now = self.clock()
+        try:
+            with self._tx(actor) as tx:
+                meeting = tx.scalar(
+                    select(Meeting)
+                    .where(Meeting.id == meeting_id, Meeting.org_id == actor.org_id)
+                    .with_for_update()
+                )
+                if (
+                    meeting is None
+                    or meeting.status != "scheduled"
+                    or meeting.skipped_at is not None
+                    or meeting.deleted_at is not None
+                    or meeting.requested_by != actor.user_id
+                    or meeting.scheduled_start is None
+                    or meeting.scheduled_start - lead > now
+                ):
+                    return ScheduledStart("left")
+                if meeting.dispatch_attempts > MAX_DISPATCH_ATTEMPTS:
+                    _fail(meeting, "internal_error", now)
+                    return ScheduledStart("failed", "failed", "internal_error")
+                if _live_by_key(tx, actor.org_id, meeting.join_url_key) is not None:
+                    _cancel(meeting, ALREADY_IN_MEETING, now)
+                    return ScheduledStart("cancelled", "cancelled", ALREADY_IN_MEETING)
+                try:
+                    secret = self._admit(
+                        tx, actor, meeting.join_url_key, meeting.source, now,
+                        team_id=meeting.team_id, check_team=False,
+                    )
+                except MeetingError as refusal:
+                    if refusal.code == "removed_by_participant":
+                        _cancel(meeting, refusal.code, now)
+                        return ScheduledStart("cancelled", "cancelled", refusal.code)
+                    if (
+                        refusal.code == "no_platform_principal"
+                        and meeting.dispatch_attempts < MAX_DISPATCH_ATTEMPTS
+                    ):
+                        return ScheduledStart("retry", "scheduled", refusal.code)
+                    _fail(meeting, "internal_error", now)
+                    return ScheduledStart("failed", "failed", "internal_error")
+                language = (meeting.settings_snapshot or {}).get("language")
+                if language not in LANGUAGES:
+                    language = self.settings.default_language
+                meeting.settings_snapshot = settings_snapshot(self.settings, language)
+                meeting.status = "dispatching"
+                meeting.dispatch_lease_until = None
+                meeting.updated_at = now
+                tx.flush()  # the live-link index: a paste of the same link that just won
+                body = dispatch_body(meeting)
+        except IntegrityError:
+            with self._tx(actor) as tx:
+                meeting = tx.get(Meeting, meeting_id, with_for_update=True)
+                if meeting is None or meeting.status != "scheduled":
+                    return ScheduledStart("left")
+                _cancel(meeting, ALREADY_IN_MEETING, now)
+                return ScheduledStart("cancelled", "cancelled", ALREADY_IN_MEETING)
+        return _Provisional(meeting_id=meeting_id, body=body, key=secret)
+
+    async def start_scheduled(
+        self, actor: Actor, meeting_id: uuid.UUID, *, lead: timedelta = timedelta(0)
+    ) -> ScheduledStart:
+        """Dispatch the scheduled meeting `meeting_id` as its requester `actor` once it is due
+        (`scheduled_start - lead`), through the same checks and steps as `join`."""
+        prepared = await anyio.to_thread.run_sync(
+            lambda: self._provision_scheduled(actor, meeting_id, lead)
+        )
+        if isinstance(prepared, ScheduledStart):
+            if prepared.outcome != "left":
+                log.info("scheduled meeting %s: %s (%s)", meeting_id, prepared.outcome,
+                         prepared.reason)
+            return prepared
+        result = await self._dispatch(
+            actor, prepared, prepared.body["meeting_url"], scheduled=True
+        )
+        if isinstance(result, MeetingError):  # not raised for a scheduled row; kept for typing
+            return ScheduledStart("failed", None, result.code)
+        status = result.meeting["status"]
+        if status == "cancelled" and result.meeting["end_reason"] == ALREADY_IN_MEETING:
+            log.info("scheduled meeting %s: cancelled (%s)", meeting_id, ALREADY_IN_MEETING)
+            return ScheduledStart("cancelled", status, ALREADY_IN_MEETING)
+        log.info("scheduled meeting %s: dispatched (%s)", meeting_id, status)
+        return ScheduledStart("dispatched", status, result.meeting["failure_reason"])
+
+    def drop_scheduled(self, org_id: uuid.UUID, meeting_id: uuid.UUID, reason: str) -> bool:
+        """Cancel a scheduled meeting nobody can dispatch (its requester left the org or was
+        disabled), with `end_reason` `reason`. Returns whether it was cancelled."""
+        now = self.clock()
+        with transaction(self.engine, org_id=org_id) as tx:
+            meeting = tx.scalar(
+                select(Meeting)
+                .where(Meeting.id == meeting_id, Meeting.org_id == org_id)
+                .with_for_update()
+            )
+            if meeting is None or meeting.status != "scheduled":
+                return False
+            _cancel(meeting, reason, now)
+            log.info("scheduled meeting %s: cancelled (%s)", meeting_id, reason)
+            return True
 
     # ── read ──
 
@@ -651,6 +819,22 @@ def canary_org_id(engine: Engine) -> uuid.UUID | None:
     return None if value is None else uuid.UUID(str(value))
 
 
+def requester_actor(engine: Engine, org_id: uuid.UUID, user_id: uuid.UUID) -> Actor | None:
+    """The requester of a scheduled meeting as an `Actor` of `org_id`, read under that org's
+    context, or None when they are no longer an active member of it."""
+    with transaction(engine, org_id=org_id) as tx:
+        role = tx.scalar(
+            select(OrgMembership.role)
+            .join(User, User.id == OrgMembership.user_id)
+            .where(
+                OrgMembership.org_id == org_id,
+                OrgMembership.user_id == user_id,
+                User.status == "active",
+            )
+        )
+    return None if role is None else Actor(org_id=org_id, user_id=user_id, role=role)
+
+
 def canary_actor(engine: Engine) -> Actor | None:
     """The canary org's owner as an `Actor`, or None before `canary-setup` ran."""
     org_id = canary_org_id(engine)
@@ -672,18 +856,41 @@ def _fail(meeting: Meeting, reason: str, now: datetime) -> None:
     meeting.updated_at = now
 
 
+def _cancel(meeting: Meeting, end_reason: str, now: datetime) -> None:
+    """End a meeting no bot was sent for: `cancelled` with `end_reason` (no `failure_reason`,
+    which only a `failed` meeting has)."""
+    meeting.status = "cancelled"
+    meeting.failure_reason = None
+    meeting.end_reason = end_reason
+    meeting.ended_at = now
+    meeting.updated_at = now
+
+
+def _refused_reason(status: int | None) -> str:
+    """The failure of a dispatch the platform refused: 429 is capacity, 422 a link it does not
+    know (a scheduled meeting's), anything else ours."""
+    if status == 429:
+        return "capacity_exhausted"
+    if status == 422:
+        return "meeting_not_found"
+    return "internal_error"
+
+
 __all__ = [
     "Actor",
     "can_read",
     "canary_actor",
     "canary_org_id",
     "JoinResult",
+    "MAX_DISPATCH_ATTEMPTS",
     "MeetingError",
     "Meetings",
+    "ScheduledStart",
     "join_url_key",
     "link_platform",
     "recently_removed",
     "readable",
+    "requester_actor",
     "redact_url",
     "stoppable",
 ]
