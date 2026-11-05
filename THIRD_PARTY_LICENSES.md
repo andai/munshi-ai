@@ -111,3 +111,18 @@ carries andai-core and its dependencies (listed above and in `license-exceptions
 | `aiosmtpd` | `1.4.6` | Apache-2.0 | asyncio SMTP server (ships its own `NOTICE`) |
 | `atpublic` | `9.0.0` | Apache-2.0 | `@public` decorator (aiosmtpd) |
 | `attrs` | `26.1.0` | MIT | classes without boilerplate (aiosmtpd) |
+
+## andai-intake: sender verification
+
+andai-intake checks each sender itself (D-56): SPF with pyspf, DKIM and ARC with dkimpy, and the
+ARC hop's results with authres (`andai_intake.auth`). The DNS lookups go through dnspython. The
+packages are pinned in `andai/uv.lock` and installed from PyPI into the andai-intake virtualenv.
+All four licences are permissive. Zlib and the PSF licence allow use, change and redistribution;
+Zlib asks only that its notice is kept in source distributions, and the installed package carries it.
+
+| Package | Version | License | Why |
+| --- | --- | --- | --- |
+| `dkimpy` (`arc` extra) | `1.1.8` | Zlib | DKIM and ARC verification |
+| `pyspf` | `2.0.14` | PSF-2.0 | SPF checks |
+| `authres` | `1.2.0` | Apache-2.0 | parses the ARC-Authentication-Results of a sealing hop |
+| `dnspython` | `2.9.0` | ISC | DNS lookups (also a dependency of `email-validator` in andai-core) |

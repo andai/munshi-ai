@@ -96,7 +96,11 @@ source = { editable = "services/intake" }
 dependencies = [
     { name = "aiosmtpd" },
     { name = "andai-core" },
+    { name = "authres" },
+    { name = "dkimpy", extra = ["arc"] },
+    { name = "dnspython" },
     { name = "fastapi" },
+    { name = "pyspf" },
     { name = "uvicorn" },
 ]
 
@@ -104,7 +108,11 @@ dependencies = [
 requires-dist = [
     { name = "aiosmtpd", specifier = "==1.4.6" },
     { name = "andai-core", editable = "services/core" },
+    { name = "authres", specifier = "==1.2.0" },
+    { name = "dkimpy", extras = ["arc"], specifier = "==1.1.8" },
+    { name = "dnspython", specifier = "==2.9.0" },
     { name = "fastapi", specifier = "==0.162.0" },
+    { name = "pyspf", specifier = "==2.0.14" },
     { name = "uvicorn", specifier = "==0.54.0" },
 ]
 
@@ -237,6 +245,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c0314
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309", size = 67548, upload-time = "2026-03-19T14:22:23.645Z" },
 ]
+
+[[package]]
+name = "authres"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/29/e28209b5d3d56c102845cca5a4a3abaf2724f79e83476a52b94d775ecce6/authres-1.2.0.tar.gz", hash = "sha256:93d1b995ad7ce21e62db649f361048125dd6022563a0ae8a23909465f1fd25b7", size = 23226, upload-time = "2019-08-03T19:38:00.494Z" }
 
 [[package]]
 name = "brotli"
@@ -395,6 +409,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/06/00/2456b6b664c7a770989cbe3c352aac4eb962c938486f03a2e1255ae963c6/cssselect2-0.10.1.tar.gz", hash = "sha256:83b0d820ef589dabaf693289b647c2f5b410f76d285f56deba911ffa75a7b9d1", size = 35653, upload-time = "2026-08-31T21:57:42.59Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/59/6b1daa3b94de8970e2a2787ba73616c2d0675d2f948ef4cad8bef7f21bc6/cssselect2-0.10.1-py3-none-any.whl", hash = "sha256:25cc4494d55985d6a6da359be48da6ce98c28dcbafa2314c383ace3fc32ec868", size = 15489, upload-time = "2026-08-31T21:57:41.162Z" },
+]
+
+[[package]]
+name = "dkimpy"
+version = "1.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dnspython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f0/6f/84e91828186bbfcedd7f9385ef5e0d369632444195c20e08951b7ffe0481/dkimpy-1.1.8.tar.gz", hash = "sha256:b5f60fb47bbf5d8d762f134bcea0c388eba6b498342a682a21f1686545094b77", size = 66979, upload-time = "2024-07-04T22:16:38.321Z" }
+
+[package.optional-dependencies]
+arc = [
+    { name = "authres" },
 ]
 
 [[package]]
@@ -761,6 +789,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/47/8430452269cd28863
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/1d/23801cf008f71575f0a4800463f349afa5f04b27fe783178a45cdc4d5edf/pyphen-0.18.1-py3-none-any.whl", hash = "sha256:0aa9051e15928cecadd4c632cea0258ba57215b2a197a39baa46abcdb0f47e84", size = 2116143, upload-time = "2026-08-14T11:30:10.428Z" },
 ]
+
+[[package]]
+name = "pyspf"
+version = "2.0.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/dc/5b3838ff90474e21fe0914920c53430f73402e07d6598ea228e61b74963e/pyspf-2.0.14.tar.gz", hash = "sha256:57a7ef01bda090173aafb6af0106251686ed73f03db4e911fcd34c57fc347186", size = 69446, upload-time = "2020-01-02T02:54:37.109Z" }
 
 [[package]]
 name = "pytest"
