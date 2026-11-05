@@ -517,13 +517,16 @@ def test_principal_org_ids_reveals_org_ids_only(superuser_engine: Engine) -> Non
             ).scalar_one()
             for column in ("org_id", "platform_user_id", "key_ciphertext", "key_id")
         }
-        other_tables = conn.execute(
+        # Table-level privileges anywhere: only DELETE on inbound_mail, which has no column form
+        # (the 0012 purge; its policy spares rows younger than a day).
+        table_grants = conn.execute(
             text(
-                "SELECT count(*) FROM pg_tables t WHERE t.schemaname = 'public' AND ("
-                " has_table_privilege('andai_scan', format('%I.%I', t.schemaname, t.tablename),"
-                "   'SELECT, INSERT, UPDATE, DELETE'))"
+                "SELECT t.tablename, p.privilege FROM pg_tables t"
+                " CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p(privilege)"
+                " WHERE t.schemaname = 'public' AND has_table_privilege('andai_scan',"
+                "   format('%I.%I', t.schemaname, t.tablename), p.privilege)"
             )
-        ).scalar_one()
+        ).all()
         can_create = conn.execute(
             text("SELECT has_schema_privilege('andai_scan', 'public', 'CREATE')")
         ).scalar_one()
@@ -534,7 +537,7 @@ def test_principal_org_ids_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert columns == {
         "org_id": True, "platform_user_id": False, "key_ciphertext": False, "key_id": False
     }
-    assert other_tables == 0
+    assert [tuple(row) for row in table_grants] == [("inbound_mail", "DELETE")]
     assert can_create is False
 
 

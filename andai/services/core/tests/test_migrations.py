@@ -5,10 +5,18 @@ from __future__ import annotations
 from alembic import command
 from sqlalchemy import Engine, create_engine, text
 
-from andai_core.db.models import GLOBAL_TABLES, ORG_SCOPED_TABLES, SYSTEM_TABLES, Base
+from andai_core.db.models import (
+    GLOBAL_TABLES,
+    INTAKE_TABLES,
+    ORG_SCOPED_TABLES,
+    SYSTEM_TABLES,
+    Base,
+)
 from conftest import Postgres, alembic_config
 
-ALL_TABLES = set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES) | set(SYSTEM_TABLES)
+ALL_TABLES = (
+    set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES) | set(SYSTEM_TABLES) | set(INTAKE_TABLES)
+)
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -109,7 +117,10 @@ def test_app_role_grants(migrated: Postgres) -> None:
 
     crud = {"SELECT", "INSERT", "UPDATE", "DELETE"}
     for table in (
-        ALL_TABLES - {"audit_events", "mom_documents", "meeting_removals"} - set(SYSTEM_TABLES)
+        ALL_TABLES
+        - {"audit_events", "mom_documents", "meeting_removals"}
+        - set(SYSTEM_TABLES)
+        - set(INTAKE_TABLES)
     ):
         assert granted[table] == crud, table
     assert granted["audit_events"] == {"INSERT"}
@@ -118,13 +129,15 @@ def test_app_role_grants(migrated: Postgres) -> None:
     for table in set(SYSTEM_TABLES) - {"platform_webhook_events"}:  # kept, never deleted
         assert granted[table] == {"SELECT", "INSERT", "UPDATE"}, table
     assert granted["platform_webhook_events"] == {"SELECT", "INSERT"}  # an event is a fact
+    # Column SELECT without `raw` only; andai-intake writes through the 0012 functions.
+    assert granted["inbound_mail"] == set()
     assert tuple(app_role) == (False, False, False, False)
     assert version_table is False
 
 
 # andai_scan's UPDATE column grants at head: the ingest columns (0006), the deletion lease (0009),
-# and the MoM and recap state and leases (0010).
-HEAD_SCAN_UPDATES = 3 + 1 + 5
+# the MoM and recap state and leases (0010), and the inbound mail state (0012).
+HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15
 
 TRANSCRIPT_COLUMNS = {
     "title",
@@ -182,6 +195,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
             "mom_documents",
             "meeting_removals",
             "platform_webhook_events",
+            "inbound_mail",
         }
         assert not TRANSCRIPT_COLUMNS & _meeting_columns(engine)
         assert _scan_objects(engine) == (0, 0, 0)
@@ -219,6 +233,7 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
             "mom_documents",
             "meeting_removals",
             "platform_webhook_events",
+            "inbound_mail",
         }
         assert not LIST_INDEXES & _meeting_indexes(engine)
 
@@ -272,6 +287,7 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
             "mom_documents",
             "meeting_removals",
             "platform_webhook_events",
+            "inbound_mail",
         }
         assert _search_state(engine) == (set(), False, False)
 
@@ -329,7 +345,11 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
 
         command.downgrade(config, "0008")
         assert _revision(engine) == "0008"
-        assert _tables(engine) == ALL_TABLES - {"meeting_removals", "platform_webhook_events"}
+        assert _tables(engine) == ALL_TABLES - {
+            "meeting_removals",
+            "platform_webhook_events",
+            "inbound_mail",
+        }
         present, functions, selectable, updatable, body_0008 = _deletion_state(engine)
         assert (present, functions, selectable, updatable) == (False, 0, set(), set())
         assert _scan_objects(engine) == (1, 1, 3)
@@ -612,3 +632,302 @@ def test_stored_devanagari_forms_are_refolded(migrated: Postgres) -> None:
     finally:
         superuser.dispose()
         _drop_database(migrated, name)
+
+
+# ─── 0012: the notetaker mailbox ──────────────────────────────────────────────────────────────────
+
+INBOUND_FUNCTIONS = (
+    "andai_store_inbound",
+    "andai_claim_inbound",
+    "andai_finish_inbound",
+    "andai_release_inbound",
+    "andai_purge_inbound",
+)
+
+
+def _inbound_state(engine: Engine) -> tuple[bool, int]:
+    """(inbound_mail present, inbound functions)."""
+    with engine.connect() as conn:
+        functions = conn.execute(
+            text("SELECT count(*) FROM pg_proc WHERE proname = ANY(:n)"),
+            {"n": list(INBOUND_FUNCTIONS)},
+        ).scalar_one()
+    return "inbound_mail" in _tables(engine), functions
+
+
+def test_inbound_mail_downgrade_to_0011_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        assert _inbound_state(engine) == (True, 5)
+
+        command.downgrade(config, "0011")
+        assert _revision(engine) == "0011"
+        assert _inbound_state(engine) == (False, 0)
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 15
+
+        command.upgrade(config, "head")
+        assert _inbound_state(engine) == (True, 5)
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
+    finally:
+        engine.dispose()
+
+
+def test_inbound_functions_belong_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT p.proname, p.prosecdef, pg_get_userbyid(p.proowner), p.proconfig,"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_owner', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = ANY(:n)"
+                ),
+                {"n": list(INBOUND_FUNCTIONS)},
+            ).all()
+            forced = conn.execute(
+                text(
+                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class"
+                    " WHERE relname = 'inbound_mail'"
+                )
+            ).one()
+            policies = {
+                row.policyname: (row.cmd, list(row.roles))
+                for row in conn.execute(
+                    text("SELECT policyname, cmd, roles FROM pg_policies"
+                         " WHERE tablename = 'inbound_mail'")
+                )
+            }
+    finally:
+        engine.dispose()
+    assert policies == {
+        "org_read": ("SELECT", ["public"]),
+        "scan_read": ("SELECT", ["andai_scan"]),
+        "scan_insert": ("INSERT", ["andai_scan"]),
+        "scan_update": ("UPDATE", ["andai_scan"]),
+        "scan_purge": ("DELETE", ["andai_scan"]),
+    }
+    assert {row[0] for row in rows} == set(INBOUND_FUNCTIONS)
+    for name, definer, owner, config, app_may, owner_may in rows:
+        assert (definer, owner, app_may) == (True, "andai_scan", True), name
+        assert config == ["search_path=public, pg_temp"], name
+        assert owner_may is True, name  # a member of andai_scan, so it inherits EXECUTE
+    assert tuple(forced) == (True, True)
+
+
+def _store(engine: Engine, raw: bytes, **envelope):
+    from andai_core.db.session import transaction
+
+    with transaction(engine) as tx:
+        return tx.execute(
+            text(
+                "SELECT id, duplicate FROM andai_store_inbound(:raw, :mail_from, :rcpt,"
+                " CAST(:peer AS inet), :helo, :message_id)"
+            ),
+            {
+                "raw": raw,
+                "mail_from": envelope.get("mail_from", "organiser@example.test"),
+                "rcpt": envelope.get("rcpt", ["notetaker@munshi.test"]),
+                "peer": envelope.get("peer", "192.0.2.25"),
+                "helo": envelope.get("helo", "mx.example.test"),
+                "message_id": envelope.get("message_id", "<m@example.test>"),
+            },
+        ).one()
+
+
+def _claim(engine: Engine, wanted, max_rows: int = 1000) -> dict:
+    """Claim due messages and return the claimed rows among `wanted` ids, by id."""
+    from andai_core.db.session import transaction
+
+    with transaction(engine) as tx:
+        rows = tx.execute(text("SELECT * FROM andai_claim_inbound(:m)"), {"m": max_rows}).all()
+    return {row.id: row for row in rows if row.id in set(wanted)}
+
+
+def _finish(engine: Engine, mail_id, **fields) -> bool:
+    from andai_core.db.session import transaction
+
+    values = {
+        "status": "quarantined",
+        "outcome": "quarantined",
+        "reason": "unknown_user",
+        "ignore": None,
+        "org": None,
+        "user": None,
+        "sender": "member@a.example.test",
+        "auth": "dmarc_pass",
+        "summary": '{"spf": "pass", "dkim": "pass"}',
+        "subject": "Weekly sync",
+        **fields,
+    }
+    with transaction(engine) as tx:
+        return tx.execute(
+            text(
+                "SELECT andai_finish_inbound(:id, :status, :outcome, :reason, :ignore, :org,"
+                " :user, :sender, :auth, CAST(:summary AS jsonb), :subject)"
+            ),
+            {"id": mail_id, **values},
+        ).scalar_one()
+
+
+def _visible(engine: Engine, org_id) -> set:
+    from andai_core.db.session import transaction
+
+    with transaction(engine, org_id=org_id) as tx:
+        return set(tx.execute(text("SELECT id FROM inbound_mail")).scalars())
+
+
+def test_inbound_store_keeps_the_bytes_once_and_shows_them_to_no_org(
+    app_engine: Engine, superuser_engine: Engine
+) -> None:
+    import hashlib
+    import secrets
+
+    from conftest import bootstrap_org, new_user
+
+    raw = b"Message-ID: <x@example.test>\r\nSubject: hi\r\n\r\nbody " + secrets.token_bytes(16)
+    first = _store(app_engine, raw, rcpt=["notetaker@munshi.test", "Notes@munshi.test"])
+    again = _store(app_engine, raw)
+    assert first.duplicate is False
+    assert (again.id, again.duplicate) == (first.id, True)
+
+    with superuser_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, raw, raw_sha256, mail_from, rcpt_to, host(peer_ip) AS peer, helo,"
+                " message_id, status, attempts, org_id FROM inbound_mail WHERE raw_sha256 = :s"
+            ),
+            {"s": hashlib.sha256(raw).hexdigest()},
+        ).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert bytes(row.raw) == raw
+    assert (row.mail_from, row.rcpt_to, row.peer, row.helo, row.message_id) == (
+        "organiser@example.test",
+        ["notetaker@munshi.test", "Notes@munshi.test"],
+        "192.0.2.25",
+        "mx.example.test",
+        "<m@example.test>",
+    )
+    assert (row.status, row.attempts, row.org_id) == ("received", 0, None)
+
+    # A row nobody attributed is visible to no org, nor without an org.
+    org = bootstrap_org(app_engine, new_user(app_engine))
+    assert first.id not in _visible(app_engine, org)
+    assert first.id not in _visible(app_engine, None)
+
+
+def test_inbound_store_refuses_an_empty_message_or_no_recipient(app_engine: Engine) -> None:
+    import pytest
+    from sqlalchemy.exc import DBAPIError
+
+    with pytest.raises(DBAPIError, match="empty message"):
+        _store(app_engine, b"")
+    with pytest.raises(DBAPIError, match="no recipient"):
+        _store(app_engine, b"x", rcpt=[])
+
+
+def test_inbound_finish_attributes_a_message_to_exactly_one_org(
+    app_engine: Engine, superuser_engine: Engine
+) -> None:
+    import json
+    import secrets
+
+    from conftest import bootstrap_org, new_user
+
+    user_a = new_user(app_engine)
+    org_a = bootstrap_org(app_engine, user_a)
+    org_b = bootstrap_org(app_engine, new_user(app_engine))
+    stored = _store(app_engine, secrets.token_bytes(64))
+    other = _store(app_engine, secrets.token_bytes(64))
+
+    claimed = _claim(app_engine, {stored.id, other.id})
+    assert set(claimed) == {stored.id, other.id}
+    assert claimed[stored.id].attempts == 1
+    subject = "S" * 300
+    assert _finish(app_engine, stored.id, org=org_a, user=user_a, subject=subject) is True
+    assert _finish(app_engine, stored.id) is False  # no longer in processing
+
+    with superuser_engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT * FROM inbound_mail WHERE id = :i"), {"i": stored.id}
+        ).one()._mapping
+    assert row["status"] == "quarantined"
+    assert row["outcome"] == "quarantined"
+    assert row["quarantine_reason"] == "unknown_user"
+    assert row["ignore_reason"] is None
+    assert (row["org_id"], row["resolved_user_id"]) == (org_a, user_a)
+    assert (row["sender"], row["sender_auth"]) == ("member@a.example.test", "dmarc_pass")
+    assert row["auth_summary"] == json.loads('{"spf": "pass", "dkim": "pass"}')
+    assert row["subject_trim"] == "S" * 120
+    assert row["processed_at"] is not None and row["lease_until"] is None
+    assert row["raw"] is not None  # finishing keeps the bytes until the purge
+
+    assert stored.id in _visible(app_engine, org_a)
+    assert stored.id not in _visible(app_engine, org_b)
+    assert other.id not in _visible(app_engine, org_a)  # still unattributed
+
+    import pytest
+    from sqlalchemy.exc import DBAPIError
+
+    with pytest.raises(DBAPIError, match="status must be one of"):
+        _finish(app_engine, other.id, status="received")
+    with pytest.raises(DBAPIError, match="ck_inbound_mail_quarantined_has_reason"):
+        _finish(app_engine, other.id, reason=None)
+    assert _finish(
+        app_engine, other.id, status="ignored", outcome="ignored", reason=None,
+        ignore="auto_join_off", org=org_b,
+    ) is True
+    assert other.id in _visible(app_engine, org_b)
+
+
+def test_inbound_release_and_an_expired_lease_make_a_message_claimable_again(
+    app_engine: Engine, superuser_engine: Engine
+) -> None:
+    import secrets
+
+    from andai_core.db.session import transaction
+
+    released = _store(app_engine, secrets.token_bytes(64))
+    crashed = _store(app_engine, secrets.token_bytes(64))
+    assert set(_claim(app_engine, {released.id, crashed.id})) == {released.id, crashed.id}
+    assert _claim(app_engine, {released.id, crashed.id}) == {}  # leased
+
+    with transaction(app_engine) as tx:
+        assert tx.execute(
+            text("SELECT andai_release_inbound(:i, :e)"), {"i": released.id, "e": "x" * 500}
+        ).scalar_one() is True
+    with superuser_engine.begin() as conn:  # the processor holding `crashed` died
+        conn.execute(
+            text("UPDATE inbound_mail SET lease_until = now() - interval '1 second' WHERE id = :i"),
+            {"i": crashed.id},
+        )
+        last_error = conn.execute(
+            text("SELECT status, last_error FROM inbound_mail WHERE id = :i"), {"i": released.id}
+        ).one()
+    assert (last_error.status, len(last_error.last_error)) == ("received", 200)
+
+    again = _claim(app_engine, {released.id, crashed.id})
+    assert {i: r.attempts for i, r in again.items()} == {released.id: 2, crashed.id: 2}
+
+
+def test_app_role_cannot_write_inbound_mail_or_read_its_raw_bytes(
+    app_engine: Engine,
+) -> None:
+    import pytest
+    from sqlalchemy.exc import ProgrammingError
+
+    from andai_core.db.session import transaction
+
+    statements = (
+        "UPDATE inbound_mail SET status = 'done'",
+        "DELETE FROM inbound_mail",
+        "INSERT INTO inbound_mail (raw_sha256, mail_from, rcpt_to)"
+        " VALUES (repeat('a', 64), 'x', ARRAY['y'])",
+        "SELECT raw FROM inbound_mail",
+    )
+    for statement in statements:
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            with transaction(app_engine) as tx:
+                tx.execute(text(statement))
