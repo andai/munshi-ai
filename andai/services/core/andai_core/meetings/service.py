@@ -29,11 +29,14 @@ again here, since the live-link index leaves `scheduled` rows out, and again by 
 row turns `dispatching`) or a D-38 removal ends it `cancelled` with `end_reason`
 `already_in_meeting` or `removed_by_participant`, never retried; one claimed at or after its
 `scheduled_end` (or one hour after its start when the end is unknown) ends `cancelled` with
-`meeting_ended`, so no bot is sent to a meeting that is over; a platform 422 fails it
-`meeting_not_found`; an org without a platform principal leaves it `scheduled` for the claim's
-backoff, and after `MAX_DISPATCH_ATTEMPTS` claims it fails `internal_error`. Otherwise it gets the
-full settings snapshot, turns `dispatching`, and the platform's answer is recorded and audited
-(`meeting.dispatch`) exactly as for a paste. A skipped or no longer scheduled meeting is left alone.
+`meeting_ended`, so no bot is sent to a meeting that is over; a gateway that cannot be reached,
+times out or answers 5xx puts it back to `scheduled` for the claim's backoff while attempts and time
+remain (a bot the timed-out call did start is found again as the platform's duplicate); a platform
+422 fails it `meeting_not_found`; an org without a platform principal leaves it `scheduled` for the
+claim's backoff, and after `MAX_DISPATCH_ATTEMPTS` claims it fails `internal_error`. Otherwise it
+gets the full settings snapshot, turns `dispatching`, and the platform's answer is recorded and
+audited (`meeting.dispatch`) exactly as for a paste. A skipped or no longer scheduled meeting is
+left alone.
 
 **Canaries.** Source `canary` is accepted only from the canary org (`orgs.is_canary`, created once
 by `python -m andai_core canary-setup`), and that org sends nothing else, so canary bots never use
@@ -140,6 +143,11 @@ MEETING_ENDED = "meeting_ended"
 ASSUMED_DURATION = timedelta(hours=1)
 # How often andai-worker claims a scheduled meeting before it gives up on it (`start_scheduled`).
 MAX_DISPATCH_ATTEMPTS = 5
+# A scheduled meeting the gateway could not take (unreachable, timed out, 5xx) is claimed again
+# after this backoff (the claim's own lease: 30 s doubling, at most 15 minutes).
+RETRY_BASE = timedelta(seconds=30)
+RETRY_MAX = timedelta(minutes=15)
+GATEWAY_UNAVAILABLE = "gateway_unavailable"
 
 
 # ─── links ────────────────────────────────────────────────────────────────────────────────────────
@@ -489,7 +497,8 @@ class Meetings:
         returned, not raised, so the transaction commits). The flag says the platform started a bot
         that no live row holds any more (stopped meanwhile). A `scheduled` row (`start_scheduled`)
         is kept rather than deleted: another live row holding the platform meeting cancels it
-        (`already_in_meeting`), a platform 422 fails it (`meeting_not_found`)."""
+        (`already_in_meeting`), a platform 422 fails it (`meeting_not_found`), and an unreachable
+        gateway, a timeout or a 5xx puts it back to `scheduled` while it may be retried."""
         now = self.clock()
         with self._tx(actor) as tx:
             meeting = tx.get(Meeting, meeting_id, with_for_update=True)
@@ -534,7 +543,10 @@ class Meetings:
                     tx.delete(meeting)
                     tx.flush()
                     return PLATFORM_REJECTED_LINK, False
-                _fail(meeting, _refused_reason(outcome.status), now)
+                if scheduled and _retryable(meeting, outcome, now):
+                    _requeue(meeting, now)
+                else:
+                    _fail(meeting, _refused_reason(outcome.status), now)
             else:
                 self._attach(tx, meeting, outcome, now)
             audit.record(tx, actor.org_id, actor.user_id, "meeting.dispatch", f"meeting:{meeting.id}")
@@ -732,6 +744,9 @@ class Meetings:
         if isinstance(result, MeetingError):  # not raised for a scheduled row; kept for typing
             return ScheduledStart("failed", None, result.code)
         status = result.meeting["status"]
+        if status == "scheduled":
+            log.info("scheduled meeting %s: retry (%s)", meeting_id, GATEWAY_UNAVAILABLE)
+            return ScheduledStart("retry", status, GATEWAY_UNAVAILABLE)
         if status == "cancelled" and result.meeting["end_reason"] == ALREADY_IN_MEETING:
             log.info("scheduled meeting %s: cancelled (%s)", meeting_id, ALREADY_IN_MEETING)
             return ScheduledStart("cancelled", status, ALREADY_IN_MEETING)
@@ -862,6 +877,25 @@ def _fail(meeting: Meeting, reason: str, now: datetime) -> None:
     meeting.status = "failed"
     meeting.failure_reason = reason
     meeting.ended_at = meeting.ended_at or now
+    meeting.updated_at = now
+
+
+def _retryable(meeting: Meeting, refusal: GatewayError, now: datetime) -> bool:
+    """Whether a scheduled meeting's dispatch is tried again: the gateway was unreachable, timed
+    out or answered 5xx, claims are left, and the occurrence has not ended."""
+    transient = refusal.status is None or refusal.status >= 500
+    return (
+        transient
+        and meeting.dispatch_attempts < MAX_DISPATCH_ATTEMPTS
+        and now < _scheduled_end(meeting)
+    )
+
+
+def _requeue(meeting: Meeting, now: datetime) -> None:
+    """Put a scheduled meeting back for the claim to take again after its backoff."""
+    backoff = RETRY_BASE * 2 ** min(max(meeting.dispatch_attempts - 1, 0), 5)
+    meeting.status = "scheduled"
+    meeting.dispatch_lease_until = now + min(backoff, RETRY_MAX)
     meeting.updated_at = now
 
 
