@@ -30,6 +30,11 @@ Without Docker those tests skip; `ANDAI_REQUIRE_DOCKER=1` makes that a failure.
   and the caps. It reads the BSD-2 calendars in `calendars/` (see the README there).
 - `test_invite_links.py` covers where join links are found, Safe Links, Proofpoint v1/v2/v3 and
   Google unwrapping, Mimecast, and refused links.
+- `test_sanitise.py` covers the fixture sanitiser, leak scan and auth report on synthetic mail
+  only: identifiers planted in headers, the calendar, wrapper URLs, Teams context and base64 parts
+  are all rewritten through one stable mapping, structure, time zones and UID shape are kept, the
+  re-signed DKIM and re-sealed ARC pass on stub DNS, and the leak scan and auth report print counts
+  and redacted classes only.
 
 - `test_events.py` covers the invite state machine without a database: create, update by SEQUENCE
   and DTSTAMP, stale and duplicate messages, out-of-order arrival, series and instance cancels,
