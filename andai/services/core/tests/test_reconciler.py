@@ -235,6 +235,36 @@ def test_a_dispatch_that_never_answered_fails_after_60_seconds(world: World) -> 
     assert world.gateway.calls == []  # no platform id, nothing to ask
 
 
+def test_a_scheduled_meeting_gets_60_seconds_from_its_dispatch_not_its_invite(
+    world: World,
+) -> None:
+    owner = world.a.owner
+    fresh, stuck = uuid.uuid4(), uuid.uuid4()
+    now = world.harness.clock()
+    from datetime import timedelta
+
+    with transaction(world.engine, org_id=owner.org_id) as tx:
+        for meeting_id, dispatching_for in ((fresh, 5), (stuck, 61)):
+            tx.add(
+                Meeting(
+                    id=meeting_id, org_id=owner.org_id, requested_by=owner.user_id,
+                    platform="zoom", join_url=f"https://zoom.us/j/{meeting_id.hex}",
+                    join_url_key=f"zoom.us/j/{meeting_id.hex}", status="dispatching",
+                    settings_snapshot={}, source="invite_mail",
+                    scheduled_start=now - timedelta(seconds=dispatching_for),
+                    created_at=now - timedelta(hours=3),
+                    updated_at=now - timedelta(seconds=dispatching_for),
+                )
+            )
+
+    world.tick()
+
+    with transaction(world.engine, org_id=owner.org_id) as tx:
+        rows = {m.id: m for m in tx.scalars(select(Meeting))}
+    assert rows[fresh].status == "dispatching" and rows[fresh].failure_reason is None
+    assert rows[stuck].status == "failed" and rows[stuck].failure_reason == "internal_error"
+
+
 def test_a_users_stop_is_not_overwritten(world: World) -> None:
     meeting = world.join(world.a)
     world.gateway.set(world.platform_id(meeting), status="awaiting_admission")

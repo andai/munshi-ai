@@ -13,8 +13,11 @@ connection; a second andai-core replica waits for it):
    status, failure reason, end reason and timestamps, and creates or updates the consent record
    (`consent.apply`). A row that reached a terminal state meanwhile (a user's stop) is left alone.
 
-A `dispatching` row with no platform meeting id older than 60 seconds (andai-core stopped between
-the insert and the dispatch) becomes `failed` / `internal_error`, so it never blocks its link.
+A `dispatching` row with no platform meeting id 60 seconds after it turned `dispatching`
+(andai-core stopped between the insert and the dispatch) becomes `failed` / `internal_error`, so it
+never blocks its link. The clock starts at `updated_at`, which every path that turns a row
+`dispatching` sets: a scheduled meeting's `created_at` is when its invite arrived, often hours
+before its dispatch.
 A platform status or reason `status_map` does not know is logged with its raw value.
 """
 
@@ -62,7 +65,8 @@ class OpenMeeting:
     id: uuid.UUID
     status: str
     platform_meeting_id: int | None
-    created_at: datetime
+    #: When the row last changed; for a `dispatching` row, when it turned `dispatching`.
+    updated_at: datetime
 
 
 @dataclass(frozen=True)
@@ -132,7 +136,7 @@ class Reconciler:
         with transaction(self.services.engine, org_id=org_id) as tx:
             rows = tx.execute(
                 select(
-                    Meeting.id, Meeting.status, Meeting.platform_meeting_id, Meeting.created_at
+                    Meeting.id, Meeting.status, Meeting.platform_meeting_id, Meeting.updated_at
                 ).where(Meeting.org_id == org_id, Meeting.status.not_in(TERMINAL_STATUSES))
             ).all()
             meetings = [OpenMeeting(*row) for row in rows]
@@ -174,7 +178,7 @@ class Reconciler:
                 if (
                     stale.platform_meeting_id is None
                     and stale.status == "dispatching"
-                    and now - stale.created_at >= STALE_DISPATCH
+                    and now - stale.updated_at >= STALE_DISPATCH
                 ):
                     row = tx.get(Meeting, stale.id, with_for_update=True)
                     if row is not None and row.status == "dispatching" and row.platform_meeting_id is None:
