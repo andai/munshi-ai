@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .callbacks import CallbackQueue
-from .kernel import QuotaExceeded, Runtime, StartFailed
+from .kernel import ClusterCapExceeded, QuotaExceeded, Runtime, StartFailed
 from .models import RuntimeEvent, StopReason, WorkloadSpec
 from .obs import TraceMiddleware, log_event
 from .scheduler import Scheduler
@@ -129,6 +129,16 @@ def create_app(
                 fields={"workload_id": spec.workloadId, "profile": spec.profile, "error": str(e)},
             )
             raise HTTPException(status_code=502, detail=str(e))
+        except ClusterCapExceeded as e:
+            # The cluster already runs `cap` bots: refused before any container or Pod exists.
+            log_event(
+                "workload_cluster_cap",
+                audience="system",
+                level="warning",
+                span="workloads.create",
+                fields={"workload_id": spec.workloadId, "profile": spec.profile, "cap": e.cap},
+            )
+            raise HTTPException(status_code=429, detail="capacity_exhausted")
         except QuotaExceeded as e:
             log_event(
                 "workload_quota_exceeded",

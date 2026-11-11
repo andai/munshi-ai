@@ -126,6 +126,22 @@ def _kernel_grace_sec() -> float:
     return backend_grace + 5.0
 
 
+def _cluster_cap() -> int | None:
+    """``RUNTIME_MAX_ACTIVE_BOTS``: how many meeting bots may be starting or running at once.
+    Unset, empty or 0 ⇒ no cap. Anything else that is not a positive integer is fatal at boot — a
+    cap silently dropped is overflow left Pending instead of refused."""
+    raw = os.getenv("RUNTIME_MAX_ACTIVE_BOTS", "").strip()
+    if not raw:
+        return None
+    try:
+        cap = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"RUNTIME_MAX_ACTIVE_BOTS must be an integer, got {raw!r}") from exc
+    if cap < 0:
+        raise ValueError(f"RUNTIME_MAX_ACTIVE_BOTS must be 0 (no cap) or more, got {raw!r}")
+    return cap or None
+
+
 def build_production_app():
     """Wire the runtime API with the env-selected spawn backend + the env-driven profile registry,
     plus the durable cron scheduler (REDIS_URL) with a background tick loop."""
@@ -141,6 +157,7 @@ def build_production_app():
     # in the boot log and on /health BEFORE any workload runs. Capabilities never block boot.
     preflight()
 
+    cluster_cap = _cluster_cap()
     backend = _build_backend()
     # The agent worker is its OWN image (core/agent/worker/Dockerfile — claude-code + node + the
     # `worker` package), NOT a rename of the agent-api image. With the Docker backend we ensure that
@@ -165,7 +182,10 @@ def build_production_app():
     # apply_command_overrides is a no-op unless BOT_COMMAND / AGENT_WORKER_COMMAND are set (the
     # process-backend / `lite` case) — docker/k8s keep the image entrypoints unchanged.
     profiles = apply_command_overrides(default_registry())
-    runtime = Runtime(backend=backend, profiles=profiles, grace_sec=_kernel_grace_sec())
+    runtime = Runtime(
+        backend=backend, profiles=profiles, grace_sec=_kernel_grace_sec(),
+        cluster_cap=cluster_cap,
+    )
     # Re-adopt the workloads this runtime spawned that are STILL on the substrate (containers/pods
     # survive a runtime recreate untouched): without this, the fresh in-memory registry 404s over a
     # live bot, and the control plane misreads that 404 as "bot gone" — the orphaned-live-bot

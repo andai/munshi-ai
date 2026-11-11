@@ -36,6 +36,14 @@ uv run pytest -q
 
 ## Status
 - ✅ delivered — `runtime.v1` lifecycle over process / Docker / K8s backends, with quotas (O-RT-2)
+- ✅ delivered — cluster-wide concurrent-bot cap (`RUNTIME_MAX_ACTIVE_BOTS`; unset or 0 = none): a
+  meeting-bot create over it is refused at once with 429 `capacity_exhausted` before any container or
+  Pod exists. Count and `starting` record are written under one lock, so the cap is exact for one
+  runtime process (the chart runs one replica); at the cap, running records are checked against the
+  substrate first, so a bot that exited on its own frees its slot. Agent workers are not counted.
+- ✅ delivered — k8s bot Pods get a memory-backed `/dev/shm` emptyDir (`RUNTIME_K8S_SHM_SIZE`, default
+  `2Gi`, empty = off; an invalid quantity is fatal at boot). It counts against the memory limit, so the
+  chart's bot default is 2560Mi.
 - ✅ delivered — **workspace tenant isolation, enforced by the substrate on all three backends**
   (`mounts.py` + `isolation.py`): docker = one volume-subpath bind per granted mount (engine ≥ v26 for
   named-volume stores; `:ro` roles enforced); k8s = per-mount `subPath`+`readOnly` volumeMounts; process
