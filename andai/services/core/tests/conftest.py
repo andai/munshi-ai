@@ -899,11 +899,15 @@ def enroll(client, clock: Clock):
 
 
 def audit_actions(superuser_engine: Engine, user_id: uuid.UUID) -> list[str]:
-    """The audit actions whose target is `user_id`, oldest first."""
+    """The audit actions whose target is `user_id`, oldest first, other than sign-ins
+    (`login.*`, which every signed-in test writes; `test_login_audit.py` covers them)."""
     with superuser_engine.connect() as conn:
         return list(
             conn.execute(
-                text("SELECT action FROM audit_events WHERE target = :t ORDER BY at, action"),
+                text(
+                    "SELECT action FROM audit_events WHERE target = :t"
+                    " AND action NOT LIKE 'login.%' ORDER BY at, action"
+                ),
                 {"t": f"user:{user_id}"},
             ).scalars()
         )

@@ -48,6 +48,7 @@ function navFor({ me, leadsATeam }: Loaded): { href: string; label: string }[] {
       { href: "/admin/security", label: "Security" },
       { href: "/admin/bot", label: "Bot" },
       { href: "/admin/intake", label: "Mail intake" },
+      { href: "/admin/audit", label: "Audit log" },
     );
   } else if (leadsATeam) {
     items.push({ href: "/admin/teams", label: "Teams" });

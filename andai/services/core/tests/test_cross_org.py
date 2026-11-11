@@ -391,6 +391,20 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         }
 
 
+def _last_audit(superuser_engine: Engine, org: SeededOrg) -> tuple:
+    """(actor, action, target) of the org's newest audit event."""
+    with superuser_engine.connect() as conn:
+        return tuple(
+            conn.execute(
+                text(
+                    "SELECT actor_user_id, action, target FROM audit_events WHERE org_id = :o"
+                    " ORDER BY at DESC, id DESC LIMIT 1"
+                ),
+                {"o": org.org_id},
+            ).one()
+        )
+
+
 def leaked(body: str, b: SeededOrg) -> list[str]:
     lowered = body.lower()
     return sorted(value for value in b.values if value and value.lower() in lowered)
@@ -525,6 +539,8 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("GET", "/api/v1/org/bot-settings"): (ADMINS, None),
     ("PUT", "/api/v1/org/bot-settings"): (ADMINS, {"autoJoin": "all_with_link"}),
     ("GET", "/api/v1/org/intake/quarantine"): (ADMINS, None),
+    ("GET", "/api/v1/org/audit"): (ADMINS, None),
+    ("GET", "/api/v1/org/audit/actions"): (ADMINS, None),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────
@@ -711,7 +727,17 @@ def test_public_routes_return_nothing_of_org_b(
 
     assert response.status_code < 500, response.text
     assert leaked(response.text, world.b) == []
-    assert b_state(superuser_engine, world.b) == before
+    after = b_state(superuser_engine, world.b)
+    if path == "/api/v1/auth/login":
+        # A failed sign-in to a B member belongs in B's own trail (one `login.failure`, OPS-04);
+        # nothing else of B changes.
+        [(count,)] = before["audit_events"]
+        assert after.pop("audit_events") == [(str(int(count) + 1),)]
+        before = {k: v for k, v in before.items() if k != "audit_events"}
+        assert _last_audit(superuser_engine, world.b) == (
+            None, "login.failure", f"user:{world.b.members['member'].user_id}"
+        )
+    assert after == before
     # Only a reset request mails anyone, and then only the address's own owner.
     sent = world.harness.mailer.outbox[outbox:]
     expected = [world.b.members["owner"].email] if path.endswith("/password-reset") else []
@@ -979,3 +1005,18 @@ def test_each_org_s_quarantine_lists_its_own_mail_only(world: World) -> None:
             subjects = [item["subject"] for item in response.json()["items"]]
             assert subjects == [f"{org.label} invite {org.tag}"], (org.label, role)
             assert leaked(response.text, other) == [], (org.label, role)
+
+
+def test_each_org_s_audit_trail_lists_its_own_events_only(world: World) -> None:
+    """The positive half: each org's admins page their own trail (the seeded auto-join change
+    among it) and never see an event, person or id of the other org."""
+    for org, other in ((world.a, world.b), (world.b, world.a)):
+        for role in ("owner", "admin"):
+            response = world.client(org, role).get(
+                "/api/v1/org/audit", params={"action": "bot.auto_join.update"}
+            )
+            assert response.status_code == 200, response.text
+            targets = {item["target"]["id"] for item in response.json()["items"]}
+            assert targets == {str(org.org_id), str(org.team)}, (org.label, role)
+            assert leaked(response.text, other) == [], (org.label, role)
+            assert str(other.org_id) not in response.text, (org.label, role)

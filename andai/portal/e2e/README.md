@@ -8,7 +8,11 @@ build never moves the images another stack runs), runs `make up` with the mock b
 bot (`BROWSER_IMAGE=mock-bot:dev`) and bootstraps the first organisation through the portal;
 `global-teardown.ts` removes the stack with its volumes and the bot containers it started. Specs:
 `smoke` (sign in/out, dark theme), `auth` (invite, reset, rate limit), `admin` (teams, roles,
-disabling, 403, team lead), `intake` (below), `twofa` (voluntary enrollment, lockout, recovery codes,
+disabling, 403, team lead), `audit` (the audit log in an organisation of its own: 60 events written
+inside andai-core through `audit.record`, then a share, two role changes, a member's wrong password
+and the owner's sign-in; newest first with names and titles, Load more to the end without
+duplicates, the action filter in the URL, an empty date range, clearing the filters; a member gets
+the 403 page), `intake` (below), `twofa` (voluntary enrollment, lockout, recovery codes,
 require-two-factor, admin reset), `meetings` (send the bot, live status and transcript, lobby
 instructions, failures, polling when the stream drops, a colleague's meeting, another organisation's
 404) and `dashboard` (the meeting list's sections, filters and Load more, the Unassigned action items

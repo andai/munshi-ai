@@ -26,6 +26,12 @@ Org administration for andai-core, under `/api/v1`:
   notetaker mail, newest first, 25 per keyset page — received time, sender, trimmed subject,
   reason, the check verdict and a one-sentence check summary; never the message itself. Mail no org
   was attributed is never listed.
+- `audit_log.py` — `GET /org/audit?from=&to=&action=&cursor=` (owners and admins): the org's audit
+  trail, newest first, 50 per keyset page, filtered by whole UTC days (30 by default, at most 366)
+  and by registered actions — time, actor (id and name), action and its category, target (type,
+  id and a name, title or null) and IP. `GET /org/audit/actions` lists the action registry
+  (`andai_core/audit_actions.py`) for the filter. Rows come only from the 0017 read function
+  `andai_audit_page`, which reads the caller's org alone; the app role cannot read the table.
 
 Role checks use `andai_core.auth.roles.require_role` (org roles, and team leads for a team route).
 Queries reach people through this org's memberships: `users` is a global table.

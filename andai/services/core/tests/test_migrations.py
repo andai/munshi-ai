@@ -17,6 +17,7 @@ from conftest import Postgres, alembic_config
 ALL_TABLES = (
     set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES) | set(SYSTEM_TABLES) | set(INTAKE_TABLES)
 )
+HEAD = "0017"
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -1123,7 +1124,7 @@ def test_bot_settings_downgrade_to_0013_and_upgrade_again(migrated: Postgres) ->
         assert _sender_lookup_state(engine)[0] == 2  # 0013 untouched
 
         command.upgrade(config, "head")
-        assert _revision(engine) == "0016"
+        assert _revision(engine) == HEAD
         assert _bot_settings_state(engine) == at_head
     finally:
         engine.dispose()
@@ -1248,7 +1249,7 @@ def test_invite_events_downgrade_to_0014_and_upgrade_again(
         assert statuses == {scheduled_id: "cancelled", live_id: "recording"}
 
         command.upgrade(config, "head")
-        assert _revision(engine) == "0016"
+        assert _revision(engine) == HEAD
         assert _invite_state(engine) == at_head
     finally:
         engine.dispose()
@@ -1339,7 +1340,7 @@ def test_scheduled_claim_downgrade_to_0015_and_upgrade_again(migrated: Postgres)
         assert _invite_state(engine)[0] is True  # 0015 untouched
 
         command.upgrade(config, "head")
-        assert _revision(engine) == "0016"
+        assert _revision(engine) == HEAD
         assert _dispatch_claim_state(engine) == at_head
         assert "scheduled_end" in _meeting_columns(engine)
         assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
@@ -1370,3 +1371,60 @@ def test_scheduled_claim_belongs_to_the_scan_role(migrated: Postgres) -> None:
         False,
         True,
     )
+
+
+# ─── 0017: the append-only audit trail and its page read ────────────────────────────────────────
+
+AUDIT_TRIGGERS = {"trg_audit_events_no_update_delete", "trg_audit_events_no_truncate"}
+AUDIT_FUNCTIONS = {"andai_audit_append_only", "andai_audit_page"}
+
+
+def _audit_state(engine: Engine) -> tuple:
+    """(triggers on audit_events, the 0017 functions, policies on audit_events, the page index,
+    andai_scan's SELECT on audit_events)."""
+    with engine.connect() as conn:
+        triggers = set(
+            conn.execute(
+                text(
+                    "SELECT tgname FROM pg_trigger"
+                    " WHERE tgrelid = 'audit_events'::regclass AND NOT tgisinternal"
+                )
+            ).scalars()
+        )
+        functions = set(
+            conn.execute(
+                text("SELECT proname FROM pg_proc WHERE proname = ANY(:n)"),
+                {"n": sorted(AUDIT_FUNCTIONS)},
+            ).scalars()
+        )
+        policies = set(
+            conn.execute(
+                text("SELECT policyname FROM pg_policies WHERE tablename = 'audit_events'")
+            ).scalars()
+        )
+        index = conn.execute(
+            text("SELECT count(*) FROM pg_class WHERE relname = 'ix_audit_events_org_id_at_id'")
+        ).scalar_one()
+        scan_select = conn.execute(
+            text("SELECT has_table_privilege('andai_scan', 'public.audit_events', 'SELECT')")
+        ).scalar_one()
+    return triggers, functions, policies, index, scan_select
+
+
+def test_audit_append_only_downgrade_to_0016_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    at_head = (AUDIT_TRIGGERS, AUDIT_FUNCTIONS, {"org_isolation", "scan_read"}, 1, True)
+    try:
+        assert _audit_state(engine) == at_head
+
+        command.downgrade(config, "0016")
+        assert _revision(engine) == "0016"
+        assert _audit_state(engine) == (set(), set(), {"org_isolation"}, 0, False)
+        assert _dispatch_claim_state(engine)[2] == "andai_scan"  # 0016 untouched
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == HEAD
+        assert _audit_state(engine) == at_head
+    finally:
+        engine.dispose()

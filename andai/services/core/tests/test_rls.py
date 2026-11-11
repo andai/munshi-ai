@@ -517,8 +517,9 @@ def test_principal_org_ids_reveals_org_ids_only(superuser_engine: Engine) -> Non
             ).scalar_one()
             for column in ("org_id", "platform_user_id", "key_ciphertext", "key_id")
         }
-        # Table-level privileges anywhere: only DELETE on inbound_mail, which has no column form
-        # (the 0012 purge; its policy spares rows younger than a day).
+        # Table-level privileges anywhere: SELECT on audit_events (the 0017 page read; its
+        # `scan_read` policy limits it to the transaction's org) and DELETE on inbound_mail, which
+        # has no column form (the 0012 purge; its policy spares rows younger than a day).
         table_grants = conn.execute(
             text(
                 "SELECT t.tablename, p.privilege FROM pg_tables t"
@@ -537,7 +538,10 @@ def test_principal_org_ids_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert columns == {
         "org_id": True, "platform_user_id": False, "key_ciphertext": False, "key_id": False
     }
-    assert [tuple(row) for row in table_grants] == [("inbound_mail", "DELETE")]
+    assert sorted(tuple(row) for row in table_grants) == [
+        ("audit_events", "SELECT"),
+        ("inbound_mail", "DELETE"),
+    ]
     assert can_create is False
 
 

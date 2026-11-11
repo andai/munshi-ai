@@ -17,4 +17,5 @@ calls with typed errors, and a live probe), `minutes/` (minutes templates, promp
 packing, draft generation with map-reduce, and the owner and due-date rules),
 `mail.py` (settings-only SMTP), `__main__.py` (operator CLI: `python -m andai_core bootstrap | principals-sync | canary-setup`),
 `db/` (schema and RLS-scoped transactions), `crypto.py` (envelope encryption of stored secrets
-under the KEK) and `audit.py` (append-only audit events).
+under the KEK), `audit.py` (append-only audit events) and `audit_actions.py` (the registry
+of audit actions; `python -m andai_core.audit_actions --markdown` prints `andai/docs/audit-actions.md`).

@@ -82,6 +82,8 @@ KNOWN = {
     ("GET", "/api/v1/org/bot-settings"),
     ("PUT", "/api/v1/org/bot-settings"),
     ("GET", "/api/v1/org/intake/quarantine"),
+    ("GET", "/api/v1/org/audit"),
+    ("GET", "/api/v1/org/audit/actions"),
     ("POST", "/internal/platform-events"),
 }
 

@@ -12,17 +12,27 @@ The enrollment routes under `/me/mfa` return the otpauth URI and QR code (start)
 codes (confirm, regenerate) exactly once, with `Cache-Control: no-store`; nothing returns a TOTP
 secret or a recovery code afterwards.
 Password reset never touches the enrollment, so it never bypasses the second step.
+
+Logins are audited in the user's oldest org: `login.success` (actor and target the user) in the
+login's transaction when the password step issues a session, whatever the next stage, and
+`login.failure` (no actor, target the user) when the email belongs to a user with an org, written
+after the 401 is sent. An unknown email and a rate-limited attempt write nothing, and the response
+is the same either way.
 """
 
 from __future__ import annotations
+
+import uuid
 
 import anyio.from_thread
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session as Tx
+from starlette.background import BackgroundTask
 
+from andai_core import audit
 from andai_core.auth import mfa, passwords, sessions
 from andai_core.auth.bootstrap import AlreadyBootstrapped, bootstrap
 from andai_core.auth.deps import (
@@ -50,6 +60,8 @@ TOO_MANY_ATTEMPTS = "too many attempts; try again later"
 INVALID_LINK = "this link is invalid or has expired"
 INVALID_CODE = "invalid code"
 NO_STORE = {"Cache-Control": "no-store"}
+LOGIN_SUCCESS = "login.success"
+LOGIN_FAILURE = "login.failure"
 
 
 class _Body(BaseModel):
@@ -88,15 +100,28 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _first_org(tx: Tx, user: User) -> OrgMembership | None:
+def _first_org(tx: Tx, user_id: uuid.UUID) -> OrgMembership | None:
     """The user's oldest membership (read through the `app.user_id` pre-context policy)."""
-    set_context(tx, user_id=user.id)
+    set_context(tx, user_id=user_id)
     return tx.scalar(
         select(OrgMembership)
-        .where(OrgMembership.user_id == user.id)
+        .where(OrgMembership.user_id == user_id)
         .order_by(OrgMembership.created_at, OrgMembership.org_id)
         .limit(1)
     )
+
+
+def _audit_failed_login(engine: Engine, user_id: uuid.UUID, ip: str | None) -> None:
+    """Record a failed login of a known user in their oldest org. It runs after the 401 is sent,
+    in its own transaction, so the extra reads and write never show in how long a known address
+    takes to fail. A user with no org leaves no trace: there is no org whose trail it would
+    belong to."""
+    with transaction(engine) as tx:
+        membership = _first_org(tx, user_id)
+        if membership is None:
+            return
+        set_context(tx, org_id=membership.org_id)
+        audit.record(tx, membership.org_id, None, LOGIN_FAILURE, f"user:{user_id}", ip)
 
 
 @router.post("/auth/login")
@@ -120,12 +145,13 @@ def login(
     stage = sessions.FULL
     with transaction(services.engine) as tx:
         user = tx.scalar(select(User).where(User.email == email))
+        known: uuid.UUID | None = None if user is None else user.id
         if user is None or user.password_hash is None:
             passwords.dummy_verify(body.password)
             ok = False
         else:
             ok = passwords.verify(user.password_hash, body.password) and user.status == "active"
-        membership = _first_org(tx, user) if ok and user is not None else None
+        membership = _first_org(tx, user.id) if ok and user is not None else None
         if user is not None and membership is not None:
             now = services.clock()
             if passwords.needs_rehash(user.password_hash or ""):
@@ -151,10 +177,16 @@ def login(
                 ip=ip,
                 user_agent=request.headers.get("user-agent"),
             )
+            audit.record(tx, org.id, user.id, LOGIN_SUCCESS, f"user:{user.id}", ip)
 
     if token is None:
         services.login_limiter.hit(key)
-        return JSONResponse({"detail": INVALID_LOGIN}, status_code=401)
+        audit_failure = (
+            None
+            if known is None
+            else BackgroundTask(_audit_failed_login, services.engine, known, ip)
+        )
+        return JSONResponse({"detail": INVALID_LOGIN}, status_code=401, background=audit_failure)
     services.login_limiter.clear(key)
     response = JSONResponse({"stage": stage})
     sessions.set_cookie(response, token, services.settings)

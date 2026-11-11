@@ -35,10 +35,12 @@ def test_record_writes_an_event(
 ) -> None:
     org_id, owner_id = org
     with transaction(app_engine, org_id=org_id, user_id=owner_id) as tx:
-        event_id = audit.record(tx, org_id, owner_id, "user.invite", "user:someone", "203.0.113.7")
+        event_id = audit.record(
+            tx, org_id, owner_id, "invite.create", "user:someone", "203.0.113.7"
+        )
     row = _event(superuser_engine, event_id)
     assert row is not None
-    assert row[:5] == (org_id, owner_id, "user.invite", "user:someone", "203.0.113.7")
+    assert row[:5] == (org_id, owner_id, "invite.create", "user:someone", "203.0.113.7")
     assert row[5] is not None
 
 
@@ -48,7 +50,7 @@ def test_record_rolls_back_with_the_callers_transaction(
     org_id, owner_id = org
     with pytest.raises(RuntimeError, match="action failed"):
         with transaction(app_engine, org_id=org_id) as tx:
-            event_id = audit.record(tx, org_id, owner_id, "settings.update", "org:settings")
+            event_id = audit.record(tx, org_id, owner_id, "bot.auto_join.update", "org:settings")
             raise RuntimeError("action failed")
     assert _event(superuser_engine, event_id) is None
 
@@ -60,7 +62,7 @@ def test_record_refuses_another_orgs_event(
     other_org = bootstrap_org(app_engine, new_user(app_engine))
     with pytest.raises(ProgrammingError, match="row-level security"):
         with transaction(app_engine, org_id=other_org) as tx:
-            audit.record(tx, org_id, owner_id, "user.invite", "user:someone")
+            audit.record(tx, org_id, owner_id, "invite.create", "user:someone")
 
 
 def test_record_requires_action_and_target(app_engine: Engine, org) -> None:
@@ -69,7 +71,7 @@ def test_record_requires_action_and_target(app_engine: Engine, org) -> None:
         with pytest.raises(ValueError):
             audit.record(tx, org_id, owner_id, "", "user:someone")
         with pytest.raises(ValueError):
-            audit.record(tx, org_id, owner_id, "user.invite", "")
+            audit.record(tx, org_id, owner_id, "invite.create", "")
 
 
 @pytest.mark.parametrize(

@@ -1,8 +1,9 @@
 // Organisation settings and records for owners and admins, through andai-core (same-origin
 // /api/v1/org/*): the bot's auto-join setting for the organisation and per team
-// (GET/PUT /org/bot-settings), and the notetaker mail andai-intake quarantined for this organisation
-// (GET /org/intake/quarantine). andai-core decides who may read or change them (members and leads
-// get 403) and which rows a caller sees; the portal shows its answers as they are.
+// (GET/PUT /org/bot-settings), the notetaker mail andai-intake quarantined for this organisation
+// (GET /org/intake/quarantine) and the organisation's audit trail (GET /org/audit and
+// /org/audit/actions). andai-core decides who may read or change them (members and leads get 403)
+// and which rows a caller sees; the portal shows its answers as they are.
 
 import { api } from "@/lib/api";
 
@@ -53,4 +54,44 @@ export function listQuarantine(options: { cursor?: string | null; signal?: Abort
   if (options.cursor) params.set("cursor", options.cursor);
   const query = params.size ? `?${params}` : "";
   return api<QuarantinePage>(`/org/intake/quarantine${query}`, { signal: options.signal });
+}
+
+/** One audited action andai-core knows, for the filter and the row labels. */
+export type AuditAction = { key: string; category: string; label: string };
+
+export function listAuditActions(options: { signal?: AbortSignal } = {}): Promise<AuditAction[]> {
+  return api<AuditAction[]>("/org/audit/actions", { signal: options.signal });
+}
+
+/** One audit event. `actor.id` is null for the system and for a failed sign-in; `name` is null for a
+ * user who no longer exists. `target.label` is a member's name, a team's name or a meeting's title
+ * when andai-core may show one, else null. */
+export type AuditEvent = {
+  id: string;
+  at: string;
+  actor: { id: string | null; name: string | null };
+  action: string;
+  category: string | null;
+  target: { type: string; id: string; label: string | null };
+  ip: string | null;
+};
+
+export type AuditPage = { items: AuditEvent[]; next: string | null };
+
+/** Whole UTC days, both inclusive (`YYYY-MM-DD`; andai-core's default is the last 30 days), and one
+ * action key or none. */
+export type AuditFilters = { from?: string; to?: string; action?: string };
+
+/** Newest first, 50 per page; with `cursor` (a `next`), the page after it under the same filters. */
+export function listAudit(
+  filters: AuditFilters,
+  options: { cursor?: string | null; signal?: AbortSignal } = {},
+): Promise<AuditPage> {
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  if (filters.action) params.set("action", filters.action);
+  if (options.cursor) params.set("cursor", options.cursor);
+  const query = params.size ? `?${params}` : "";
+  return api<AuditPage>(`/org/audit${query}`, { signal: options.signal });
 }
