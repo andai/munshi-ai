@@ -8,6 +8,8 @@
 #   make -C andai bootstrap EMAIL=owner@example.com ORG="Example Ltd"   # first org + owner, once
 #   make -C andai principals-sync  # re-apply every org principal's platform settings (idempotent)
 #   make -C andai canary-setup     # create the canary org andai-worker sends canary bots as (once)
+#   make -C andai kek-status | kek-rewrap [DRY_RUN=1] [BATCH=100]   # key rotation (runbooks/key-rotation.md)
+#   make -C andai encryption-check PROJECT=andai-e2e   # are the project's data volumes on encrypted disks?
 #   make -C andai live-dispatch URL='<test meeting link>' LANGUAGE_CODE=en   # live harness (docs/live-test.md)
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
@@ -49,7 +51,7 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup live-dispatch agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap encryption-check live-dispatch agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
@@ -57,6 +59,8 @@ help:
 	@echo "make -C andai bootstrap EMAIL=a@b.c ORG=name [NAME=..]   first org + owner (mails a set-password link)"
 	@echo "make -C andai principals-sync                            re-apply org principals' platform settings (prefix, tapes off, cap)"
 	@echo "make -C andai canary-setup                               create the canary org + principal andai-worker uses (once)"
+	@echo "make -C andai kek-status | kek-rewrap [DRY_RUN=1] [BATCH=n]   sealed values per KEK | move them onto the active KEK"
+	@echo "make -C andai encryption-check PROJECT=name              do the project's Postgres + object-storage volumes sit on encrypted storage?"
 	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file] [PRIVACY_URL=url]   real bot into a TEST meeting (PRIVACY_URL: + chat notice)"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
@@ -92,11 +96,14 @@ _env-ready:
 ## are built (`images`), or pulled from ghcr.io/andai with PULL=1; nothing else is pulled
 ## except the allowlisted third-party images (postgres, valkey, versitygw). --no-build at start time.
 ## Once the stack is healthy, andai-core's database is created (db-init) and migrated (db-migrate).
+## Last, the encryption-at-rest verdict of the data volumes is printed as a warning; it never fails
+## the bring-up.
 up: _env-ready
 	$(ROOT)/andai/scripts/gen-secrets.sh "$(ENV_FILE)"
 	$(DC) config --format json | $(IMAGES) ensure --version $(VERSION) --platform $(PLATFORM) $(if $(filter 1,$(PULL)),--pull)
 	$(DC) up -d --no-build --wait --wait-timeout $(WAIT_TIMEOUT)
 	$(MAKE) --no-print-directory db-init db-migrate
+	@$(ROOT)/andai/scripts/encryption_check.sh "$(PROJECT)" || echo "warning: the data volumes of $(PROJECT) are not proved encrypted at rest; see andai/docs/encryption-at-rest.md" >&2
 
 ## db-init — create the `andai` database and the roles andai_owner / andai_app / andai_scan on the running
 ## postgres service by piping migrations/db-init.sql into psql inside the container (superuser over
@@ -142,6 +149,25 @@ principals-sync: _env-file
 ## Idempotent. Needs the andai database at head (db-migrate) and the KEK.
 canary-setup: _env-file
 	$(DC) exec -T andai-core python -m andai_core canary-setup
+
+## kek-status / kek-rewrap — key rotation in the running andai-core (andai/docs/runbooks/key-rotation.md).
+## kek-status prints how many sealed values each KEK wraps (exit 1 while any is under a key other
+## than the active one); kek-rewrap moves them onto the active KEK (idempotent; DRY_RUN=1 writes
+## nothing; BATCH=n rows per transaction). Both print counts and key ids only.
+DRY_RUN ?=
+BATCH ?=
+kek-status: _env-file
+	@$(DC) exec -T andai-core python -m andai_core kek-status
+
+kek-rewrap: _env-file
+	@$(DC) exec -T andai-core python -m andai_core kek-rewrap $(if $(filter 1,$(DRY_RUN)),--dry-run) $(if $(BATCH),--batch "$(BATCH)")
+
+## encryption-check — read-only: do PROJECT's Postgres and object-storage volumes sit on encrypted
+## storage (dm-crypt on Linux; FileVault under Docker Desktop on macOS)? Exit 0 encrypted, 1 NOT,
+## 2 unknown. PROJECT must be given (andai/docs/encryption-at-rest.md).
+encryption-check:
+	@test "$(origin PROJECT)" != file || { echo "usage: make -C andai encryption-check PROJECT=<compose project>" >&2; exit 2; }
+	@$(ROOT)/andai/scripts/encryption_check.sh "$(PROJECT)"
 
 ## live-dispatch — the live harness (andai/docs/live-test.md, andai/scripts/live_dispatch.py): with
 ## the operator test principal (tapes off, a key minted for the run and revoked after it), send the
