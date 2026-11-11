@@ -80,6 +80,9 @@ def engines(stack: dict[str, str]) -> Iterator[tuple[Engine, Engine]]:
 
 def _cleanup(superuser: Engine, org_id: uuid.UUID, owner_email: str) -> None:
     with superuser.begin() as conn:
+        # Audit rows are append-only (0017) and an org with audit rows cannot be deleted; a
+        # throwaway test org is removed with the superuser bypass the 0017 claim limit names.
+        conn.execute(text("SET LOCAL session_replication_role = replica"))
         for table in ("audit_events", "platform_principals", "org_memberships"):
             conn.execute(text(f"DELETE FROM {table} WHERE org_id = :o"), {"o": org_id})
         conn.execute(text("DELETE FROM orgs WHERE id = :o"), {"o": org_id})

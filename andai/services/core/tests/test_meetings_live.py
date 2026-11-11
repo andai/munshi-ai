@@ -133,6 +133,9 @@ def _cleanup(
         for token in tokens.json() if tokens.status_code == 200 else []:
             client.delete(f"/admin/tokens/{token['id']}", headers=headers)
     with superuser.begin() as conn:
+        # Audit rows are append-only (0017) and an org with audit rows cannot be deleted; a
+        # throwaway test org is removed with the superuser bypass the 0017 claim limit names.
+        conn.execute(text("SET LOCAL session_replication_role = replica"))
         for table in (
             "consent_records", "meetings", "audit_events", "platform_principals",
             "team_memberships", "teams", "invites", "org_memberships",
