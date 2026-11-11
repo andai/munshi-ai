@@ -189,7 +189,7 @@ export function AuditLog() {
         </Field>
         <Field id="audit-action" label="Action">
           <Select value={action || ALL} onValueChange={(value) => setFilter("action", value === ALL ? "" : value)}>
-            <SelectTrigger id="audit-action" className="h-9 w-full" data-testid="audit-action">
+            <SelectTrigger id="audit-action" className="w-full data-[size=default]:h-9" data-testid="audit-action">
               <SelectValue placeholder="All actions" />
             </SelectTrigger>
             <SelectContent>
