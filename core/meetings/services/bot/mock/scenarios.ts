@@ -12,7 +12,8 @@
  * emission, and the mock CANNOT emit off-contract (P5/P16, ARCH §5). A scenario drives one backend
  * behaviour: normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
  * emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted · paced ·
- * hindi-lines (fixed Devanagari and Roman Hinglish lines). Selected by env
+ * hindi-lines (fixed Devanagari and Roman Hinglish lines) · hold (stays in `active`, one line every
+ * 30 s, until stopped or `hold_s` seconds pass — load tests). Selected by env
  * `MOCK_SCENARIO`, a bot name `mock:<scenario>`, or a `mock=<scenario>` query parameter on the meeting
  * URL (`scenarioFromMeetingUrl`), so a caller that sets neither env nor bot name can still pick one.
  */
@@ -23,7 +24,7 @@ import type { Invocation } from '../src/config.js';
 export type ScenarioName =
   | 'normal' | 'join-timeout' | 'reject' | 'crash' | 'immediate-stop'
   | 'continue' | 'speak-ack' | 'emit-n-segments' | 'slow-join' | 'recording'
-  | 'silence-left-alone' | 'left-alone' | 'evicted' | 'paced' | 'hindi-lines';
+  | 'silence-left-alone' | 'left-alone' | 'evicted' | 'paced' | 'hindi-lines' | 'hold';
 
 export interface Scenario {
   name: ScenarioName;
@@ -31,7 +32,8 @@ export interface Scenario {
   join: JoinOutcome;
   /** how long the driver stalls in awaiting_admission before resolving (slow-join). */
   joinDelayMs?: number;
-  /** transcript.v1 segments published during the active phase. */
+  /** transcript.v1 segments published during the active phase. `Infinity` keeps publishing until
+   *  the run ends, and then `endAfterMs` counts from the start of the active phase instead. */
   segments?: number;
   /** fixed texts for the published segments, in order (else `mock utterance N`). */
   lines?: readonly string[];
@@ -65,6 +67,11 @@ export const HINDI_LINES: readonly string[] = [
   'ok, phir milte hain',
 ];
 
+/** `hold`'s duration: `hold_s` on the meeting URL, in seconds, clamped to this range. */
+export const HOLD_DEFAULT_S = 600;
+export const HOLD_MIN_S = 60;
+export const HOLD_MAX_S = 7200;
+
 /** The scenario registry. Live timings; the fidelity test overrides them to run in milliseconds. */
 export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'normal':          { name: 'normal',          join: 'admitted', segments: 3, recording: true, endAfterMs: 1500, disclosure: 'chat' },
@@ -84,6 +91,9 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   'paced':           { name: 'paced',           join: 'admitted', joinDelayMs: 12000, segments: 8, segmentGapMs: 1500, endAfterMs: 2000, disclosure: 'chat' },
   // A Hindi/Hinglish meeting: the fixed HINDI_LINES and one recording chunk, then the same end as emit-n-segments.
   'hindi-lines':     { name: 'hindi-lines',     join: 'admitted', segments: HINDI_LINES.length, lines: HINDI_LINES, recording: true, endAfterMs: 1500 },
+  // Load tests: stays in `active` (andai: `recording`) with one line every 30 s until the backend
+  // stops it or `hold_s` seconds pass (holdSecondsFromMeetingUrl; main.ts sets endAfterMs from it).
+  'hold':            { name: 'hold',            join: 'admitted', segments: Infinity, segmentGapMs: 30000, endAfterMs: HOLD_DEFAULT_S * 1000 },
 };
 
 export function getScenario(name: string | undefined): Scenario {
@@ -102,6 +112,20 @@ export function scenarioFromMeetingUrl(meetingUrl: string | null | undefined): s
   } catch {
     return undefined;
   }
+}
+
+/** How long a `hold` meeting stays up, in seconds: the URL's `hold_s` clamped to
+ *  [HOLD_MIN_S, HOLD_MAX_S], or HOLD_DEFAULT_S when it is absent or not a whole number. */
+export function holdSecondsFromMeetingUrl(meetingUrl: string | null | undefined): number {
+  if (!meetingUrl) return HOLD_DEFAULT_S;
+  let raw: string | null;
+  try {
+    raw = new URL(meetingUrl).searchParams.get('hold_s');
+  } catch {
+    return HOLD_DEFAULT_S;
+  }
+  if (!raw || !/^\d+$/.test(raw)) return HOLD_DEFAULT_S;
+  return Math.min(HOLD_MAX_S, Math.max(HOLD_MIN_S, Number(raw)));
 }
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -165,26 +189,42 @@ export interface PipelineOpts {
 
 /** FakePipeline — on start() (post-admission), publishes the scenario's transcript.v1 segments through
  *  the REAL transcript sink, optionally uploads a recording chunk, then self-ends (→ stopped) unless the
- *  scenario waits for the backend. `crashOnStart` throws → the orchestrator emits failed(stage=active). */
+ *  scenario waits for the backend. `crashOnStart` throws → the orchestrator emits failed(stage=active).
+ *  An unbounded stream (`segments: Infinity`) runs until stop(), and its end timer starts with it. */
 export function fakePipeline(sc: Scenario, inv: Invocation, transcript: TranscriptSink, opts: PipelineOpts = {}): Pipeline {
   const gap = opts.segGapMs ?? sc.segmentGapMs ?? 50;
   const endAfter = opts.endAfterMs ?? sc.endAfterMs;
   let cancelled = false;
+  let endTimer: ReturnType<typeof setTimeout> | undefined;
+  let wake: (() => void) | undefined;
+  // The pause between segments; stop() cuts it short, so a 30 s gap never outlives the run.
+  const sleep = (ms: number) => new Promise<void>((r) => {
+    const t = setTimeout(() => { wake = undefined; r(); }, ms);
+    wake = () => { clearTimeout(t); wake = undefined; r(); };
+  });
   return {
     async start() {
       if (sc.crashOnStart) throw new Error('mock: simulated capture-init failure (crash scenario)');
+      const n = sc.segments ?? 0;
+      const unbounded = !Number.isFinite(n);
+      if (unbounded && endAfter != null) {
+        endTimer = setTimeout(() => { if (!cancelled) opts.endRun?.('stopped'); }, endAfter);
+      }
       // Run the active-phase work AFTER start() returns (the orchestrator subscribes acts next).
       void (async () => {
-        const n = sc.segments ?? 0;
         for (let i = 0; i < n && !cancelled; i++) {
           await transcript.publish(mockSegment(inv, i, sc.lines?.[i])).catch((e) => opts.log?.(`mock: publish failed: ${String(e)}`));
-          if (gap) await delay(gap);
+          if (gap) await sleep(gap);
         }
         if (sc.recording && opts.recordChunk) await opts.recordChunk().catch((e) => opts.log?.(`mock: recordChunk failed: ${String(e)}`));
-        if (endAfter != null) { await delay(endAfter); if (!cancelled) opts.endRun?.('stopped'); }
+        if (!unbounded && endAfter != null) { await delay(endAfter); if (!cancelled) opts.endRun?.('stopped'); }
       })();
     },
-    async stop() { cancelled = true; },
+    async stop() {
+      cancelled = true;
+      if (endTimer) clearTimeout(endTimer);
+      wake?.();
+    },
   };
 }
 

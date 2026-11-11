@@ -16,7 +16,7 @@ import { createHttpLifecycleSink } from '../src/adapters/lifecycle-http.js';
 import { createRedisTranscriptSink, redisClientFrom } from '../src/adapters/transcript-redis.js';
 import { createRedisActsSource, redisActsClientFrom } from '../src/adapters/acts-redis.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
-import { getScenario, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
+import { getScenario, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, holdSecondsFromMeetingUrl, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
 import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource, resolveAloneSilenceWindowMs } from '../src/aloneness.js';
 
@@ -104,8 +104,12 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
   let stopRef: (r: 'stopped') => void = () => {};
   const wantRecording = scenario.recording || inv.recordingEnabled;
   const join = fakeJoinDriver(scenario);
+  // `hold` lasts `hold_s` seconds from the meeting URL (load tests dispatch it as ?mock=hold&hold_s=S).
+  const holdMs = scenario.name === 'hold' ? holdSecondsFromMeetingUrl(inv.meetingUrl) * 1000 : undefined;
+  if (holdMs != null) console.log(`[mock] hold for ${holdMs / 1000}s`);
   const scenarioPipeline = fakePipeline(scenario, inv, transcript, {
     endRun: (r) => stopRef(r as 'stopped'),
+    endAfterMs: holdMs,
     recordChunk: wantRecording ? () => uploadMockChunk(inv, (m) => console.log(`[mock] ${m}`)) : undefined,
     log: (m) => console.log(`[mock] ${m}`),
   });

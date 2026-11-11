@@ -19,12 +19,16 @@ backend therefore sees prod-identical lifecycle.v1 emission, and the mock **cann
 
 **Scenarios:** `normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
 emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted · paced ·
-hindi-lines` — one per backend behaviour (lifecycle FSM · join-retry · attributable failure ·
+hindi-lines · hold` — one per backend behaviour (lifecycle FSM · join-retry · attributable failure ·
 max-bots-adjacent · recording receiver · acts round-trip · leave-when-alone · removal by a
-participant). Two more serve other checks: `paced` (12 s in the lobby, then 8 lines 1.5 s apart) is
-for watching a meeting in a browser, and `hindi-lines` (six fixed lines that mix Devanagari and
+participant). Three more serve other checks: `paced` (12 s in the lobby, then 8 lines 1.5 s apart) is
+for watching a meeting in a browser, `hindi-lines` (six fixed lines that mix Devanagari and
 Roman Hinglish, `HINDI_LINES`, and one recording chunk, then the same end as `emit-n-segments`) is
-for transcript normalisation, search and deletion. Selection, first match
+for transcript normalisation, search and deletion, and `hold` is for load tests: it stays in
+`active` with one line every 30 s until the backend stops it or `hold_s` seconds pass (from the
+meeting URL, `?mock=hold&hold_s=600`; default 600, clamped to 60–7200), so hundreds of mock
+meetings can be live at once. It exists only in this test-only mock; a real bot never reads
+`hold_s`. Selection, first match
 wins: env `MOCK_SCENARIO`, a bot name `mock:<scenario>`, a `mock=<scenario>` query parameter on the
 meeting URL. `normal` also
 reports a `chat` disclosure outcome when the invocation carries a `disclosure` (the real

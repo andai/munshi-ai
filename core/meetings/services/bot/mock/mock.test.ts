@@ -18,7 +18,7 @@ import { createOrchestrator } from '../src/orchestrator.js';
 import { canTransition, type Act, type BotStatus, type CompletionReason, type LifecycleEvent, type TranscriptSegment } from '../src/contracts.js';
 import type { ActsSource, LifecycleSink, TranscriptSink } from '../src/ports.js';
 import type { Invocation } from '../src/config.js';
-import { HINDI_LINES, SCENARIOS, type Scenario, type ScenarioName, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, getScenario, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
+import { HINDI_LINES, HOLD_DEFAULT_S, HOLD_MAX_S, HOLD_MIN_S, SCENARIOS, type Scenario, type ScenarioName, fakeAloneness, fakeChatSender, fakeJoinDriver, fakePipeline, getScenario, holdSecondsFromMeetingUrl, mockSegment, scenarioFromMeetingUrl } from './scenarios.js';
 import { runDisclosure, withPostAdmission } from '../src/disclosure.js';
 import { createRemoteAudioActivityTap, createSilenceAlonenessSource } from '../src/aloneness.js';
 
@@ -68,6 +68,7 @@ const EXPECT: Record<ScenarioName, Expect> = {
   'silence-left-alone': { status: 'completed', reason: 'left_alone' },
   'left-alone':      { status: 'completed', reason: 'left_alone' },
   'evicted':         { status: 'completed', reason: 'evicted' },
+  'hold':            { status: 'completed', reason: 'stopped', minSegs: 2 },
 };
 
 async function drive(sc: Scenario, exp: Expect) {
@@ -120,8 +121,70 @@ function scenarioSelection(): void {
   check('an unknown scenario name is refused', threw);
 }
 
+/** `hold` with its own timings: one segment every `gapMs`, self-end after `endAfterMs`, or a
+ *  backend `leave` after `leaveAfterMs`. Returns the run's events, segments and duration. */
+async function driveHold(gapMs: number, endAfterMs: number, leaveAfterMs?: number) {
+  const sc = SCENARIOS.hold;
+  const events: LifecycleEvent[] = [];
+  const segments: TranscriptSegment[] = [];
+  let stopRef: (r: CompletionReason) => void = () => {};
+  const pipeline = fakePipeline(sc, INV, { async publish(seg) { segments.push(seg); } }, {
+    endRun: (r) => stopRef(r), segGapMs: gapMs, endAfterMs,
+  });
+  const o = createOrchestrator(INV, {
+    lifecycle: { async emit(e) { events.push(e); } }, join: fakeJoinDriver(sc), pipeline,
+    acts: { subscribe() { return () => {}; } }, aloneness: fakeAloneness(sc),
+  });
+  stopRef = o.stop;
+  const t0 = Date.now();
+  const runP = o.run();
+  if (leaveAfterMs != null) setTimeout(() => { void o.handle({ action: 'leave' } as Act); }, leaveAfterMs);
+  const res = await Promise.race([runP, timeout(3000)]);
+  return { events, segments, res, ms: Date.now() - t0 };
+}
+
+async function holdScenario(): Promise<void> {
+  console.log('[hold]');
+  const sc = SCENARIOS.hold;
+  check('hold is admitted and streams without a segment limit',
+    sc.join === 'admitted' && sc.segments === Infinity && sc.segmentGapMs === 30000);
+  check('hold lasts 600 s unless the URL says otherwise', sc.endAfterMs === HOLD_DEFAULT_S * 1000 && HOLD_DEFAULT_S === 600);
+  const hs = (url: string | null) => holdSecondsFromMeetingUrl(url);
+  check('?mock=hold selects hold', scenarioFromMeetingUrl('https://zoom.us/j/12345678901?mock=hold&hold_s=180') === 'hold');
+  check('hold_s=180 holds 180 s', hs('https://zoom.us/j/12345678901?mock=hold&hold_s=180') === 180);
+  check('hold_s=600 holds 600 s', hs('https://zoom.us/j/12345678901?mock=hold&hold_s=600') === 600);
+  check('no hold_s holds the default', hs('https://zoom.us/j/12345678901?mock=hold') === HOLD_DEFAULT_S);
+  check('hold_s below the minimum is raised to it', hs('https://zoom.us/j/1?mock=hold&hold_s=5') === HOLD_MIN_S && HOLD_MIN_S === 60);
+  check('hold_s above the maximum is cut to it', hs('https://zoom.us/j/1?mock=hold&hold_s=99999') === HOLD_MAX_S && HOLD_MAX_S === 7200);
+  check('a hold_s that is not a whole number holds the default',
+    ['abc', '-5', '1.5', ''].every((v) => hs(`https://zoom.us/j/1?mock=hold&hold_s=${v}`) === HOLD_DEFAULT_S));
+  check('no URL or a non-URL holds the default', hs(null) === HOLD_DEFAULT_S && hs('not a url') === HOLD_DEFAULT_S);
+
+  // A segment every gap until hold_s ends the run: 20 ms gaps over a 210 ms hold ⇒ about 11.
+  const timed = await driveHold(20, 210);
+  const last = timed.events[timed.events.length - 1];
+  check('[hold] ends on its own at hold_s as completed/stopped',
+    timed.res !== 'timeout' && last?.status === 'completed' && last?.completion_reason === 'stopped', JSON.stringify(last));
+  check('[hold] stayed active until hold_s', timed.ms >= 200 && timed.ms < 1000, `${timed.ms} ms`);
+  check('[hold] published one segment per gap', timed.segments.length >= 8 && timed.segments.length <= 13, `got ${timed.segments.length}`);
+  check('[hold] every lifecycle.v1 event and segment conforms',
+    timed.events.every((e) => validateLifecycle(e)) && timed.segments.every((x) => validateSegment(x)));
+  const settled = timed.segments.length;
+  await new Promise((r) => setTimeout(r, 80));
+  check('[hold] publishes nothing after the run ends', timed.segments.length === settled, `${settled} → ${timed.segments.length}`);
+
+  // The live gap (30 s) and a far hold: the backend's stop ends it at once, mid-gap.
+  const stopped = await driveHold(30000, 60000, 40);
+  const end = stopped.events[stopped.events.length - 1];
+  check('[hold] a backend stop ends it as completed/stopped',
+    stopped.res !== 'timeout' && end?.status === 'completed' && end?.completion_reason === 'stopped', JSON.stringify(end));
+  check('[hold] the stop does not wait for the 30 s gap', stopped.ms < 1000, `${stopped.ms} ms`);
+  check('[hold] the first segment went out at once', stopped.segments.length === 1, `got ${stopped.segments.length}`);
+}
+
 async function main(): Promise<void> {
   scenarioSelection();
+  await holdScenario();
   for (const name of Object.keys(SCENARIOS) as ScenarioName[]) {
     const sc = SCENARIOS[name];
     const exp = EXPECT[name];
