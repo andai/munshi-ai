@@ -412,7 +412,8 @@ class FakeGateway:
     the principal does not own, 409 while it is live, 204 otherwise (again after a delete);
     `deletions` lists the ids in order. `fail` maps a call ("dispatch", "list bots",
     "get meeting", "stop", "get transcript", "get participants", "delete meeting") to a status to
-    answer; `dispatch_delay` stalls dispatch."""
+    answer, with the body `fail_body` holds for a failed dispatch; `dispatch_delay` stalls
+    dispatch."""
 
     LIVE = ("requested", "joining", "awaiting_admission", "active", "needs_human_help", "stopping")
 
@@ -428,6 +429,7 @@ class FakeGateway:
         self.deletions: list[int] = []
         self.calls: list[tuple[str, str]] = []
         self.fail: dict[str, int] = {}
+        self.fail_body: dict = {"detail": "refused"}
         self.dispatch_delay = 0.0
         self._ids = iter(range(5000, 10**9))
         import threading
@@ -493,7 +495,7 @@ class FakeGateway:
             return httpx.Response(401, json={"detail": "Invalid API key"})
         if request.method == "POST" and path == "/bots":
             if "dispatch" in self.fail:
-                return httpx.Response(self.fail["dispatch"], json={"detail": "refused"})
+                return httpx.Response(self.fail["dispatch"], json=self.fail_body)
             body = json.loads(request.content)
             if self.dispatch_delay:
                 time.sleep(self.dispatch_delay)

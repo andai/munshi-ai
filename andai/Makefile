@@ -11,6 +11,7 @@
 #   make -C andai kek-status | kek-rewrap [DRY_RUN=1] [BATCH=100]   # key rotation (runbooks/key-rotation.md)
 #   make -C andai encryption-check PROJECT=andai-e2e   # are the project's data volumes on encrypted disks?
 #   make -C andai live-dispatch URL='<test meeting link>' LANGUAGE_CODE=en   # live harness (docs/live-test.md)
+#   make -C andai load-test PROJECT=andai-e2e N=8 CAP=5 HOLD_S=180 EMAIL=… PASSWORD_FILE=…   # docs/load-test.md
 #   make -C andai images        # build every image in andai/images.json from this repo
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
 #   make -C andai env-check     # the root .env.example lists every variable a container reads
@@ -51,7 +52,7 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap encryption-check live-dispatch agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap encryption-check live-dispatch load-test agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
@@ -62,6 +63,7 @@ help:
 	@echo "make -C andai kek-status | kek-rewrap [DRY_RUN=1] [BATCH=n]   sealed values per KEK | move them onto the active KEK"
 	@echo "make -C andai encryption-check PROJECT=name              do the project's Postgres + object-storage volumes sit on encrypted storage?"
 	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file] [PRIVACY_URL=url]   real bot into a TEST meeting (PRIVACY_URL: + chat notice)"
+	@echo "make -C andai load-test PROJECT=name N=n CAP=c HOLD_S=s EMAIL=e PASSWORD_FILE=/abs [THRESHOLD=0.95] [REPORT=/abs/out.json]   mock-bot load test on a TEST stack"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
 	@echo "make -C andai env-check | env-example                    root .env.example is complete | regenerate its used-by lines"
@@ -182,6 +184,34 @@ LOG ?=
 live-dispatch: _env-file
 	@test -n "$(URL)" || { echo "usage: make -C andai live-dispatch URL='<test meeting link>' [LANGUAGE_CODE=en|hi] [STOP_AFTER=seconds] [LOG=/abs/file] [ENV_FILE=/abs/env] [PRIVACY_URL=https://… (posts the default recording notice in chat)]" >&2; exit 2; }
 	@uv run --directory $(ROOT)/andai python scripts/live_dispatch.py --env-file "$(ENV_FILE)" --url '$(URL)' --language "$(LANGUAGE_CODE)" $(if $(STOP_AFTER),--stop-after "$(STOP_AFTER)") $(if $(LOG),--log "$(LOG)") $(if $(PRIVACY_URL),--disclosure --privacy-url '$(PRIVACY_URL)')
+
+## load-test — N concurrent mock meetings through andai-core on a TEST stack (andai/docs/load-test.md,
+## andai_core.testing.load). Refuses PROJECT=andai-meet, a runtime whose bot image is not the mock bot
+## (the links are random Zoom numbers a real bot would try to join) and a runtime whose
+## RUNTIME_MAX_ACTIVE_BOTS is not CAP. Runs principals-sync first so the org cap the driver checks is
+## the one the platform applies. EMAIL/PASSWORD_FILE: a member of the load org, 2FA off. The report
+## (counts and timings only) goes to stdout and REPORT; exit 0 pass, 1 fail, 2 setup error.
+N ?=
+CAP ?=
+HOLD_S ?=
+PASSWORD_FILE ?=
+THRESHOLD ?= 0.95
+REPORT ?= $(or $(TMPDIR),/tmp)/munshi-load-report.json
+load-test: _env-file
+	@test "$(origin PROJECT)" != file && test -n "$(N)" && test -n "$(CAP)" && test -n "$(HOLD_S)" && test -n "$(EMAIL)" && test -n "$(PASSWORD_FILE)" || { echo "usage: make -C andai load-test PROJECT=<test project> N=n CAP=c HOLD_S=s EMAIL=member@load-org PASSWORD_FILE=/abs/file [THRESHOLD=0.95] [REPORT=/abs/out.json] [ENV_FILE=/abs/env]" >&2; exit 2; }
+	@test "$(PROJECT)" != andai-meet || { echo "load-test: refused on the live stack (PROJECT=andai-meet); use a test project" >&2; exit 2; }
+	@set -e; \
+	 image="$$($(DC) exec -T runtime printenv BROWSER_IMAGE || true)"; \
+	 case "$$image" in *mock-bot*) ;; *) echo "load-test: the runtime's bot image is not the mock bot; refusing (set BROWSER_IMAGE=mock-bot:dev)" >&2; exit 2;; esac; \
+	 cap="$$($(DC) exec -T runtime printenv RUNTIME_MAX_ACTIVE_BOTS || true)"; \
+	 if [ "$$cap" != "$(CAP)" ]; then echo "load-test: the runtime's RUNTIME_MAX_ACTIVE_BOTS is '$$cap', not CAP=$(CAP)" >&2; exit 2; fi; \
+	 $(DC) exec -T andai-core python -m andai_core principals-sync; \
+	 org_cap="$$($(DC) exec -T andai-core python -c 'from andai_core.settings import get_settings; print(get_settings().org_max_concurrent_bots)')"; \
+	 port="$$($(call env_value,ANDAI_CORE_PORT))"; origin="$$($(call env_value,ANDAI_PORTAL_ORIGIN))"; \
+	 uv run --directory $(ROOT)/andai python -m andai_core.testing.load \
+	   --base "http://127.0.0.1:$${port:-18300}" --origin "$${origin:-http://127.0.0.1:13100}" \
+	   --email "$(EMAIL)" --password-file "$(PASSWORD_FILE)" --org-cap "$$org_cap" \
+	   --n "$(N)" --cap "$(CAP)" --hold-s "$(HOLD_S)" --threshold "$(THRESHOLD)" --report "$(REPORT)"
 
 ## images — build every catalogue entry in order (bases first), tagged
 ## ghcr.io/andai/munshi-<name>:$(VERSION) and :dev; prints size and build time per image.
