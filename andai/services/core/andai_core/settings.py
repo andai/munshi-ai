@@ -33,9 +33,12 @@ class Settings(BaseSettings):
     db_url_app: SecretStr | None = Field(default=None, validation_alias="ANDAI_DB_URL_APP")
     db_url_owner: SecretStr | None = Field(default=None, validation_alias="ANDAI_DB_URL_OWNER")
 
-    # Key-encryption key: base64 of 32 bytes, inline or in a file (one of the two).
+    # Key-encryption key: base64 of 32 bytes, inline or in a file (one of the two). During a key
+    # rotation the previous keys sit in the retired file, one base64 key per line; they open values
+    # sealed under them but never seal (andai/docs/runbooks/key-rotation.md). Blank means unset.
     kek: SecretStr | None = Field(default=None, validation_alias="ANDAI_KEK")
     kek_file: Path | None = Field(default=None, validation_alias="ANDAI_KEK_FILE")
+    kek_retired_file: Path | None = Field(default=None, validation_alias="ANDAI_KEK_RETIRED_FILE")
 
     # The meeting platform's admin-api (per-org principal provisioning).
     platform_admin_url: str = Field(
@@ -153,6 +156,11 @@ class Settings(BaseSettings):
     @property
     def trusted_proxies(self) -> list[str]:
         return [p.strip() for p in self.trusted_proxies_raw.split(",") if p.strip()]
+
+    @field_validator("kek_file", "kek_retired_file", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("default_timezone")
     @classmethod

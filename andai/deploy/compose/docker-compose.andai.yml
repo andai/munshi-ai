@@ -48,6 +48,12 @@ services:
       - ANDAI_ENV=${ANDAI_ENV:-dev}
       - ANDAI_DB_URL_APP=postgresql+psycopg://andai_app:${ANDAI_DB_PASSWORD_APP?ANDAI_DB_PASSWORD_APP must be in the env file (gen-secrets.sh mints it)}@postgres:5432/andai
       - ANDAI_KEK=${ANDAI_KEK?ANDAI_KEK must be in the env file (gen-secrets.sh mints it)}
+      # Key rotation (andai/docs/runbooks/key-rotation.md): the previous KEKs, one base64 key per
+      # line, in a file readable only by uid 10001 and mounted read-only; empty when none, e.g.
+      #   volumes:
+      #     - /etc/munshi/andai-kek-retired:/run/secrets/andai-kek-retired:ro
+      # with ANDAI_KEK_RETIRED_FILE=/run/secrets/andai-kek-retired in the env file.
+      - ANDAI_KEK_RETIRED_FILE=${ANDAI_KEK_RETIRED_FILE:-}
       - PLATFORM_ADMIN_URL=http://admin-api:8001
       - PLATFORM_ADMIN_TOKEN=${ADMIN_TOKEN}
       - ANDAI_ORG_MAX_CONCURRENT_BOTS=${ANDAI_ORG_MAX_CONCURRENT_BOTS:-3}
@@ -114,6 +120,12 @@ services:
       - ANDAI_ENV=${ANDAI_ENV:-dev}
       - ANDAI_DB_URL_APP=postgresql+psycopg://andai_app:${ANDAI_DB_PASSWORD_APP?ANDAI_DB_PASSWORD_APP must be in the env file (gen-secrets.sh mints it)}@postgres:5432/andai
       - ANDAI_KEK=${ANDAI_KEK?ANDAI_KEK must be in the env file (gen-secrets.sh mints it)}
+      # Key rotation (andai/docs/runbooks/key-rotation.md): the previous KEKs, one base64 key per
+      # line, in a file readable only by uid 10001 and mounted read-only; empty when none, e.g.
+      #   volumes:
+      #     - /etc/munshi/andai-kek-retired:/run/secrets/andai-kek-retired:ro
+      # with ANDAI_KEK_RETIRED_FILE=/run/secrets/andai-kek-retired in the env file.
+      - ANDAI_KEK_RETIRED_FILE=${ANDAI_KEK_RETIRED_FILE:-}
       - PLATFORM_GATEWAY_URL=http://gateway:8000
       - ANDAI_BOT_NAME=${ANDAI_BOT_NAME:-}
       - ANDAI_DEFAULT_LANGUAGE=${ANDAI_DEFAULT_LANGUAGE:-en}
