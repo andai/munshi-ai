@@ -1,6 +1,6 @@
 """andai-worker `/metrics`: join counts across orgs through `andai_join_stats`, D-39 success rates,
 canary streaks, the deletion backlog through `andai_deletion_backlog`, the minutes pipeline through
-`andai_mom_stats`, and labels that carry no personal or customer data.
+`andai_mom_stats`, sealed secrets per KEK id, and labels that carry no personal or customer data.
 
 Each test that counts rows uses a brand-new database (`fresh_app_engine`), so the golden text is
 exact.
@@ -8,6 +8,7 @@ exact.
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -23,7 +24,13 @@ from andai_core.meetings.service import Meetings
 from andai_worker import metrics
 from andai_worker.main import WorkerServices, create_app
 from andai_worker.settings import WorkerSettings
-from .worker_support import canary_setup, make_harness, new_member, seed_meeting
+from .worker_support import (
+    canary_setup,
+    give_principal,
+    make_harness,
+    new_member,
+    seed_meeting,
+)
 
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
 
@@ -84,6 +91,7 @@ def _world(engine: Engine) -> dict:
         "emails": [a.email, b.email],
         "names": [canary_name],
         "meetings": ids,
+        "key_id": harness.services.keyring.key_id,
     }
 
 
@@ -145,7 +153,15 @@ munshi_mom_latency_seconds_bucket{le="3600.0"} 0.0
 munshi_mom_latency_seconds_bucket{le="+Inf"} 0.0
 munshi_mom_latency_seconds_count 0.0
 munshi_mom_latency_seconds_sum 0.0
+# HELP munshi_sealed_values Sealed values per table still wrapped by each key-encryption key (by key id).
+# TYPE munshi_sealed_values gauge
+munshi_sealed_values{key_id="WORLD_KEY_ID",table="platform_principals"} 1.0
 """
+
+
+def _golden(world: dict) -> str:
+    """The canary org's principal is the world's only sealed value, under the harness's KEK."""
+    return GOLDEN.replace("WORLD_KEY_ID", world["key_id"])
 
 
 def _scrape(engine: Engine) -> str:
@@ -153,9 +169,9 @@ def _scrape(engine: Engine) -> str:
 
 
 def test_metrics_text_golden(fresh_app_engine: Engine) -> None:
-    _world(fresh_app_engine)
+    world = _world(fresh_app_engine)
 
-    assert _scrape(fresh_app_engine) == GOLDEN
+    assert _scrape(fresh_app_engine) == _golden(world)
 
 
 def test_metrics_carry_no_links_names_emails_or_ids(fresh_app_engine: Engine) -> None:
@@ -169,7 +185,8 @@ def test_metrics_carry_no_links_names_emails_or_ids(fresh_app_engine: Engine) ->
     assert "http" not in body and "@" not in body and "secret" not in body
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", body)
     labels = set(re.findall(r'(\w+)="', body))
-    assert labels == {"platform", "source", "outcome", "reason", "le"}  # le: histogram bounds
+    # le: histogram bounds; table and key_id: sealed values per KEK
+    assert labels == {"platform", "source", "outcome", "reason", "le", "table", "key_id"}
 
 
 def test_collector_sees_every_org_while_the_app_role_sees_no_meeting(
@@ -242,7 +259,7 @@ def test_join_stats_returns_aggregates_only(superuser_engine: Engine) -> None:
 
 
 def test_metrics_endpoint(fresh_app_engine: Engine) -> None:
-    _world(fresh_app_engine)
+    world = _world(fresh_app_engine)
     harness = make_harness(fresh_app_engine)
     settings = WorkerSettings(ANDAI_ENV="dev")
     services = WorkerServices(
@@ -260,7 +277,7 @@ def test_metrics_endpoint(fresh_app_engine: Engine) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain; version=")
-    assert response.text == GOLDEN
+    assert response.text == _golden(world)
 
 
 def test_metrics_without_a_database_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,3 +361,47 @@ def test_the_minutes_metrics_count_every_org_and_measure_end_to_stored(
     assert abs(_value(scraped, "munshi_mom_latency_seconds_sum") - 465) < 0.01
     for leaked in (a.org_id, b.org_id, a.email, b.email):
         assert str(leaked) not in scraped
+
+
+def _sealed_series(body: str) -> dict[tuple[str, str], float]:
+    found = re.findall(
+        r'^munshi_sealed_values\{key_id="([^"]+)",table="([^"]+)"\} (\S+)$', body, re.MULTILINE
+    )
+    return {(table, key_id): float(value) for key_id, table, value in found}
+
+
+def test_sealed_values_count_each_table_by_key_id_and_are_cached_for_300_s(
+    fresh_app_engine: Engine,
+) -> None:
+    from andai_core.auth import mfa
+    from andai_core.crypto import KEY_BYTES, Keyring
+
+    engine = fresh_app_engine
+    harness = make_harness(engine)
+    old, new = os.urandom(KEY_BYTES), os.urandom(KEY_BYTES)
+    members = [new_member(engine) for _ in range(3)]
+    for i, member in enumerate(members):
+        harness.services.keyring = Keyring(old if i < 2 else new)
+        give_principal(harness, engine, member.org_id)
+        with transaction(engine) as tx:
+            mfa.start(tx, harness.services.keyring, user_id=member.user_id,
+                      email=member.email, now=T0)
+    now = [T0]
+    registry = metrics.registry_for(engine, lambda: now[0])
+    old_id, new_id = Keyring(old).key_id, Keyring(new).key_id
+
+    first = _sealed_series(metrics.render(registry).decode())
+    with transaction(engine) as tx:  # the third user's TOTP enrolment goes away
+        tx.execute(text("DELETE FROM user_totp WHERE user_id = :u"), {"u": members[2].user_id})
+    now[0] = T0 + timedelta(seconds=299)
+    cached = _sealed_series(metrics.render(registry).decode())
+    now[0] = T0 + timedelta(seconds=300)
+    fresh = _sealed_series(metrics.render(registry).decode())
+
+    expected = {
+        ("platform_principals", old_id): 2.0, ("platform_principals", new_id): 1.0,
+        ("user_totp", old_id): 2.0, ("user_totp", new_id): 1.0,
+    }
+    assert first == expected and cached == expected
+    # a key that wraps nothing in a table has no series there
+    assert fresh == {k: v for k, v in expected.items() if k != ("user_totp", new_id)}

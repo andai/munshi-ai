@@ -1,5 +1,5 @@
-"""Join, deletion and minutes metrics in Prometheus text format, computed from andai's own rows on
-every scrape.
+"""Join, deletion, minutes and sealed-secret metrics in Prometheus text format, computed from
+andai's own rows on every scrape (the sealed-secret counts at most every 300 s).
 
 The worker connects as `andai_app` and reads meetings across orgs only through
 `andai_join_stats(since)` (migration 0005), which returns `(platform, source, outcome, reason,
@@ -27,6 +27,10 @@ Exported series (labels are enums only: no link, name, email, org or id ever bec
 * `munshi_mom_failed_total` — meetings whose minutes failed after every attempt (`failed`).
 * `munshi_mom_latency_seconds` — histogram of meeting end → first minutes stored, over the meetings
   whose first minutes were stored in the last 24 h (SC2's p95 is read from it).
+* `munshi_sealed_values{table,key_id}` — sealed secrets per table still wrapped by each KEK
+  (`andai_core.sealed.counts_by_key`; a key id is a truncated hash, not the key). A key rotation
+  retires the old key only once its count is 0 (andai/docs/runbooks/key-rotation.md). Read at most
+  every 300 s: it visits each org's principal in its own transaction.
 
 `join_counts`, `rates` and `canary_summary` are shared with the alert evaluator, so a mail and the
 metrics never disagree about the numbers.
@@ -44,6 +48,7 @@ from prometheus_client.core import GaugeMetricFamily, HistogramMetricFamily, Met
 from sqlalchemy import Engine, text
 
 from andai_core.db.session import transaction
+from andai_core.sealed import counts_by_key
 
 WINDOW = timedelta(hours=24)
 ALL_SOURCES = "all"
@@ -289,11 +294,48 @@ class MomCollector:
         )
 
 
+SEALED_CACHE = timedelta(seconds=300)
+
+
+class SealedCollector:
+    """Sealed values per table and KEK id, read from the database at most every 300 s."""
+
+    def __init__(self, engine: Engine, clock: Callable[[], datetime]) -> None:
+        self.engine = engine
+        self.clock = clock
+        self._counts: dict[tuple[str, str], int] | None = None
+        self._read_at: datetime | None = None
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def _current(self) -> dict[tuple[str, str], int]:
+        now = self.clock()
+        stale = self._read_at is None or not (
+            timedelta(0) <= now - self._read_at < SEALED_CACHE
+        )
+        if self._counts is None or stale:
+            self._counts = counts_by_key(self.engine)
+            self._read_at = now
+        return self._counts
+
+    def collect(self) -> Iterator[Metric]:
+        family = GaugeMetricFamily(
+            "munshi_sealed_values",
+            "Sealed values per table still wrapped by each key-encryption key (by key id).",
+            labels=["table", "key_id"],
+        )
+        for (table, key_id), count in sorted(self._current().items()):
+            family.add_metric([table, key_id], count)
+        yield family
+
+
 def registry_for(engine: Engine, clock: Callable[[], datetime]) -> CollectorRegistry:
     registry = CollectorRegistry(auto_describe=False)
     registry.register(JoinCollector(engine, clock))
     registry.register(DeletionCollector(engine, clock))
     registry.register(MomCollector(engine, clock))
+    registry.register(SealedCollector(engine, clock))
     return registry
 
 

@@ -25,6 +25,16 @@ principal (a cap of 3 bots, one per platform) and an owner that cannot sign in (
 mailed). andai-worker sends every canary bot as this org, never as a customer org. It needs the KEK
 (the principal's key is sealed under it); run again, it changes nothing. `make -C andai
 canary-setup` runs it in the stack.
+
+    python -m andai_core kek-rewrap [--batch 100] [--dry-run]
+    python -m andai_core kek-status
+
+Key rotation (andai/docs/runbooks/key-rotation.md). `kek-rewrap` moves every sealed value that is
+not under the active KEK onto it (`andai_core.sealed.rewrap_all`): only the wrapped data key
+changes, and it is safe to run again after a crash. `--dry-run` writes nothing and counts what
+would move. `kek-status` prints how many values each KEK wraps per table and exits 1 while any
+value is under a key other than the active one. Both need the KEK (active and retired) and print
+counts and key ids only. `make -C andai kek-rewrap | kek-status` run them in the stack.
 """
 
 from __future__ import annotations
@@ -38,6 +48,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine, text, update
 from sqlalchemy.exc import DBAPIError
 
+from andai_core import sealed
 from andai_core.auth.bootstrap import AlreadyBootstrapped, bootstrap
 from andai_core.auth.links import InvalidEmail, canonical_email
 from andai_core.crypto import Keyring, KeyUnavailable, load_keyring
@@ -74,6 +85,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands.add_parser(
         "canary-setup", help="create the canary org and its platform principal (once)"
+    )
+    rewrap = commands.add_parser(
+        "kek-rewrap", help="move every sealed value onto the active KEK (key rotation)"
+    )
+    rewrap.add_argument(
+        "--batch", type=int, default=sealed.DEFAULT_BATCH, help="rows per transaction"
+    )
+    rewrap.add_argument(
+        "--dry-run", action="store_true", help="count what would move; write nothing"
+    )
+    commands.add_parser(
+        "kek-status", help="sealed values per table and KEK; exit 1 while any is not on the active"
     )
     return parser
 
@@ -170,6 +193,97 @@ def _principals_sync(settings: Settings, engine: Engine | None, admin: PlatformA
     return 1 if result.failed else 0
 
 
+def _rotation_keyring(
+    command: str, settings: Settings, keyring: Keyring | None
+) -> Keyring | None:
+    try:
+        keyring = keyring or load_keyring(settings)
+    except KeyUnavailable as exc:
+        print(f"{command}: {exc}", file=sys.stderr)
+        return None
+    if keyring.ephemeral:
+        print(f"{command}: ANDAI_KEK or ANDAI_KEK_FILE is required", file=sys.stderr)
+        return None
+    return keyring
+
+
+def _db_error(command: str, exc: DBAPIError) -> int:
+    print(
+        f"{command}: database error ({type(exc.orig).__name__}); is the andai database migrated"
+        " to head (make -C andai db-migrate)?",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _key_label(keyring: Keyring, key_id: str) -> str:
+    if key_id == keyring.key_id:
+        return "active"
+    return "retired" if key_id in keyring.retired_ids else "not loaded"
+
+
+def _kek_rewrap(
+    settings: Settings, engine: Engine | None, keyring: Keyring | None, batch: int, dry_run: bool
+) -> int:
+    command = "kek-rewrap"
+    keyring = _rotation_keyring(command, settings, keyring)
+    if keyring is None:
+        return 2
+    if batch < 1:
+        print(f"{command}: --batch must be at least 1", file=sys.stderr)
+        return 2
+    own_engine = engine is None
+    engine = engine or create_app_engine(settings=settings)
+    try:
+        result = sealed.rewrap_all(engine, keyring, batch=batch, dry_run=dry_run)
+    except DBAPIError as exc:
+        return _db_error(command, exc)
+    finally:
+        if own_engine:
+            engine.dispose()
+    verb = "would re-wrap" if dry_run else "re-wrapped"
+    note = " (dry run: nothing written)" if dry_run else ""
+    print(f"{command}: active key {keyring.key_id}{note}")
+    failed = 0
+    for table, count in result.items():
+        print(
+            f"{command}: {table}: {verb} {count.rewrapped}, skipped {count.skipped},"
+            f" failed {count.failed}"
+        )
+        failed += count.failed
+    return 1 if failed else 0
+
+
+def _kek_status(settings: Settings, engine: Engine | None, keyring: Keyring | None) -> int:
+    command = "kek-status"
+    keyring = _rotation_keyring(command, settings, keyring)
+    if keyring is None:
+        return 2
+    own_engine = engine is None
+    engine = engine or create_app_engine(settings=settings)
+    try:
+        counts = sealed.counts_by_key(engine)
+    except DBAPIError as exc:
+        return _db_error(command, exc)
+    finally:
+        if own_engine:
+            engine.dispose()
+    retired = ", ".join(keyring.retired_ids) or "none"
+    print(f"{command}: active key {keyring.key_id}; retired keys: {retired}")
+    behind = 0
+    for column in sealed.SEALED_COLUMNS:
+        present = {k: n for (table, k), n in counts.items() if table == column.table}
+        for key_id in (keyring.key_id, *keyring.retired_ids):
+            present.setdefault(key_id, 0)
+        for key_id in sorted(present, key=lambda k: (k != keyring.key_id, k)):
+            n = present[key_id]
+            print(f"{command}: {column.table}: {key_id} ({_key_label(keyring, key_id)}) {n}")
+            if key_id != keyring.key_id:
+                behind += n
+    print(f"{command}: {behind} values are under a key other than the active key")
+    return 1 if behind else 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -184,6 +298,10 @@ def main(
         return _principals_sync(settings, engine, admin)
     if args.command == "canary-setup":
         return _canary_setup(settings, engine, admin, keyring)
+    if args.command == "kek-rewrap":
+        return _kek_rewrap(settings, engine, keyring, args.batch, args.dry_run)
+    if args.command == "kek-status":
+        return _kek_status(settings, engine, keyring)
     try:
         keyring = keyring or load_keyring(settings)
     except KeyUnavailable as exc:
