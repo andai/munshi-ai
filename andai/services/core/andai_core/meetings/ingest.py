@@ -24,6 +24,11 @@ leaves the same rows.
 - A platform error counts as an attempt in the same way and is raised for the caller's log. At the
   cap the state becomes `failed`.
 
+**ASR lag.** For each segment copied, the platform's write time of the segment (`created_at`) minus
+its spoken end (`absolute_end_time`) is observed in `munshi_asr_segment_lag_seconds`
+(`andai_core.metrics`); a segment without both times is counted in
+`munshi_asr_segment_lag_missing_total` instead. A repeated platform segment counts once.
+
 **Attendees** are a list of `{name, source}`. Calendar invitees come first (`source: invite`, the
 email when there is no name), then speakers (`source: speaker`): those from the participants answer
 and those of the stored segments. Names are compared with case and spacing ignored, and the first
@@ -44,6 +49,7 @@ from datetime import UTC, datetime, timedelta
 import anyio.to_thread
 from sqlalchemy import Engine, delete, insert, select
 
+from andai_core import metrics
 from andai_core.crypto import Keyring
 from andai_core.db.models import TERMINAL_STATUSES, Meeting, TranscriptSegment
 from andai_core.db.session import transaction
@@ -159,15 +165,27 @@ async def _participants(gateway: PlatformGateway, target: _Target) -> dict | Non
         raise
 
 
+def _observe_lag(raw: dict) -> None:
+    """The platform's write time minus the spoken end of one raw segment, or a missing count."""
+    written = parse_time(raw.get("created_at"))
+    spoken = parse_time(raw.get("absolute_end_time"))
+    if written is None or spoken is None:
+        metrics.ASR_LAG_MISSING.inc()
+        return
+    metrics.ASR_LAG.observe(max(0.0, (written - spoken).total_seconds()))
+
+
 def _segments(document: dict, meeting_id: uuid.UUID, started_at: datetime | None) -> list[dict]:
     base = parse_time(document.get("start_time")) or started_at
     raw = document.get("segments")
-    by_id: dict[str, dict] = {}
+    by_id: dict[str, tuple[dict, dict]] = {}
     for item in raw if isinstance(raw, list) else []:
         segment = normalise_segment(item, meeting_id=meeting_id, base=base)
         if segment is not None:
-            by_id[segment["id"]] = segment  # a repeated platform segment: the last one wins
-    return order(list(by_id.values()))
+            by_id[segment["id"]] = (segment, item)  # a repeated platform segment: the last wins
+    for _, item in by_id.values():
+        _observe_lag(item)
+    return order([segment for segment, _ in by_id.values()])
 
 
 def _row(org_id: uuid.UUID, meeting_id: uuid.UUID, seq: int, segment: dict) -> dict:

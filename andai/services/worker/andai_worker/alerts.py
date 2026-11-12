@@ -203,7 +203,7 @@ class AlertEvaluator:
             " (andai/docs/runbooks/canaries.md); a bot-only fix ships as in"
             " andai/docs/runbooks/bot-hotfix.md.\n"
         )
-        return Mail(to=self.to, subject=subject, text=body)
+        return Mail(to=self.to, subject=subject, text=body, kind="alert")
 
     async def notify(self, notices: list[Notice]) -> int:
         sent = 0

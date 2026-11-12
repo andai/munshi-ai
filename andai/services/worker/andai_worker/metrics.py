@@ -31,6 +31,21 @@ Exported series (labels are enums only: no link, name, email, org or id ever bec
   (`andai_core.sealed.counts_by_key`; a key id is a truncated hash, not the key). A key rotation
   retires the old key only once its count is 0 (andai/docs/runbooks/key-rotation.md). Read at most
   every 300 s: it visits each org's principal in its own transaction.
+* `munshi_pipeline_pending{stage}`, `munshi_pipeline_oldest_pending_seconds{stage}` and
+  `munshi_pipeline_failed_24h{stage}` — per stage (`PIPELINE_STAGES`: scheduled dispatch, transcript
+  ingest, minutes, recap mail, deletion, intake) the work still owed, how long the oldest item has
+  been due (0 when none) and the items that failed for good in the last 24 h, from
+  `andai_pipeline_stats(at, lead_s)` (0018).
+* `munshi_pipeline_stage_seconds{stage}` — histogram of how long each stage took
+  (`DURATION_STAGES`), over the items it finished in the last 24 h (at most 5000 per stage), from
+  `andai_pipeline_durations(since, lead_s)` (0018).
+* `munshi_intake_messages_24h{status,outcome,reason}` — messages the notetaker mailbox received in
+  the last 24 h by status, outcome and quarantine reason ('' for none), org-less ones included, from
+  `andai_intake_stats(since)` (0018).
+* `munshi_db_size_bytes` — the andai database's size on disk (`pg_database_size`).
+
+Process metrics (mail delivery, ASR lag) come from `andai_core.metrics` in the worker's own process
+registry (`process_registry`); `/metrics` renders both registries.
 
 `join_counts`, `rates` and `canary_summary` are shared with the alert evaluator, so a mail and the
 metrics never disagree about the numbers.
@@ -43,10 +58,11 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from prometheus_client import CollectorRegistry, generate_latest
+from prometheus_client import CollectorRegistry
 from prometheus_client.core import GaugeMetricFamily, HistogramMetricFamily, Metric
 from sqlalchemy import Engine, text
 
+from andai_core import metrics as core_metrics
 from andai_core.db.session import transaction
 from andai_core.sealed import counts_by_key
 
@@ -330,14 +346,179 @@ class SealedCollector:
         yield family
 
 
-def registry_for(engine: Engine, clock: Callable[[], datetime]) -> CollectorRegistry:
+PIPELINE_STAGES = ("dispatch", "ingest", "minutes", "recap", "deletion", "intake")
+DURATION_STAGES = ("dispatch", "ingest", "minutes", "recap")
+STAGE_BUCKETS = (1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0)
+# The worker's join lead when the caller names none (`ANDAI_INTAKE_JOIN_LEAD_S`'s default).
+DEFAULT_LEAD_S = 120
+
+
+@dataclass(frozen=True)
+class StageStats:
+    stage: str
+    pending: int
+    oldest_s: float
+    failed_24h: int
+
+
+def pipeline_stats(engine: Engine, at: datetime, lead_s: int) -> list[StageStats]:
+    """`andai_pipeline_stats(at, lead_s)` as `andai_app` with no org context."""
+    with transaction(engine) as tx:
+        rows = tx.execute(
+            text(
+                "SELECT stage, pending, oldest_s, failed_24h"
+                " FROM andai_pipeline_stats(:at, :lead)"
+            ),
+            {"at": at, "lead": lead_s},
+        ).all()
+    return [StageStats(s, int(p), float(o), int(f)) for s, p, o, f in rows if s in PIPELINE_STAGES]
+
+
+def pipeline_durations(engine: Engine, since: datetime, lead_s: int) -> dict[str, list[float]]:
+    """`andai_pipeline_durations(since, lead_s)` as `andai_app`: seconds per stage."""
+    with transaction(engine) as tx:
+        rows = tx.execute(
+            text("SELECT stage, seconds FROM andai_pipeline_durations(:since, :lead)"),
+            {"since": since, "lead": lead_s},
+        ).all()
+    found: dict[str, list[float]] = {stage: [] for stage in DURATION_STAGES}
+    for stage, seconds in rows:
+        if stage in found:
+            found[stage].append(float(seconds))
+    return found
+
+
+class PipelineCollector:
+    """Backlogs, failures and stage durations of every pipeline, read on every scrape."""
+
+    def __init__(self, engine: Engine, clock: Callable[[], datetime], lead_s: int) -> None:
+        self.engine = engine
+        self.clock = clock
+        self.lead_s = lead_s
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def collect(self) -> Iterator[Metric]:
+        now = self.clock()
+        stats = pipeline_stats(self.engine, now, self.lead_s)
+        pending = GaugeMetricFamily(
+            "munshi_pipeline_pending",
+            "Work still owed per pipeline stage (scheduled dispatch, transcript ingest, minutes,"
+            " recap mail, deletion, intake).",
+            labels=["stage"],
+        )
+        oldest = GaugeMetricFamily(
+            "munshi_pipeline_oldest_pending_seconds",
+            "Seconds since the oldest pending item of the stage became due (0 when none).",
+            labels=["stage"],
+        )
+        failed = GaugeMetricFamily(
+            "munshi_pipeline_failed_24h",
+            "Items of the stage that failed for good in the last 24 hours.",
+            labels=["stage"],
+        )
+        for row in stats:
+            pending.add_metric([row.stage], row.pending)
+            oldest.add_metric([row.stage], row.oldest_s)
+            failed.add_metric([row.stage], row.failed_24h)
+        yield pending
+        yield oldest
+        yield failed
+
+        durations = pipeline_durations(self.engine, now - WINDOW, self.lead_s)
+        histogram = HistogramMetricFamily(
+            "munshi_pipeline_stage_seconds",
+            "Seconds each stage took, for the items it finished in the last 24 hours (dispatch:"
+            " due to recording; ingest: end to transcript; minutes: transcript to first minutes;"
+            " recap: first minutes to recap sent).",
+            labels=["stage"],
+        )
+        for stage in DURATION_STAGES:
+            values = durations[stage]
+            buckets = [
+                (str(bound), sum(1 for v in values if v <= bound)) for bound in STAGE_BUCKETS
+            ]
+            buckets.append(("+Inf", len(values)))
+            histogram.add_metric([stage], buckets, sum(values))
+        yield histogram
+
+
+@dataclass(frozen=True)
+class IntakeCount:
+    status: str
+    outcome: str
+    reason: str
+    count: int
+
+
+def intake_stats(engine: Engine, since: datetime) -> list[IntakeCount]:
+    """`andai_intake_stats(since)` as `andai_app` with no org context."""
+    with transaction(engine) as tx:
+        rows = tx.execute(
+            text("SELECT status, outcome, reason, n FROM andai_intake_stats(:since)"),
+            {"since": since},
+        ).all()
+    return [IntakeCount(s, o, r, int(n)) for s, o, r, n in rows]
+
+
+class IntakeCollector:
+    """Messages the notetaker mailbox received in the last 24 h, read on every scrape."""
+
+    def __init__(self, engine: Engine, clock: Callable[[], datetime]) -> None:
+        self.engine = engine
+        self.clock = clock
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def collect(self) -> Iterator[Metric]:
+        family = GaugeMetricFamily(
+            "munshi_intake_messages_24h",
+            "Messages the notetaker mailbox received in the last 24 hours by status, outcome and"
+            " quarantine reason.",
+            labels=["status", "outcome", "reason"],
+        )
+        for c in intake_stats(self.engine, self.clock() - WINDOW):
+            family.add_metric([c.status, c.outcome, c.reason], c.count)
+        yield family
+
+
+class DbSizeCollector:
+    """The andai database's size on disk, read on every scrape."""
+
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def collect(self) -> Iterator[Metric]:
+        with transaction(self.engine) as tx:
+            size = tx.execute(text("SELECT pg_database_size(current_database())")).scalar_one()
+        yield GaugeMetricFamily(
+            "munshi_db_size_bytes", "Size of the andai database on disk in bytes.", value=size
+        )
+
+
+def registry_for(
+    engine: Engine, clock: Callable[[], datetime], lead_s: int = DEFAULT_LEAD_S
+) -> CollectorRegistry:
+    """The database-derived collectors (read on every scrape)."""
     registry = CollectorRegistry(auto_describe=False)
     registry.register(JoinCollector(engine, clock))
     registry.register(DeletionCollector(engine, clock))
     registry.register(MomCollector(engine, clock))
     registry.register(SealedCollector(engine, clock))
+    registry.register(PipelineCollector(engine, clock, lead_s))
+    registry.register(IntakeCollector(engine, clock))
+    registry.register(DbSizeCollector(engine))
     return registry
 
 
-def render(registry: CollectorRegistry) -> bytes:
-    return generate_latest(registry)
+def process_registry() -> CollectorRegistry:
+    """This process's own counters: mail delivery and the ASR lag of the transcripts it copies."""
+    return core_metrics.service_registry(core_metrics.ASR_LAG, core_metrics.ASR_LAG_MISSING)
+
+
+render = core_metrics.render

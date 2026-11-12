@@ -11,7 +11,8 @@ Every other path answers 401 with `{"next_step": "mfa_verify" | "mfa_enroll"}` b
 runs, so a route added later is gated without opting in. Requests without a session cookie, with a
 dead one, or with a `full` session pass through unchanged; the routes do their own authentication.
 The signature-authenticated server-to-server paths (`csrf.SIGNED_PATHS`, exact matches) are not
-session routes: the gate passes them without looking at any cookie.
+session routes: the gate passes them without looking at any cookie. Neither is the metrics scrape
+(`OPEN_PATHS`: `GET /metrics`, exact match, outside `/api` so the portal never forwards it).
 """
 
 from __future__ import annotations
@@ -29,6 +30,9 @@ from andai_core.db.session import transaction
 LOGOUT = "/api/v1/auth/logout"
 MFA_VERIFY = "/api/v1/auth/mfa/verify"
 MFA_ENROLL_PREFIX = "/api/v1/me/mfa"
+
+# Session-less paths that carry no customer data, passed without looking at any cookie (exact).
+OPEN_PATHS = frozenset({"/metrics"})
 
 NEXT_STEP = {sessions.MFA_PENDING: "mfa_verify", sessions.ENROLL_REQUIRED: "mfa_enroll"}
 DETAIL = {
@@ -55,7 +59,11 @@ class StageGate:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in ("http", "websocket") or scope["path"] in SIGNED_PATHS:
+        if (
+            scope["type"] not in ("http", "websocket")
+            or scope["path"] in SIGNED_PATHS
+            or scope["path"] in OPEN_PATHS
+        ):
             await self.app(scope, receive, send)
             return
         token = HTTPConnection(scope).cookies.get(sessions.COOKIE_NAME)

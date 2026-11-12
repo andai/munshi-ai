@@ -3,8 +3,10 @@ their recap mail, meeting deletion, canary joins, metrics and operator alerts (B
 PORT-04, MOM-01, MOM-05, INV-01).
 
 * `GET /healthz` — liveness.
-* `GET /metrics` — join, deletion and minutes metrics in Prometheus text format (`metrics.py`),
-  read from the andai database on every scrape; 503 while the worker has no database URL.
+* `GET /metrics` — join, deletion, minutes, pipeline, intake and database-size metrics in
+  Prometheus text format (`metrics.py`), read from the andai database on every scrape, followed by
+  this process's mail and ASR-lag counters (`andai_core.metrics`); 503 while the worker has no
+  database URL. The catalogue is `andai/docs/metrics.md`.
 * Background loops, started by the lifespan:
   - scheduled dispatch (`scheduled.py`), always: meetings scheduled from invites, as their
     requester, `ANDAI_INTAKE_JOIN_LEAD_S` before they start;
@@ -170,7 +172,9 @@ def create_app(services: WorkerServices | None = None, *, run_jobs: bool = True)
             app.state.services = build_services(get_worker_settings())
         current = app.state.services
         if current is not None:
-            app.state.registry = metrics.registry_for(current.engine, current.clock)
+            app.state.registry = metrics.registry_for(
+                current.engine, current.clock, current.settings.join_lead_s
+            )
         tasks = jobs(current) if current is not None and run_jobs else []
         try:
             yield
@@ -189,6 +193,7 @@ def create_app(services: WorkerServices | None = None, *, run_jobs: bool = True)
     )
     app.state.services = services
     app.state.registry = None
+    process = metrics.process_registry()
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -203,7 +208,7 @@ def create_app(services: WorkerServices | None = None, *, run_jobs: bool = True)
         registry: CollectorRegistry | None = app.state.registry
         if registry is None:
             return Response("no database configured\n", status_code=503, media_type="text/plain")
-        return Response(metrics.render(registry), media_type=CONTENT_TYPE_LATEST)
+        return Response(metrics.render(registry, process), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

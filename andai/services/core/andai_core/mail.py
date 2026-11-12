@@ -4,6 +4,10 @@
 relay; the stack's default is its Mailpit service (a mail catcher with a web UI on 127.0.0.1), and
 a deployment points them at its own relay. `MemoryMailer` keeps messages in a list for tests.
 
+Every message `SmtpMailer` hands to the relay is counted in `munshi_mail_sent_total{kind,outcome}`
+(`andai_core.metrics`): `kind` is the `Mail`'s kind (one of `metrics.MAIL_KINDS`), `outcome` is
+`sent` or `failed`.
+
 Mail bodies carry single-use links; they are never logged.
 """
 
@@ -16,6 +20,7 @@ from typing import Protocol
 
 import aiosmtplib
 
+from andai_core import metrics
 from andai_core.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -30,6 +35,12 @@ class Mail:
     text: str
     # Extra header fields, e.g. `Auto-Submitted: auto-replied` on andai-intake's confirmations.
     headers: tuple[tuple[str, str], ...] = ()
+    # What the mail is, for `munshi_mail_sent_total{kind}`: one of `metrics.MAIL_KINDS`.
+    kind: str = "other"
+
+    def __post_init__(self) -> None:
+        if self.kind not in metrics.MAIL_KINDS:
+            raise ValueError(f"unknown mail kind: {self.kind!r}")
 
 
 class MailError(Exception):
@@ -67,6 +78,7 @@ class SmtpMailer:
                 timeout=SEND_TIMEOUT_SECONDS,
             )
         except (aiosmtplib.SMTPException, OSError) as exc:
+            metrics.count_mail(mail.kind, "failed")
             log.error(
                 "mail to the SMTP relay %s:%s failed: %s",
                 s.smtp_host,
@@ -74,6 +86,7 @@ class SmtpMailer:
                 type(exc).__name__,
             )
             raise MailError(f"SMTP relay {s.smtp_host}:{s.smtp_port} refused the message") from exc
+        metrics.count_mail(mail.kind, "sent")
 
 
 class MemoryMailer:

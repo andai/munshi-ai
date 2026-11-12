@@ -87,7 +87,7 @@ def invite_mail(settings: Settings, *, email: str, org_name: str, token: str, ow
         f"{link}\n\n"
         "If you did not expect this message, ignore it.\n"
     )
-    return Mail(to=email, subject=subject, text=text)
+    return Mail(to=email, subject=subject, text=text, kind="invite")
 
 
 def accept_invite(

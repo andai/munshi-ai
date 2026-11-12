@@ -17,7 +17,7 @@ from conftest import Postgres, alembic_config
 ALL_TABLES = (
     set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES) | set(SYSTEM_TABLES) | set(INTAKE_TABLES)
 )
-HEAD = "0017"
+HEAD = "0018"
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -1426,5 +1426,87 @@ def test_audit_append_only_downgrade_to_0016_and_upgrade_again(migrated: Postgre
         command.upgrade(config, "head")
         assert _revision(engine) == HEAD
         assert _audit_state(engine) == at_head
+    finally:
+        engine.dispose()
+
+
+PIPELINE_FUNCTIONS = {
+    "andai_pipeline_stats": (
+        "TABLE(stage text, pending bigint, oldest_s double precision, failed_24h bigint)"
+    ),
+    "andai_pipeline_durations": "TABLE(stage text, seconds double precision)",
+    "andai_intake_stats": "TABLE(status text, outcome text, reason text, n bigint)",
+}
+PIPELINE_GRANTS = {
+    ("meetings", "transcript_at"),
+    ("meetings", "recap_at"),
+    ("inbound_mail", "outcome"),
+    ("inbound_mail", "quarantine_reason"),
+}
+
+
+def _pipeline_state(engine: Engine) -> tuple[dict, set[tuple[str, str]]]:
+    """({function: (owner, definer, search path, result, public may run, app may run)},
+    andai_scan's SELECT grants on the columns 0018 added)."""
+    with engine.connect() as conn:
+        functions = {
+            row[0]: tuple(row[1:])
+            for row in conn.execute(
+                text(
+                    "SELECT p.proname, pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = ANY(:n)"
+                ),
+                {"n": sorted(PIPELINE_FUNCTIONS)},
+            ).all()
+        }
+        grants = {
+            (table, column)
+            for table, column in conn.execute(
+                text(
+                    "SELECT table_name, column_name FROM information_schema.column_privileges"
+                    " WHERE grantee = 'andai_scan' AND privilege_type = 'SELECT'"
+                    " AND (table_name, column_name) IN (('meetings', 'transcript_at'),"
+                    " ('meetings', 'recap_at'), ('inbound_mail', 'outcome'),"
+                    " ('inbound_mail', 'quarantine_reason'))"
+                )
+            ).all()
+        }
+    return functions, grants
+
+
+def test_pipeline_stats_functions_belong_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        functions, grants = _pipeline_state(engine)
+    finally:
+        engine.dispose()
+
+    assert functions == {
+        name: ("andai_scan", True, ["search_path=public, pg_temp"], result, False, True)
+        for name, result in PIPELINE_FUNCTIONS.items()
+    }
+    assert grants == PIPELINE_GRANTS
+
+
+def test_pipeline_stats_downgrade_to_0017_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        at_head = _pipeline_state(engine)
+        assert set(at_head[0]) == set(PIPELINE_FUNCTIONS)
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
+
+        command.downgrade(config, "0017")
+        assert _revision(engine) == "0017"
+        assert _pipeline_state(engine) == ({}, set())
+        assert _audit_state(engine)[3] == 1  # 0017 untouched
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES  # only SELECT grants were added
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == HEAD
+        assert _pipeline_state(engine) == at_head
     finally:
         engine.dispose()

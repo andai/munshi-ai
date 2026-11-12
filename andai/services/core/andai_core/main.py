@@ -9,6 +9,10 @@ Startup refuses to complete outside `ANDAI_ENV=dev` without a key-encryption key
 A session in a two-factor stage reaches only its own routes (`auth.stage_gate`).
 The platform's system webhook (`POST /internal/platform-events`, `platform.webhook`) sits outside
 `/api` and is authenticated by its HMAC signature.
+`GET /metrics` serves this process's metrics (`andai_core.metrics`: mail delivery outcomes) in
+Prometheus text format. It is outside `/api`, so the portal (which forwards `/api/*` only) never
+reaches it, needs no session, and is published on 127.0.0.1 only by the compose overlay; Prometheus
+scrapes it on the internal network (`andai/docs/metrics.md`).
 """
 
 from __future__ import annotations
@@ -20,10 +24,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import redis
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST
 
+from andai_core import metrics
 from andai_core.auth import routes as auth_routes
 from andai_core.auth.clientip import ClientIpResolver
 from andai_core.auth.csrf import OriginCheck
@@ -130,6 +136,12 @@ def create_app(services: Services | None = None) -> FastAPI:
             "status": "ok",
             "version": os.environ.get("ANDAI_VERSION", "dev"),
         }
+
+    registry = metrics.service_registry()
+
+    @app.get("/metrics")
+    def scrape() -> Response:
+        return Response(metrics.render(registry), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

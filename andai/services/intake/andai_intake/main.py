@@ -1,6 +1,8 @@
 """andai-intake: the notetaker mailbox (INV-01, D-4, D-54).
 
 * `GET /healthz` — liveness.
+* `GET /metrics` — the receiver's verdicts and confirmation mail outcomes in Prometheus text format
+  (`metrics.py`); served with or without a database.
 * The SMTP receiver (`smtp.py`), started by the lifespan on `ANDAI_INTAKE_SMTP_BIND` in the same
   event loop: it accepts mail for `ANDAI_INTAKE_ADDRESSES` only and stores each message in the
   andai database (`inbound_mail`, through `store.py`) before answering 250.
@@ -29,12 +31,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import redis
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from sqlalchemy import Engine
 
 from andai_core.db.session import create_app_engine
 from andai_core.mail import SmtpMailer
-from andai_intake import confirm, horizon, processor, purge, store
+from andai_intake import confirm, horizon, metrics, processor, purge, store
 from andai_intake.auth.verdict import Policy
 from andai_intake.limits import IntakeLimits
 from andai_intake.settings import IntakeSettings, get_intake_settings
@@ -147,6 +150,12 @@ def create_app(services: IntakeServices | None = None, *, run_jobs: bool = True)
             "status": "ok",
             "version": os.environ.get("ANDAI_VERSION", "dev"),
         }
+
+    registry = metrics.registry()
+
+    @app.get("/metrics")
+    def scrape() -> Response:
+        return Response(metrics.render(registry), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

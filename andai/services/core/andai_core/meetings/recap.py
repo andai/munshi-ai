@@ -232,6 +232,7 @@ def _send(
             to=", ".join(to),
             subject=subject(meeting, doc, meeting_date),
             text=body(meeting, doc, meeting_link(portal_origin, meeting.id), meeting_date),
+            kind="recap",
         )
         anyio.from_thread.run(mailer.send, mail)  # before the commit, as invites do
         log.info("meeting %s: recap sent to %d recipient(s)", meeting_id, len(to))
