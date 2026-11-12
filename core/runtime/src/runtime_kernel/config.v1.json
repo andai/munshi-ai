@@ -144,6 +144,25 @@
    ]
   },
   {
+   "key": "RUNTIME_K8S_SHM_SIZE",
+   "class": "defaulted",
+   "default": "2Gi",
+   "description": "k8s backend: size of the memory-backed emptyDir mounted at /dev/shm in every SPAWNED Pod (a Kubernetes quantity). Chromium needs a real /dev/shm; the docker backend's equivalent is DOCKER_SHM_SIZE. Memory-backed volumes count against the container's memory limit, so the meeting bot's memory limit must cover heap + shm (RUNTIME_BOT_MEMORY_MB 2560 with the 2Gi default). Empty ⇒ no shm volume (the kubelet's small default); an invalid quantity is fatal at boot",
+   "targets": [
+    "helm"
+   ]
+  },
+  {
+   "key": "RUNTIME_MAX_ACTIVE_BOTS",
+   "class": "defaulted",
+   "default": "(unset — no cap)",
+   "description": "cluster-wide cap on meeting bots starting or running at once, counted by the runtime. A create over it is refused at once with 429 capacity_exhausted before any container or Pod exists (meeting-api fails the meeting, andai records capacity_exhausted) — overflow is a defined refusal, not a Pod left Pending. Agent workers are not counted. Unset, empty or 0 ⇒ no cap; a negative or non-integer value is fatal at boot. Exact only with one runtime replica (the count is per process)",
+   "targets": [
+    "compose",
+    "helm"
+   ]
+  },
+  {
    "key": "BROWSER_IMAGE",
    "class": "capability",
    "capability": "bot_spawn",

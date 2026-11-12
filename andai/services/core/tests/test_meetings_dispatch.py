@@ -253,6 +253,23 @@ def test_the_org_cap_fails_as_capacity_exhausted_and_frees_the_link(world: World
     assert again.status_code == 201 and again.json()["id"] != response.json()["id"]
 
 
+def test_the_cluster_bot_cap_fails_as_capacity_exhausted(world: World) -> None:
+    """The runtime's cluster-wide cap refuses with 429 `capacity_exhausted` and meeting-api passes
+    the 429 on: the meeting fails at once as capacity_exhausted (D-63), like the org cap."""
+    gateway = world.harness.gateway
+    gateway.fail["dispatch"] = 429
+    gateway.fail_body = {"detail": "capacity_exhausted"}
+
+    response = world.client("member").post(JOIN, json={"join_url": zoom_link("hold")})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert (body["status"], body["failure_reason"]) == ("failed", "capacity_exhausted")
+    row = stored(world.engine, world.org.owner.org_id, body["id"])
+    assert (row.status, row.failure_reason) == ("failed", "capacity_exhausted")
+    assert row.platform_meeting_id is None
+
+
 @pytest.mark.parametrize("status", [500, 502, 503, 401])
 def test_other_platform_errors_fail_as_internal_error_without_the_passcode_in_logs(
     world: World, status: int, caplog: pytest.LogCaptureFixture

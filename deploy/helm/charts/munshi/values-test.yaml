@@ -41,6 +41,8 @@ meetingApi:
 runtime:
   replicaCount: 1
   backend: "k8s"          # exercise the real cloud spawn path (SA + RBAC + kubectl in-image)
+  # One small node: refuse the fifth concurrent bot (capacity_exhausted) instead of leaving it Pending.
+  maxActiveBots: 4
 
 agentApi:
   replicaCount: 1

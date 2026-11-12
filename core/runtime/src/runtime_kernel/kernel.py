@@ -8,9 +8,17 @@ serializable, so they live in a process-local map keyed by workloadId; on a fres
 simply absent, and the reloaded statuses describe what was running before the restart.
 
 Quotas (O-RT-2): create() rejects the N+1th active workload for an owner via the store's
-count_for_owner."""
+count_for_owner.
+
+Cluster cap: with ``cluster_cap`` set, create() refuses a meeting bot at once (ClusterCapExceeded,
+HTTP 429 ``capacity_exhausted``) when that many bots are already starting or running, before any
+container or Pod exists — overflow is a defined refusal, never a Pod left Pending. The count and the
+``starting`` record are written under one lock, so concurrent creates cannot both take the last
+slot; the lock is per process, so the cap is exact only with a single runtime replica."""
 from __future__ import annotations
 
+import contextlib
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -36,6 +44,22 @@ class QuotaExceeded(Exception):
         self.owner = owner
         self.cap = cap
         super().__init__(f"owner {owner!r} at quota cap ({cap})")
+
+
+class ClusterCapExceeded(QuotaExceeded):
+    """Raised by create() when the cluster already runs ``cap`` meeting bots (``cluster_cap``)."""
+
+    def __init__(self, cap: int) -> None:
+        self.owner = ""
+        self.cap = cap
+        Exception.__init__(self, "capacity_exhausted")
+
+
+# The profiles the cluster cap counts. Agent workers are not bots and do not count. Records that a
+# restarted runtime re-adopted from the substrate carry the profile "adopted" (the backend labels
+# carry no profile), so they count too: refusing a bot early beats running more than the cap.
+CAPPED_PROFILE = "meeting-bot"
+_CAP_COUNTED = (CAPPED_PROFILE, "adopted")
 
 
 class StartFailed(Exception):
@@ -67,6 +91,7 @@ class Runtime:
         clock: Optional[Clock] = None,
         owner_resolver: OwnerResolver = default_owner,
         owner_quota: Optional[int] = None,
+        cluster_cap: Optional[int] = None,
     ) -> None:
         self.backend: Backend = backend or ProcessBackend()
         # `profiles` accepts a ProfileRegistry, a plain {name: Runnable|command} dict (legacy/tests),
@@ -78,6 +103,9 @@ class Runtime:
         self.clock: Clock = clock or SystemClock()
         self.owner_resolver = owner_resolver
         self.owner_quota = owner_quota
+        # Cluster-wide concurrent meeting bots; None (or 0) means no cap.
+        self.cluster_cap = cluster_cap or None
+        self._admission_lock = threading.Lock()
         # Live, non-serializable backend handles. Empty on a fresh process (post-restart).
         self._handles: dict[str, WorkloadHandle] = {}
 
@@ -188,7 +216,18 @@ class Runtime:
             workloadId=spec.workloadId, profile=spec.profile,
             state=RuntimeState.starting, backend=self.backend.name,
         )
-        self._persist(spec, status)
+        capped = self.cluster_cap is not None and spec.profile == CAPPED_PROFILE
+        with self._admission_lock if capped else contextlib.nullcontext():
+            if capped:
+                # A concurrent create of the same id may have won the race since the touch check
+                # above: it is a touch, never a refusal.
+                current = self.store.get(spec.workloadId)
+                if current is not None and current.status.state in (
+                    RuntimeState.starting, RuntimeState.running,
+                ):
+                    return current.status
+                self._refuse_over_cluster_cap()
+            self._persist(spec, status)
         self._emit(spec.workloadId, RuntimeState.starting)
         try:
             # The profile's base_env is the deployment-wide floor (e.g. meeting-bot's BOT_SPEAKER_*
@@ -221,6 +260,34 @@ class Runtime:
         self._persist(spec, status)
         self._emit(spec.workloadId, RuntimeState.running, ports={})
         return status
+
+    def _refuse_over_cluster_cap(self) -> None:
+        """Raise ClusterCapExceeded when the cap's slots are all held. Caller holds the lock.
+
+        The store's states are last-known: a bot that exited on its own stays ``running`` until
+        something reads it. So at the cap, the running records are checked against the substrate
+        (one listing where the backend has one, then a per-workload read of those not found live)
+        and counted again before refusing."""
+        cap = self.cluster_cap
+        if cap is None or self.store.count_active(_CAP_COUNTED) < cap:
+            return
+        running = [
+            r.spec.workloadId for r in self.store.list()
+            if r.spec.profile in _CAP_COUNTED and r.status.state == RuntimeState.running
+        ]
+        live: set[str] = set()
+        lister = getattr(self.backend, "list_workload_containers", None)
+        if lister is not None:
+            try:
+                live = {i["workload_id"] for i in lister() if i.get("running")}
+            except Exception:  # noqa: BLE001 — a failed listing only means "check each one"
+                live = set()
+        for workload_id in running:
+            if workload_id not in live:
+                with contextlib.suppress(KeyError):
+                    self.get(workload_id)                   # reflects an exit to `stopped`
+        if self.store.count_active(_CAP_COUNTED) >= cap:
+            raise ClusterCapExceeded(cap)
 
     def get(self, workload_id: str) -> WorkloadStatus:
         record = self._record(workload_id)

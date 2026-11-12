@@ -74,6 +74,10 @@ spec:
               value: {{ .Values.runtime.speakerStream.maxBufferSec | default "" | quote }}
             - name: BOT_SPEAKER_IDLE_TIMEOUT_SEC
               value: {{ .Values.runtime.speakerStream.idleTimeoutSec | default "" | quote }}
+            # Cluster-wide bot cap: a dispatch over it is refused at once (429 capacity_exhausted)
+            # instead of a bot Pod left Pending. Empty = no cap.
+            - name: RUNTIME_MAX_ACTIVE_BOTS
+              value: {{ .Values.runtime.maxActiveBots | default "" | toString | quote }}
             - name: INTERNAL_API_SECRET
               valueFrom:
                 secretKeyRef:
@@ -133,6 +137,10 @@ spec:
               value: {{ .Values.runtime.workloadResources.agentWorker.cpu | default "" | quote }}
             - name: RUNTIME_AGENT_WORKER_MEMORY_MB
               value: {{ .Values.runtime.workloadResources.agentWorker.memoryMb | default "" | quote }}
+            # /dev/shm for every spawned Pod: a memory-backed emptyDir of this size, counted against
+            # the Pod's memory limit (hence the bot's 2560Mi). Empty = no shm volume.
+            - name: RUNTIME_K8S_SHM_SIZE
+              value: {{ .Values.runtime.k8sShmSize | quote }}
             {{- end }}
             {{- with .Values.runtime.extraEnv }}
             {{- toYaml . | nindent 12 }}

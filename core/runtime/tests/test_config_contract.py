@@ -116,3 +116,19 @@ def test_health_carries_capability_rows_additively(monkeypatch):
     assert caps["scheduler"]["state"] == cp.NOT_CONFIGURED
     assert caps["model_inference"]["state"] == cp.NOT_CONFIGURED
     assert set(caps) == {"scheduler", "bot_spawn", "agent_spawn", "model_inference"}
+
+
+# ── the scale keys: declared, with the surfaces that carry them ──────────────────────────────────
+
+
+def test_the_shm_and_bot_cap_keys_are_declared_for_their_surfaces():
+    keys = {k["key"]: k for k in cp.load_declaration()["keys"]}
+    shm = keys["RUNTIME_K8S_SHM_SIZE"]
+    cap = keys["RUNTIME_MAX_ACTIVE_BOTS"]
+    assert (shm["class"], shm["default"]) == ("defaulted", "2Gi")
+    # shm is a Kubernetes Pod volume: the chart sets it; Compose sizes shm with DOCKER_SHM_SIZE
+    assert shm["targets"] == ["helm"]
+    assert "memory limit" in shm["description"]
+    assert cap["class"] == "defaulted"
+    assert sorted(cap["targets"]) == ["compose", "helm"]
+    assert "capacity_exhausted" in cap["description"]

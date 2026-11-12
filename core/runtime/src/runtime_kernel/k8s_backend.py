@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from typing import Optional
 
@@ -35,6 +36,32 @@ GPU_RESOURCE = "nvidia.com/gpu"
 # the runtime itself is allowed to run.
 TOLERATIONS_ENV = "RUNTIME_K8S_TOLERATIONS"      # JSON array of toleration objects
 NODE_SELECTOR_ENV = "RUNTIME_K8S_NODE_SELECTOR"  # JSON object of node-label selectors
+
+# The spawned container's /dev/shm: a memory-backed emptyDir of this size (a Kubernetes quantity).
+# Unset ⇒ DEFAULT_SHM_SIZE; empty ⇒ no shm volume (the kubelet's default /dev/shm). Chromium runs
+# without --disable-dev-shm-usage, so the bot needs a real one; the Docker backend's equivalent is
+# DOCKER_SHM_SIZE. A memory-backed emptyDir counts against the container's memory limit, so the
+# bot's memory limit must cover heap + shm (the chart's 2560Mi with the 2Gi default).
+SHM_SIZE_ENV = "RUNTIME_K8S_SHM_SIZE"
+DEFAULT_SHM_SIZE = "2Gi"
+SHM_VOLUME = "dshm"
+_QUANTITY = re.compile(r"^(\d+(\.\d+)?|\.\d+)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|[eE][+-]?\d+)?$")
+
+
+def shm_size(env: dict[str, str]) -> Optional[str]:
+    """The /dev/shm size limit from ``env``: unset ⇒ ``DEFAULT_SHM_SIZE``; empty ⇒ None (off).
+    Anything that is not a positive Kubernetes quantity is FATAL: the K8sBackend checks it at boot,
+    so a typo fails the deploy instead of every spawn."""
+    raw = env.get(SHM_SIZE_ENV)
+    if raw is None:
+        return DEFAULT_SHM_SIZE
+    value = raw.strip()
+    if not value:
+        return None
+    match = _QUANTITY.match(value)
+    if not match or float(match.group(1)) <= 0:
+        raise ValueError(f"{SHM_SIZE_ENV} must be a Kubernetes quantity such as 2Gi, got {raw!r}")
+    return value
 
 
 def _scheduling_json(env: dict[str, str], key: str, expected: type) -> Optional[object]:
@@ -62,7 +89,10 @@ def _runtime_scheduling_env() -> dict[str, str]:
     Deployment). Overlaid onto the per-workload spawn env for ``pod_overrides`` — spec.env cannot
     carry these: it is built per-workload by different producers (meeting-api for a bot, agent-api for
     an agent worker), whereas the scheduling constraints are a property of the runtime/backend."""
-    return {k: os.environ[k] for k in (TOLERATIONS_ENV, NODE_SELECTOR_ENV) if os.environ.get(k)}
+    env = {k: os.environ[k] for k in (TOLERATIONS_ENV, NODE_SELECTOR_ENV) if os.environ.get(k)}
+    if SHM_SIZE_ENV in os.environ:
+        env[SHM_SIZE_ENV] = os.environ[SHM_SIZE_ENV]     # empty is meaningful here: shm off
+    return env
 
 
 def _kubectl(*args: str, check: bool = True, stdin: Optional[str] = None) -> subprocess.CompletedProcess:
@@ -84,27 +114,35 @@ def _stop_grace_sec() -> int:
 
 
 def pod_overrides(env: dict[str, str], *, container_name: str) -> Optional[dict]:
-    """The env-derived OVERLAY ``build_pod`` merges onto a spawned Pod's spec. It carries two
+    """The env-derived OVERLAY ``build_pod`` merges onto a spawned Pod's spec. It carries three
     independent seams:
 
       * the workspace store mount set (WP-A1.1): the store PVC (``MUNSHI_WORKSPACE_MOUNT_SOURCE`` = the
         claim name on k8s) exposes every in-store workspace via per-mount subPath volumeMounts;
       * the runtime's scheduling constraints (``RUNTIME_K8S_TOLERATIONS`` / ``RUNTIME_K8S_NODE_SELECTOR``)
         so the bare ``kubectl run`` Pod — which inherits none of the runtime Deployment's scheduling —
-        lands where the runtime itself is allowed to run instead of stranding Pending on a tainted pool.
+        lands where the runtime itself is allowed to run instead of stranding Pending on a tainted
+        pool;
+      * the container's ``/dev/shm`` (``RUNTIME_K8S_SHM_SIZE``, default 2Gi): a memory-backed
+        emptyDir named ``dshm`` mounted on the named container.
 
-    The overlay is built whenever EITHER seam is present; returns None only when neither is (nothing
-    to merge). Building it for scheduling alone is load-bearing: a plain meeting bot has no workspace
-    PVC, so a volumes-only early return would silently drop its tolerations and re-create the bug.
-    Pure/env-driven → unit-tested offline (no kubectl)."""
+    The overlay is built whenever ANY seam is present; returns None only when none is (nothing to
+    merge). With the default shm size that is never: a plain meeting bot has no workspace PVC and
+    may have no scheduling constraints, and it still needs its shm, so no seam may hide behind
+    another's early return. Pure/env-driven → unit-tested offline (no kubectl)."""
     pvc = env.get("MUNSHI_WORKSPACE_MOUNT_SOURCE")
     root = env.get("MUNSHI_WORKSPACE_MOUNT_TARGET")
     volumes, volume_mounts = k8s_volume_mounts(env, pvc_name=pvc or "", store_target=root or "")
     tolerations = _scheduling_json(env, TOLERATIONS_ENV, list)
     node_selector = _scheduling_json(env, NODE_SELECTOR_ENV, dict)
+    shm = shm_size(env)
+    if shm:
+        shm_volume = {"name": SHM_VOLUME, "emptyDir": {"medium": "Memory", "sizeLimit": shm}}
+        volumes = [*volumes, shm_volume]
+        volume_mounts = [*volume_mounts, {"name": SHM_VOLUME, "mountPath": "/dev/shm"}]
     if not volumes and not tolerations and not node_selector:
         return None
-    # ``containers`` is emitted ONLY when volumeMounts force it (the workspace-store seam);
+    # ``containers`` is emitted ONLY when volumeMounts force it (the workspace-store and shm seams);
     # pod-level fields (tolerations/nodeSelector) shape the Pod without touching the list. Keeping
     # the overlay minimal is what lets ``build_pod`` merge it BY CONTAINER NAME onto the generated
     # container instead of replacing it.
@@ -230,6 +268,7 @@ class K8sBackend:
     def __init__(self, name_prefix: str = "munshi-", namespace: Optional[str] = None) -> None:
         self._prefix = name_prefix
         self._ns = namespace
+        shm_size(dict(os.environ))       # an invalid RUNTIME_K8S_SHM_SIZE is fatal at boot
 
     def _pname(self, workload_id: str) -> str:
         return f"{self._prefix}{workload_id}"            # must be DNS-1123 (lowercase alnum + '-')

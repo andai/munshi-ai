@@ -62,6 +62,26 @@ need 1 'name: MUNSHI_INTERNAL_API_SECRET' "terminal internal-edge secret"
 need 1 'name: RUNTIME_K8S_TOLERATIONS'   "runtime carries spawn-Pod tolerations env"
 need 1 'name: RUNTIME_K8S_NODE_SELECTOR' "runtime carries spawn-Pod nodeSelector env"
 
+# Scale: bot Pods get a 2Gi /dev/shm, the bot limit covers it (2560Mi), and the cluster bot cap
+# reaches the runtime from values (values-test sets 4; an override wins; empty = no cap).
+env_value() {  # env_value <render> <env name> → the quoted value on the line after the name
+  grep -A1 "name: $2\$" <<< "$1" | grep 'value:' | head -1 | sed -E 's/^ *value: *//'
+}
+expect_env() {  # expect_env <render> <env name> <expected quoted value> <label>
+  local got; got="$(env_value "$1" "$2")"
+  if [ "$got" = "$3" ]; then echo "  OK: $4 ($2=$got)"; else echo "  FAIL: $4 — $2 want $3 got '$got'"; fail=1; fi
+}
+expect_env "$RENDER" RUNTIME_K8S_SHM_SIZE '"2Gi"' "bot Pods get a 2Gi /dev/shm"
+expect_env "$RENDER" RUNTIME_BOT_MEMORY_MB '"2560"' "bot memory limit covers heap + shm"
+expect_env "$RENDER" RUNTIME_MAX_ACTIVE_BOTS '"4"' "cluster bot cap from values-test"
+RENDER_CAP="$(helm template munshi "$CHART" -n munshi -f "$CHART/values-test.yaml" \
+  --set runtime.maxActiveBots=200 --set runtime.k8sShmSize=)"
+expect_env "$RENDER_CAP" RUNTIME_MAX_ACTIVE_BOTS '"200"' "cluster bot cap override"
+expect_env "$RENDER_CAP" RUNTIME_K8S_SHM_SIZE '""' "shm turned off by an empty value"
+RENDER_DEFAULT_CAP="$(helm template munshi "$CHART" -n munshi -f "$CHART/values-test.yaml" \
+  --set runtime.maxActiveBots=)"
+expect_env "$RENDER_DEFAULT_CAP" RUNTIME_MAX_ACTIVE_BOTS '""' "no cap when unset"
+
 # auth unset (values-test) → the chart Secret must NOT carry the key; auth set → it must.
 if grep -qE '^  CLAUDE_CODE_OAUTH_TOKEN:' <<< "$RENDER"; then
   echo "  FAIL: CLAUDE_CODE_OAUTH_TOKEN rendered into the Secret with auth UNSET"; fail=1

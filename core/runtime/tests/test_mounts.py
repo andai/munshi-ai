@@ -151,9 +151,15 @@ def test_k8s_strict_emits_per_mount_subpath_readonly():
     assert not any(vm["mountPath"] == "/workspaces" for vm in vmounts)   # whole store never mounted
 
 
+# The k8s tests below check the workspace and scheduling seams on their own, so they turn the
+# third seam, the Pod's /dev/shm (on by default; test_k8s_backend.py), off.
+_SHM_OFF = {"RUNTIME_K8S_SHM_SIZE": ""}
+
+
 def test_k8s_pod_overrides_carry_the_per_mount_spec():
     """The Pod spec the worker gets: per-mount subPath volumeMounts against the ONE store PVC."""
-    ov = pod_overrides(_env(source="munshi-agent-workspaces"), container_name="munshi-worker-u1")
+    ov = pod_overrides({**_env(source="munshi-agent-workspaces"), **_SHM_OFF},
+                       container_name="munshi-worker-u1")
     spec = ov["spec"]
     assert spec["volumes"][0]["persistentVolumeClaim"]["claimName"] == "munshi-agent-workspaces"
     c = spec["containers"][0]
@@ -164,7 +170,7 @@ def test_k8s_pod_overrides_carry_the_per_mount_spec():
 
 
 def test_k8s_pod_overrides_none_when_no_store_configured():
-    assert pod_overrides({}, container_name="x") is None
+    assert pod_overrides(dict(_SHM_OFF), container_name="x") is None
 
 
 # ── k8s: scheduling constraints merged into the spawn override (#673) ──────────
@@ -178,7 +184,7 @@ _SEL = {"munshi.ai/pool": "main"}
 
 
 def _sched_env(*, tolerations=None, node_selector=None, **kw):
-    e = _env(**kw) if kw else {}
+    e = {**(_env(**kw) if kw else {}), **_SHM_OFF}
     if tolerations is not None:
         e["RUNTIME_K8S_TOLERATIONS"] = json.dumps(tolerations)
     if node_selector is not None:
@@ -222,8 +228,8 @@ def test_k8s_pod_overrides_empty_scheduling_is_unchanged_from_today():
     """The chart's DEFAULT deployment serializes global.tolerations=[] / global.nodeSelector={} to the
     strings "[]" / "{}". These are treated as unset — no scheduling appears, and a no-store spawn still
     returns None — so an untainted cluster sees exactly today's behaviour (no regression)."""
-    assert pod_overrides({"RUNTIME_K8S_TOLERATIONS": "[]", "RUNTIME_K8S_NODE_SELECTOR": "{}"},
-                         container_name="x") is None
+    assert pod_overrides({"RUNTIME_K8S_TOLERATIONS": "[]", "RUNTIME_K8S_NODE_SELECTOR": "{}",
+                          **_SHM_OFF}, container_name="x") is None
     ov = pod_overrides(_sched_env(tolerations=[], node_selector={}, source="munshi-agent-workspaces"),
                        container_name="munshi-worker-u1")
     assert "tolerations" not in ov["spec"] and "nodeSelector" not in ov["spec"]

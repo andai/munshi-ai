@@ -10,10 +10,12 @@ Two adapters implement one Protocol:
 `owner` is the tenancy/quota axis. runtime.v1's spec has no owner field (tenancy is deferred,
 ADR-0003), so the owner is resolved from the spec by an injectable resolver (default: the
 `MUNSHI_OWNER` env entry) and persisted on the record — `count_for_owner` then enforces quotas (O-RT-2)
-without the kernel needing a tenancy concept of its own."""
+without the kernel needing a tenancy concept of its own. `count_active` counts the starting/running
+workloads of given profiles — the cluster-wide concurrent-bot cap."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from typing import Callable, Optional, Protocol
 
 from .models import WorkloadSpec, WorkloadStatus
@@ -65,13 +67,23 @@ class WorkloadStore(Protocol):
         """Count active (non-terminal) workloads belonging to `owner` — the quota axis."""
         ...
 
+    def count_active(self, profiles: Iterable[str]) -> int:
+        """Count starting/running workloads whose profile is one of `profiles` — the cluster cap."""
+        ...
+
 
 # States that no longer occupy a quota slot.
 _TERMINAL = {"stopped", "destroyed"}
+# States that hold a cluster-cap slot: the workload is being created or is up.
+_LIVE = {"starting", "running"}
 
 
 def _is_active(record: WorkloadRecord) -> bool:
     return record.status.state.value not in _TERMINAL
+
+
+def _is_live_in(record: WorkloadRecord, profiles: frozenset[str]) -> bool:
+    return record.spec.profile in profiles and record.status.state.value in _LIVE
 
 
 class InMemoryStore:
@@ -94,6 +106,10 @@ class InMemoryStore:
 
     def count_for_owner(self, owner: str) -> int:
         return sum(1 for r in self._records.values() if r.owner == owner and _is_active(r))
+
+    def count_active(self, profiles: Iterable[str]) -> int:
+        wanted = frozenset(profiles)
+        return sum(1 for r in self._records.values() if _is_live_in(r, wanted))
 
 
 class RedisStore:
@@ -147,6 +163,10 @@ class RedisStore:
             if record.owner == owner and _is_active(record):
                 count += 1
         return count
+
+    def count_active(self, profiles: Iterable[str]) -> int:
+        wanted = frozenset(profiles)
+        return sum(1 for record in self.list() if _is_live_in(record, wanted))
 
 
 OwnerResolver = Callable[[WorkloadSpec], str]

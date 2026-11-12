@@ -839,6 +839,19 @@ async def request_bot(
         if spawned_state in ("stopped", "destroyed"):
             raise SpawnFailed(f"workload dead on spawn: {result.get('stopReason') or spawned_state}")
     except QuotaExceeded:
+        # The runtime refused for capacity (its cluster-wide bot cap, or an owner quota) and started
+        # nothing. Fail the just-inserted row now, best-effort like the SpawnFailed branch below, so
+        # no `requested` row lingers to 409 a retry of the same link until the reaper flips it.
+        try:
+            await repo.fail_meeting(
+                meeting_id=meeting_id, reason="capacity_exhausted", failure_stage="requested",
+            )
+        except Exception as fail_err:  # noqa: BLE001 — failing the row never masks the refusal
+            log_event(
+                "bot_spawn_fail_row_error", audience="system", level="error",
+                span="bots.create", user_id=user_id, meeting_id=str(meeting_id),
+                fields={"error": str(fail_err)},
+            )
         log_event(
             "bot_spawn_quota_exceeded", audience="user", level="warning",
             span="bots.create", user_id=user_id, meeting_id=str(meeting_id),

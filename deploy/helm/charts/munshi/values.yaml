@@ -259,7 +259,9 @@ runtime:
   #   docker → host /var/run/docker.sock (single-node k3s fallback; mounts the socket — see below).
   #   process→ child processes (no containers).
   backend: "k8s"
-  replicaCount: 1               # keep at 1 unless backend=k8s (Redis is the state-of-record)
+  # Keep at 1: the cluster bot cap (maxActiveBots) is counted by one runtime process, so a second
+  # replica would admit up to twice the cap.
+  replicaCount: 1
   image:
     repository: ghcr.io/andai/munshi-runtime
     tag: v012
@@ -280,6 +282,16 @@ runtime:
     idleTimeoutSec: ""
   # Active-phase remote-audio silence window. Empty uses the bot's 10-minute default.
   aloneSilenceWindowMs: ""
+  # Cluster-wide cap on meeting bots starting or running at once (RUNTIME_MAX_ACTIVE_BOTS). A dispatch
+  # over it is refused at once with 429 and the meeting fails as `capacity_exhausted`; without a cap,
+  # overflow bots sit Pending until a node frees up and their meetings stall. Size it to what the bot
+  # nodes hold: (allocatable memory of the bot nodes) / workloadResources.meetingBot.memoryMb, minus
+  # headroom. Empty or 0 = no cap. See docs/docs/deployment-kubernetes.mdx.
+  maxActiveBots: ""
+  # /dev/shm of every spawned Pod (RUNTIME_K8S_SHM_SIZE): a memory-backed emptyDir. Chromium needs a
+  # real one; it counts against the Pod's memory limit, which is why meetingBot.memoryMb is 2560.
+  # Empty = no shm volume (the kubelet's small default).
+  k8sShmSize: "2Gi"
   resources:
     requests: { cpu: 50m, memory: 256Mi }
     limits:   { cpu: 500m, memory: 768Mi }
@@ -293,14 +305,15 @@ runtime:
   # an agent worker is a code harness. runtime.v1 carries ONE value per dimension, so each value sets
   # BOTH the request and the limit (Guaranteed QoS) — there is no separate request/limit knob.
   #
-  # The defaults below are conservative and sized to fit a small dev cluster. RAISE THEM for real
-  # meetings: memoryMb is a hard ceiling, and a bot that exceeds it is OOM-killed mid-meeting (before
-  # #1005 nothing was enforced, so bots ran unbounded). Set a class's values to "" to emit no
-  # resources for it at all and keep exactly the pre-#1005 unbounded behaviour.
+  # memoryMb is a hard ceiling: a bot that exceeds it is OOM-killed mid-meeting. The bot's 2560Mi
+  # covers its heap and the 2Gi /dev/shm (k8sShmSize), which counts against the same limit; do not
+  # lower it while shm is on. A load test with the mock bot may set smaller values. Set a class's
+  # values to "" to emit no resources for it at all and keep exactly the pre-#1005 unbounded
+  # behaviour.
   workloadResources:
     meetingBot:
       cpu: 1                    # cores → requests/limits cpu: 1000m
-      memoryMb: 2048            # MiB   → requests/limits memory: 2048Mi
+      memoryMb: 2560            # MiB   → requests/limits memory: 2560Mi
     agentWorker:
       cpu: 0.5                  # cores → requests/limits cpu: 500m
       memoryMb: 1024            # MiB   → requests/limits memory: 1024Mi

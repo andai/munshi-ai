@@ -201,6 +201,38 @@ async def test_request_bot_quota_propagates(monkeypatch):
                           native_meeting_id="x", redis_url="r", token_secret=SECRET)
 
 
+async def test_a_runtime_capacity_refusal_fails_the_row_as_capacity_exhausted(monkeypatch):
+    """The runtime's cluster-wide bot cap (429 `capacity_exhausted`) started nothing: the row it was
+    asked for is failed with that reason at once, not left `requested`, and no session exists."""
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://example.invalid")
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_TOKEN", "tok-test")
+    repo = InMemoryMeetingRepo()
+    with pytest.raises(QuotaExceeded):
+        await request_bot(repo, FakeRuntimeClient(quota_exceeded=True), user_id=USER,
+                          platform="google_meet", native_meeting_id="over-cap", redis_url="r",
+                          token_secret=SECRET)
+    [row] = list(repo._meetings.values())
+    assert row["status"] == "failed"
+    assert row["data"]["failure_reason"] == "capacity_exhausted"
+    assert row["data"]["failure_stage"] == "requested"
+    assert repo.sessions == []
+
+
+async def test_a_failing_row_write_never_masks_the_capacity_refusal(monkeypatch):
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://example.invalid")
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_TOKEN", "tok-test")
+    repo = InMemoryMeetingRepo()
+
+    async def broken(**_):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(repo, "fail_meeting", broken)
+    with pytest.raises(QuotaExceeded):
+        await request_bot(repo, FakeRuntimeClient(quota_exceeded=True), user_id=USER,
+                          platform="google_meet", native_meeting_id="over-cap", redis_url="r",
+                          token_secret=SECRET)
+
+
 # ── #718: a workload DEAD AT START is refused, the row is failed with the reason, no `requested` lingers
 async def test_request_bot_dead_on_arrival_fails_the_row(monkeypatch):
     """C2: the kernel answers 201 but with a workload that never started (state=stopped/start_failed).
@@ -402,10 +434,17 @@ def test_post_bots_429_on_quota(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", SECRET)
     monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://example.invalid")
     monkeypatch.setenv("TRANSCRIPTION_SERVICE_TOKEN", "tok-test")
-    client = _client(runtime=FakeRuntimeClient(quota_exceeded=True))
+    repo = InMemoryMeetingRepo()
+    client = _client(repo, FakeRuntimeClient(quota_exceeded=True))
     r = client.post("/bots", headers=HEADERS,
                     json={"platform": "google_meet", "native_meeting_id": "x"})
     assert r.status_code == 429
+    [row] = list(repo._meetings.values())
+    assert (row["status"], row["data"]["failure_reason"]) == ("failed", "capacity_exhausted")
+    # the link is free again: once capacity is back, the same meeting can be asked for at once
+    retry = _client(repo, FakeRuntimeClient()).post(
+        "/bots", headers=HEADERS, json={"platform": "google_meet", "native_meeting_id": "x"})
+    assert retry.status_code == 201
 
 
 def test_post_bots_502_when_workload_dead_on_arrival(monkeypatch):

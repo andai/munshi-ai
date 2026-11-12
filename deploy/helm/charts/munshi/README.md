@@ -86,7 +86,7 @@ is rejected at admission, and the meeting or dispatch never starts.
 ```yaml
 runtime:
   workloadResources:
-    meetingBot:   { cpu: 1,   memoryMb: 2048 }   # Chromium + capture pipeline
+    meetingBot:   { cpu: 1,   memoryMb: 2560 }   # Chromium + capture pipeline + 2Gi /dev/shm
     agentWorker:  { cpu: 0.5, memoryMb: 1024 }   # code harness
 ```
 
@@ -96,9 +96,11 @@ runtime:
 | `memoryMb` | container `requests.memory` **and** `limits.memory`, in MiB (`2048` → `2048Mi`) | a **hard ceiling** — a workload exceeding it is OOM-killed |
 | either, set to `""` | nothing rendered for that class | preserves the optional contract: an unsized Pod, exactly as before |
 
-Request equals limit, so both classes get **Guaranteed** QoS. The shipped defaults are conservative
-and sized to fit a small dev cluster — raise `meetingBot.memoryMb` for real meetings rather than
-discovering the ceiling as a mid-meeting OOM kill. A caller may also override per workload by
+Request equals limit, so both classes get **Guaranteed** QoS. Every spawned Pod also gets a
+memory-backed `/dev/shm` of `runtime.k8sShmSize` (default `2Gi`), which counts against the same
+limit — so do not lower `meetingBot.memoryMb` below 2560 while shm is on, or a Teams call that fills
+shm OOM-kills the bot mid-meeting. `runtime.maxActiveBots` caps how many bots run at once; size it
+to what the bot nodes hold (see the Kubernetes deployment docs). A caller may also override per workload by
 sending `resources` in its `runtime.v1` `WorkloadSpec`; the chart values are the default that
 applies when it does not.
 
