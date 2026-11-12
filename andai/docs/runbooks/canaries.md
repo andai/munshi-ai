@@ -2,9 +2,9 @@
 
 munshi.ai finds out that bots stopped getting into meetings before its users do. andai-worker sends
 a **canary** bot into a standing test meeting on each platform at least every 4 hours. It exports
-join metrics at `/metrics` and mails the operator when joins start failing (BOT-04, D-34). No
-Prometheus, Alertmanager or Grafana server ships with munshi.ai; scrape `/metrics` with whatever
-the deployment already runs.
+join metrics at `/metrics` and mails the operator when joins start failing (BOT-04, D-34). The
+opt-in `monitoring` profile adds Prometheus, Alertmanager and Perses with the same two alerts
+(`andai/docs/monitoring.md`); while it has a receiver enabled, this mail stands down.
 
 Code: `andai/services/worker/andai_worker/` (`canary.py`, `metrics.py`, `alerts.py`), the canary
 org in `andai_core/meetings/service.py`, and the tables and functions in migration

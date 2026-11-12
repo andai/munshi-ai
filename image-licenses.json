@@ -42,6 +42,30 @@
       "license": "MIT",
       "disposition": "sidecar",
       "note": "Development and CI mail catcher in the andai compose overlay (andai/deploy/compose/docker-compose.andai.yml, andai/images.json third_party), andai-core's default SMTP relay (D-30). MIT, Category A. Pulled as-is and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "prom/prometheus",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Metrics and alert-rule evaluation in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62). Pinned to the 3.13 LTS line by tag and digest (andai/images.json third_party). Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "prom/alertmanager",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Alert routing (email, Slack, Teams Workflows receivers, all off by default) in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62). Pinned by tag and digest. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "prom/node-exporter",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Filesystem metrics for the storage alert in the andai compose overlay's opt-in `monitoring` and `monitoring-test` profiles (OPS-05). Pinned by tag and digest. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "persesdev/perses",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Operator dashboards as code in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62: an Apache-2.0 viewer instead of AGPL Grafana). Pinned by tag and digest; pre-1.0, so dashboards are linted against the pinned version. No telemetry setting exists in v0.55.1. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
     }
   ],
   "bundled": [

@@ -17,6 +17,7 @@
 #   make -C andai images-check  # the stack references only catalogue images (+ the allowlist)
 #   make -C andai env-check     # the root .env.example lists every variable a container reads
 #   make -C andai env-example   # regenerate the `# used by:` lines in the root .env.example
+#   make -C andai monitoring-check   # promtool, amtool and percli over the monitoring configs (pinned images)
 #   make -C andai images-push   # push every catalogue image at VERSION to ghcr.io/andai
 #
 # `make -C andai` runs with cwd=andai/, so every path below is absolute, derived from ROOT.
@@ -53,7 +54,7 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap erase-user erase-status encryption-check live-dispatch load-test agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap erase-user erase-status encryption-check live-dispatch load-test agent-worker images images-check images-push env-check env-example monitoring-check down ps logs health _env-ready _env-file _env-stack-json
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
@@ -69,6 +70,7 @@ help:
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
 	@echo "make -C andai images-check | images-push                 stack uses only catalogue images | publish"
 	@echo "make -C andai env-check | env-example                    root .env.example is complete | regenerate its used-by lines"
+	@echo "make -C andai monitoring-check                           promtool check/test, amtool on two renders, Perses lint (pinned images)"
 	@echo "make -C andai health   HTTP health on 127.0.0.1 + container states"
 	@echo "make -C andai ps | logs [S=service] | down | config"
 	@echo "ENV_FILE=$(ENV_FILE)  PROJECT=$(PROJECT)"
@@ -259,6 +261,39 @@ env-check:
 ## env-example — regenerate the `# used by:` lines in the root .env.example after adding or moving a key.
 env-example:
 	@$(MAKE) --no-print-directory -s _env-stack-json | python3 -I $(ROOT)/andai/scripts/env_example.py --compose-json - --env-example $(CHECK_ENV_FILE) --write
+
+## monitoring-check — the monitoring configs against the pinned images (andai/images.json third_party),
+## offline (--network none): `promtool check config` and `promtool test rules` (each alert at its
+## threshold); `amtool check-config` on two renders of alerting_config.py, every receiver off and
+## every receiver on (email to a placeholder address, Slack and Teams URL files pointing at the
+## local sink); `percli lint` of the Perses provisioning against the image's own plugin archive.
+## Renders run with a cleared environment, so no value of the operator's shell or env file is used.
+MON := $(ROOT)/andai/deploy/monitoring
+third_party = $(shell python3 -I -c 'import json,sys; print(next(i for i in json.load(open(sys.argv[1]))["third_party"] if i.startswith(sys.argv[2] + ":")))' $(ROOT)/andai/images.json $(1))
+RENDER = env -i PATH="$$PATH" HOME="$$HOME" ANDAI_ENV=dev uv run --quiet --directory $(ROOT)/andai python -m andai_worker.alerting_config
+monitoring-check:
+	@set -e; prom="$(call third_party,prom/prometheus)"; am="$(call third_party,prom/alertmanager)"; perses="$(call third_party,persesdev/perses)"; \
+	 t="$$(mktemp -d)"; trap 'rm -rf "$$t"' EXIT; \
+	 echo "== promtool check config"; \
+	 docker run --rm --network none --entrypoint /bin/promtool -v "$(MON)/prometheus:/etc/prometheus:ro" "$$prom" check config /etc/prometheus/prometheus.yml; \
+	 echo "== promtool test rules"; \
+	 docker run --rm --network none --entrypoint /bin/promtool -v "$(MON)/prometheus:/etc/prometheus:ro" "$$prom" test rules /etc/prometheus/rules/tests/munshi-alerts.test.yml; \
+	 mkdir -p "$$t/off" "$$t/on" "$$t/secrets"; \
+	 printf 'http://alert-sink:8000/slack\n' > "$$t/secrets/slack_webhook_url"; \
+	 printf 'http://alert-sink:8000/teams\n' > "$$t/secrets/teams_webhook_url"; \
+	 $(RENDER) --out "$$t/off/alertmanager.yml" --secrets-dir "$$t/secrets" --templates-dir "$(MON)/alertmanager/templates" --state-file "$$t/off/state.json"; \
+	 env -i PATH="$$PATH" HOME="$$HOME" ANDAI_ENV=dev ANDAI_ALERT_EMAIL=ops@example.test ANDAI_ALERT_SLACK=1 ANDAI_ALERT_TEAMS=1 SMTP_USER=alerts SMTP_PASSWORD=placeholder \
+	   uv run --quiet --directory $(ROOT)/andai python -m andai_worker.alerting_config --out "$$t/on/alertmanager.yml" --secrets-dir "$$t/secrets" --templates-dir "$(MON)/alertmanager/templates" --state-file "$$t/on/state.json"; \
+	 for r in off on; do \
+	   echo "== amtool check-config ($$r)"; \
+	   docker run --rm --network none --entrypoint /bin/amtool -v "$$t:$$t:ro" -v "$(MON)/alertmanager/templates:$(MON)/alertmanager/templates:ro" "$$am" check-config "$$t/$$r/alertmanager.yml"; \
+	 done; \
+	 echo "== percli lint"; \
+	 for f in project.yaml datasource.yaml dashboards/joins.yaml dashboards/asr.yaml dashboards/gpu.yaml dashboards/pipeline.yaml dashboards/intake.yaml dashboards/email.yaml; do \
+	   docker run --rm --network none --user 0:0 --entrypoint /bin/percli -v "$(MON)/perses/provisioning:/provisioning:ro" "$$perses" \
+	     lint -f "/provisioning/$$f" --plugin.path /etc/perses/plugins-archive; \
+	 done; \
+	 echo "monitoring-check: ok"
 
 images-check:
 	@set -e; t="$$(mktemp -d)"; trap 'rm -rf "$$t"' EXIT; \

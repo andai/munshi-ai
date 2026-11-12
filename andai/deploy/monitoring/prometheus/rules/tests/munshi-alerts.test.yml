@@ -1,0 +1,223 @@
+# Unit tests for munshi-alerts.yml: `promtool test rules munshi-alerts.test.yml`
+# (`make -C andai monitoring-check` runs it in the pinned Prometheus image). Each alert fires at its
+# threshold and stays quiet just below it. Series values: `a+bxN` is N+1 samples from a, step b;
+# samples are one `interval` apart from t=0.
+
+rule_files:
+  - ../munshi-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ── canaries: 1 failure in a row is quiet, 2 fire at once ─────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'munshi_canary_consecutive_failures{job="andai-worker",instance="andai-worker:8000",platform="google_meet"}'
+        values: '1x5 2x5'
+      - series: 'munshi_canary_consecutive_failures{job="andai-worker",instance="andai-worker:8000",platform="zoom"}'
+        values: '0x11'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MunshiCanaryFailing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MunshiCanaryFailing
+        exp_alerts:
+          - exp_labels:
+              platform: google_meet
+              service: bot-joins
+              severity: critical
+            exp_annotations:
+              summary: Two or more canary joins in a row failed on one platform
+
+  # ── join success: below 95% with at least 5 counted joins ────────────────────────────────────
+  # teams: 0.96 then 0.80, counted 4 then 5 → fires at 6m.
+  # zoom: 0.50 but only 4 counted → quiet. google_meet: exactly 0.95 over 20 → quiet.
+  - interval: 1m
+    input_series:
+      - series: 'munshi_join_success_ratio_24h{job="andai-worker",instance="andai-worker:8000",platform="teams",source="all"}'
+        values: '0.96x5 0.80x10'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="teams",source="portal_link",outcome="success"}'
+        values: '4x15'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="teams",source="portal_link",outcome="failure",reason="admission_denied"}'
+        values: '0x5 1x10'
+      - series: 'munshi_join_success_ratio_24h{job="andai-worker",instance="andai-worker:8000",platform="zoom",source="all"}'
+        values: '0.50x15'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="zoom",source="invite_mail",outcome="success"}'
+        values: '2x15'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="zoom",source="invite_mail",outcome="failure",reason="admission_timeout"}'
+        values: '2x15'
+      - series: 'munshi_join_success_ratio_24h{job="andai-worker",instance="andai-worker:8000",platform="google_meet",source="all"}'
+        values: '0.95x15'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="google_meet",source="portal_link",outcome="success"}'
+        values: '19x15'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="google_meet",source="portal_link",outcome="failure",reason="ui_changed"}'
+        values: '1x15'
+      - series: 'munshi_bot_joins_total{job="andai-worker",instance="andai-worker:8000",platform="google_meet",source="portal_link",outcome="excluded",reason="cancelled"}'
+        values: '50x15'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MunshiJoinSuccessLow
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MunshiJoinSuccessLow
+        exp_alerts:
+          - exp_labels:
+              platform: teams
+              service: bot-joins
+              severity: warning
+            exp_annotations:
+              summary: Bot join success over 24 hours is below 95 percent on one platform
+
+  # ── pipeline backlog: oldest pending > 900 s for 1 minute ─────────────────────────────────────
+  # ingest grows 60 s a minute: 900 at 15m (not above), 960 at 16m (pending), firing at 17m.
+  # minutes sits at exactly 900 → quiet.
+  - interval: 1m
+    input_series:
+      - series: 'munshi_pipeline_oldest_pending_seconds{job="andai-worker",instance="andai-worker:8000",stage="ingest"}'
+        values: '0+60x30'
+      - series: 'munshi_pipeline_oldest_pending_seconds{job="andai-worker",instance="andai-worker:8000",stage="minutes"}'
+        values: '900x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MunshiPipelineBacklog
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: MunshiPipelineBacklog
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: MunshiPipelineBacklog
+        exp_alerts:
+          - exp_labels:
+              stage: ingest
+              service: pipeline
+              severity: warning
+            exp_annotations:
+              summary: Pipeline backlog older than 15 minutes
+
+  # ── storage: above 80% on a watched mount for 10 minutes ──────────────────────────────────────
+  # /host/munshi-fill: 75% used, then 81% from 6m → firing at 16m.
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node-exporter",instance="node-exporter:9100",device="tmpfs",fstype="tmpfs",mountpoint="/host/munshi-fill"}'
+        values: '100x30'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",instance="node-exporter:9100",device="tmpfs",fstype="tmpfs",mountpoint="/host/munshi-fill"}'
+        values: '25x5 19x25'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MunshiStorageHigh
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: MunshiStorageHigh
+        exp_alerts:
+          - exp_labels:
+              service: storage
+              severity: critical
+            exp_annotations:
+              summary: A storage filesystem is more than 80 percent full
+
+  # Exactly 80% on a watched mount and 95% on an unwatched one → quiet.
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node-exporter",instance="node-exporter:9100",device="sda1",fstype="ext4",mountpoint="/host"}'
+        values: '100x30'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",instance="node-exporter:9100",device="sda1",fstype="ext4",mountpoint="/host"}'
+        values: '20x30'
+      - series: 'node_filesystem_size_bytes{job="node-exporter",instance="node-exporter:9100",device="sdb1",fstype="ext4",mountpoint="/scratch"}'
+        values: '100x30'
+      - series: 'node_filesystem_avail_bytes{job="node-exporter",instance="node-exporter:9100",device="sdb1",fstype="ext4",mountpoint="/scratch"}'
+        values: '5x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: MunshiStorageHigh
+        exp_alerts: []
+
+  # ── erasure SLA: oldest open request older than 18 h ──────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'munshi_erasure_oldest_pending_seconds{job="andai-worker",instance="andai-worker:8000"}'
+        values: '64800x5 64860x5'
+      - series: 'munshi_erasures_failed{job="andai-worker",instance="andai-worker:8000"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MunshiErasureSlaAtRisk
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MunshiErasureSlaAtRisk
+        exp_alerts:
+          - exp_labels:
+              service: erasure
+              severity: critical
+            exp_annotations:
+              summary: A user erasure request may miss its 24 hour deadline
+
+  # ── erasure SLA: a failed request needs the operator ──────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'munshi_erasure_oldest_pending_seconds{job="andai-worker",instance="andai-worker:8000"}'
+        values: '0x10'
+      - series: 'munshi_erasures_failed{job="andai-worker",instance="andai-worker:8000"}'
+        values: '0x5 1x5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MunshiErasureSlaAtRisk
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MunshiErasureSlaAtRisk
+        exp_alerts:
+          - exp_labels:
+              service: erasure
+              severity: critical
+            exp_annotations:
+              summary: A user erasure request may miss its 24 hour deadline
+
+  # ── target down: up == 0 for 5 minutes ────────────────────────────────────────────────────────
+  # andai-intake down from 6m → firing at 11m; the others stay up.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="andai-core",instance="andai-core:8000"}'
+        values: '1x20'
+      - series: 'up{job="andai-worker",instance="andai-worker:8000"}'
+        values: '1x20'
+      - series: 'up{job="andai-intake",instance="andai-intake:8000"}'
+        values: '1x5 0x15'
+      - series: 'up{job="node-exporter",instance="node-exporter:9100"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: MunshiTargetDown
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: MunshiTargetDown
+        exp_alerts:
+          - exp_labels:
+              job: andai-intake
+              instance: andai-intake:8000
+              service: andai-intake
+              severity: critical
+            exp_annotations:
+              summary: A munshi metrics endpoint cannot be scraped
+
+  # No node-exporter target at all (stopped container, nothing discovered) → firing after 5 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="andai-core",instance="andai-core:8000"}'
+        values: '1x10'
+      - series: 'up{job="andai-worker",instance="andai-worker:8000"}'
+        values: '1x10'
+      - series: 'up{job="andai-intake",instance="andai-intake:8000"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MunshiTargetDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: MunshiTargetDown
+        exp_alerts:
+          - exp_labels:
+              job: node-exporter
+              service: node-exporter
+              severity: critical
+            exp_annotations:
+              summary: A munshi metrics endpoint cannot be scraped

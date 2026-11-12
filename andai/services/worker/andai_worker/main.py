@@ -19,7 +19,8 @@ alerts (BOT-04, D-34, PORT-04, MOM-01, MOM-05, INV-01, OPS-02).
   - data exports (`exports.py`), always: every copy of a person's data that was asked for, and
     hourly the deletion of expired bundles;
   - canaries (`canary.py`) when at least one `ANDAI_CANARY_*_URL` is set;
-  - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set.
+  - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set; with `ANDAI_MONITORING` on it stands
+    down while Alertmanager has at least one receiver (`alerting_config.py`'s state file).
 
 The worker uses andai-core's own code (shared uv workspace): its settings class, the RLS-bound
 `andai_app` engine, the keyring (the canary org's platform key is sealed under `ANDAI_KEK`), the
@@ -185,7 +186,11 @@ def jobs(services: WorkerServices) -> list[asyncio.Task]:
         log.info("no canary links configured: canaries off")
     if settings.alert_to:
         evaluator = alerts.AlertEvaluator(
-            services.engine, services.mailer, settings.alert_to, clock=services.clock
+            services.engine,
+            services.mailer,
+            settings.alert_to,
+            clock=services.clock,
+            gate=alerts.AlertMailGate(settings.monitoring, settings.alerting_state_file),
         )
         every = min(alerts.TICK_S, canary.tick_seconds(settings.canary_interval_s))
         tasks.append(asyncio.create_task(evaluator.run(every)))

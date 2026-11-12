@@ -1,0 +1,13 @@
+{{/*
+  munshi.ai notification text for every receiver (email subject and body, Slack, Teams), D-62.
+  It prints only the alert name, service, severity, the rule's fixed summary, the status and
+  counts. Alertmanager's default templates print every label and annotation and a link back to
+  Alertmanager, so the rendered config points every text field here instead.
+  andai/services/worker/tests/test_alerting_config.py checks what this file may reference.
+*/}}
+
+{{ define "munshi.title" }}[{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}] {{ with index .Alerts 0 }}{{ .Labels.alertname }} — {{ .Labels.service }}{{ end }}{{ end }}
+
+{{ define "munshi.text" }}{{ len .Alerts.Firing }} firing, {{ len .Alerts.Resolved }} resolved
+{{ range .Alerts }}- {{ .Labels.severity }}: {{ .Annotations.summary }} ({{ .Status }})
+{{ end }}{{ end }}
