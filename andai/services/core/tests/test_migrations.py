@@ -6,6 +6,7 @@ from alembic import command
 from sqlalchemy import Engine, create_engine, text
 
 from andai_core.db.models import (
+    ERASURE_TABLES,
     GLOBAL_TABLES,
     INTAKE_TABLES,
     ORG_SCOPED_TABLES,
@@ -15,9 +16,13 @@ from andai_core.db.models import (
 from conftest import Postgres, alembic_config
 
 ALL_TABLES = (
-    set(GLOBAL_TABLES) | set(ORG_SCOPED_TABLES) | set(SYSTEM_TABLES) | set(INTAKE_TABLES)
+    set(GLOBAL_TABLES)
+    | set(ORG_SCOPED_TABLES)
+    | set(SYSTEM_TABLES)
+    | set(INTAKE_TABLES)
+    | set(ERASURE_TABLES)
 )
-HEAD = "0018"
+HEAD = "0019"
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -122,8 +127,10 @@ def test_app_role_grants(migrated: Postgres) -> None:
         - {"audit_events", "mom_documents", "meeting_removals"}
         - set(SYSTEM_TABLES)
         - set(INTAKE_TABLES)
+        - set(ERASURE_TABLES)
     ):
         assert granted[table] == crud, table
+    assert granted["erasure_requests"] == {"SELECT", "INSERT", "UPDATE"}  # never deleted
     assert granted["audit_events"] == {"INSERT"}
     assert granted["mom_documents"] == {"SELECT", "INSERT"}  # a version is never changed
     assert granted["meeting_removals"] == {"SELECT", "INSERT"}  # a removal is a fact
@@ -137,9 +144,10 @@ def test_app_role_grants(migrated: Postgres) -> None:
 
 
 # andai_scan's UPDATE column grants at head: the ingest columns (0006), the deletion lease (0009),
-# the MoM and recap state and leases (0010), the inbound mail state (0012) and the scheduled
-# dispatch claim (0016).
-HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15 + 2
+# the MoM and recap state and leases (0010), the inbound mail state (0012), the scheduled
+# dispatch claim (0016) and the erasure claim (0019).
+ERASURE_SCAN_UPDATES = 2
+HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15 + 2 + ERASURE_SCAN_UPDATES
 
 TRANSCRIPT_COLUMNS = {
     "title",
@@ -171,7 +179,10 @@ def _scan_objects(engine: Engine) -> tuple[int, int, int]:
                 text("SELECT count(*) FROM pg_proc WHERE proname = 'andai_claim_ingest'")
             ).scalar_one(),
             conn.execute(
-                text("SELECT count(*) FROM pg_policies WHERE policyname = 'scan_claim'")
+                text(
+                    "SELECT count(*) FROM pg_policies"
+                    " WHERE policyname = 'scan_claim' AND tablename = 'meetings'"
+                )
             ).scalar_one(),
             conn.execute(
                 text(
@@ -192,6 +203,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
         command.downgrade(config, "0005")
         assert _revision(engine) == "0005"
         assert _tables(engine) == ALL_TABLES - {
+            "erasure_requests",
             "transcript_segments",
             "meeting_shares",
             "mom_documents",
@@ -233,6 +245,7 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
         command.downgrade(config, "0006")
         assert _revision(engine) == "0006"
         assert _tables(engine) == ALL_TABLES - {
+            "erasure_requests",
             "meeting_shares",
             "mom_documents",
             "meeting_removals",
@@ -290,6 +303,7 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
         command.downgrade(config, "0007")
         assert _revision(engine) == "0007"
         assert _tables(engine) == ALL_TABLES - {
+            "erasure_requests",
             "mom_documents",
             "meeting_removals",
             "platform_webhook_events",
@@ -354,6 +368,7 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
         command.downgrade(config, "0008")
         assert _revision(engine) == "0008"
         assert _tables(engine) == ALL_TABLES - {
+            "erasure_requests",
             "meeting_removals",
             "platform_webhook_events",
             "inbound_mail",
@@ -674,7 +689,8 @@ def test_inbound_mail_downgrade_to_0011_and_upgrade_again(migrated: Postgres) ->
         command.downgrade(config, "0011")
         assert _revision(engine) == "0011"
         assert _inbound_state(engine) == (False, 0)
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 15 - 2  # 0012's and 0016's
+        # 0012's, 0016's and 0019's
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 15 - 2 - ERASURE_SCAN_UPDATES
 
         command.upgrade(config, "head")
         assert _inbound_state(engine) == (True, 5)
@@ -717,6 +733,7 @@ def test_inbound_functions_belong_to_the_scan_role(migrated: Postgres) -> None:
         "scan_insert": ("INSERT", ["andai_scan"]),
         "scan_update": ("UPDATE", ["andai_scan"]),
         "scan_purge": ("DELETE", ["andai_scan"]),
+        "scan_erase": ("DELETE", ["andai_scan"]),  # 0019: only while andai_erase_inbound runs
     }
     assert {row[0] for row in rows} == set(INBOUND_FUNCTIONS)
     for name, definer, owner, config, app_may, owner_may in rows:
@@ -1336,7 +1353,7 @@ def test_scheduled_claim_downgrade_to_0015_and_upgrade_again(migrated: Postgres)
         assert _revision(engine) == "0015"
         assert _dispatch_claim_state(engine) == (set(), 0, None, set(), set())
         assert "scheduled_end" not in _meeting_columns(engine)
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 2
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 2 - ERASURE_SCAN_UPDATES
         assert _invite_state(engine)[0] is True  # 0015 untouched
 
         command.upgrade(config, "head")
@@ -1503,10 +1520,126 @@ def test_pipeline_stats_downgrade_to_0017_and_upgrade_again(migrated: Postgres) 
         assert _revision(engine) == "0017"
         assert _pipeline_state(engine) == ({}, set())
         assert _audit_state(engine)[3] == 1  # 0017 untouched
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES  # only SELECT grants were added
+        # only SELECT grants were added by 0018; 0019's erasure claim is gone too
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - ERASURE_SCAN_UPDATES
 
         command.upgrade(config, "head")
         assert _revision(engine) == HEAD
         assert _pipeline_state(engine) == at_head
+    finally:
+        engine.dispose()
+
+
+ERASURE_FUNCTIONS = {
+    "andai_claim_erasures": "TABLE(audit_org_id uuid, request_id uuid, attempts integer)",
+    "andai_erasure_backlog": "TABLE(pending bigint, oldest_s double precision, failed bigint)",
+    "andai_erasure_siblings": "bigint",
+    "andai_erasure_org": "uuid",
+    "andai_erase_inbound": "bigint",
+}
+TOMBSTONE = "00000000-0000-4000-8000-00000000e7a5"
+
+
+def _erasure_state(engine: Engine) -> tuple:
+    """(functions, erasure_requests exists, tombstone row, andai_scan SELECT on the inbound
+    columns 0019 granted, inbound_mail policies)."""
+    with engine.connect() as conn:
+        functions = {
+            row[0]: tuple(row[1:])
+            for row in conn.execute(
+                text(
+                    "SELECT p.proname, pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = ANY(:n)"
+                ),
+                {"n": sorted(ERASURE_FUNCTIONS)},
+            ).all()
+        }
+        table = conn.execute(text("SELECT to_regclass('public.erasure_requests')")).scalar()
+        tombstone = conn.execute(
+            text("SELECT email, display_name, status, password_hash FROM users WHERE id = :t"),
+            {"t": TOMBSTONE},
+        ).first()
+        grants = {
+            column
+            for column in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.column_privileges"
+                    " WHERE grantee = 'andai_scan' AND privilege_type = 'SELECT'"
+                    " AND table_name = 'inbound_mail'"
+                    " AND column_name IN ('org_id', 'resolved_user_id', 'sender')"
+                )
+            ).scalars()
+        }
+        policies = set(
+            conn.execute(
+                text("SELECT policyname FROM pg_policies WHERE tablename = 'inbound_mail'")
+            ).scalars()
+        )
+    return (
+        functions,
+        table is not None,
+        None if tombstone is None else tuple(tombstone),
+        grants,
+        policies,
+    )
+
+
+def test_erasure_functions_belong_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        functions, table, tombstone, grants, policies = _erasure_state(engine)
+    finally:
+        engine.dispose()
+    path = "search_path=public, pg_temp"
+    assert functions == {
+        name: (
+            "andai_scan",
+            True,
+            [path],
+            result,
+            False,
+            True,
+        )
+        for name, result in ERASURE_FUNCTIONS.items()
+    }
+    assert table is True
+    assert tombstone == ("erased-user@munshi.invalid", "Erased user", "erased", None)
+    assert grants == {"org_id", "resolved_user_id", "sender"}
+    assert "scan_erase" in policies and "scan_purge" in policies
+
+
+def test_erasure_downgrade_to_0018_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        at_head = _erasure_state(engine)
+        assert set(at_head[0]) == set(ERASURE_FUNCTIONS)
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
+
+        command.downgrade(config, "0018")
+        assert _revision(engine) == "0018"
+        functions, table, tombstone, grants, policies = _erasure_state(engine)
+        assert (functions, table, grants) == ({}, False, set())
+        # Gone, or kept as a disabled user when other tests' rows still point at it.
+        assert tombstone is None or tombstone[2] == "disabled"
+        assert "scan_erase" not in policies and "scan_purge" in policies
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - ERASURE_SCAN_UPDATES
+        assert set(_pipeline_state(engine)[0]) == set(PIPELINE_FUNCTIONS)  # 0018 untouched
+        with engine.connect() as conn:
+            check = conn.execute(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                    " WHERE conrelid = 'users'::regclass AND contype = 'c'"
+                    " AND position('status' IN pg_get_constraintdef(oid)) > 0"
+                )
+            ).scalar_one()
+        assert "erased" not in check
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == HEAD
+        assert _erasure_state(engine) == at_head
     finally:
         engine.dispose()

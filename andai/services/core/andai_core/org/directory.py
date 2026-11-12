@@ -6,9 +6,10 @@ Any member of the org may read it. It holds names and ids only:
 * `users`: active members (`{id, name, team_ids}`), by name;
 * `teams`: every team (`{id, name}`), by name.
 
-No email addresses, org or team roles, or members who are disabled or have not joined yet. The
-admin's member list (`GET /org/users`) is where those live. Rows come through this org's
-memberships under row-level security, so another org's people never appear.
+No email addresses, org or team roles, or members who are disabled, erased or have not joined
+yet, and never the tombstone user ("Erased user"). The admin's member list (`GET /org/users`) is
+where members' details live. Rows come through this org's memberships under row-level security,
+so another org's people never appear.
 """
 
 from __future__ import annotations
@@ -20,7 +21,13 @@ from sqlalchemy import select
 
 from andai_core.auth.deps import Services, get_services, org_transaction
 from andai_core.auth.roles import Caller, require_role
-from andai_core.db.models import OrgMembership, Team, TeamMembership, User
+from andai_core.db.models import (
+    TOMBSTONE_USER_ID,
+    OrgMembership,
+    Team,
+    TeamMembership,
+    User,
+)
 
 router = APIRouter()
 
@@ -37,7 +44,11 @@ def directory(
         people = tx.execute(
             select(User.id, User.display_name)
             .join(OrgMembership, OrgMembership.user_id == User.id)
-            .where(OrgMembership.org_id == org_id, User.status == "active")
+            .where(
+                OrgMembership.org_id == org_id,
+                User.status == "active",
+                User.id != TOMBSTONE_USER_ID,
+            )
             .order_by(User.display_name, User.id)
         ).all()
         teams = tx.execute(

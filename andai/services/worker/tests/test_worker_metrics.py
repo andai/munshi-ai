@@ -255,9 +255,23 @@ munshi_db_size_bytes DB_SIZE
 """
 
 
+# The families 0019 added, after the database size. The world has no erasure request.
+ERASURE_GOLDEN = """\
+# HELP munshi_erasures_pending User erasure requests not yet done (pending or running).
+# TYPE munshi_erasures_pending gauge
+munshi_erasures_pending 0.0
+# HELP munshi_erasure_oldest_pending_seconds Seconds since the oldest open user erasure request was made (0 when none).
+# TYPE munshi_erasure_oldest_pending_seconds gauge
+munshi_erasure_oldest_pending_seconds 0.0
+# HELP munshi_erasures_failed User erasure requests that failed and need the operator.
+# TYPE munshi_erasures_failed gauge
+munshi_erasures_failed 0.0
+"""
+
+
 def _golden(world: dict) -> str:
     """The canary org's principal is the world's only sealed value, under the harness's KEK."""
-    return GOLDEN.replace("WORLD_KEY_ID", world["key_id"]) + PIPELINE_GOLDEN
+    return GOLDEN.replace("WORLD_KEY_ID", world["key_id"]) + PIPELINE_GOLDEN + ERASURE_GOLDEN
 
 
 def _masked(body: str) -> str:
@@ -347,6 +361,42 @@ def test_the_deletion_backlog_counts_every_org_and_ages_from_the_oldest(
     assert "munshi_deletion_oldest_pending_seconds 1200.0" in body
     with transaction(fresh_app_engine) as tx:  # andai_app, no app.org_id
         assert tx.execute(text("SELECT count(*) FROM meetings")).scalar_one() == 0
+
+
+def _erasure(engine: Engine, org_id, created_at: datetime, state: str) -> None:
+    with transaction(engine, org_id=org_id) as tx:
+        tx.execute(
+            text(
+                "INSERT INTO erasure_requests (org_id, audit_org_id, subject_user_id, source,"
+                " state, error, created_at, finished_at)"
+                " VALUES (:o, :o, :s, 'org_admin', :st, :e, :c, :f)"
+            ),
+            {"o": org_id, "s": uuid.uuid4(), "st": state, "c": created_at,
+             "e": "purge_failed" if state == "failed" else None,
+             "f": created_at if state in ("done", "failed") else None},
+        )
+
+
+def test_the_erasure_backlog_counts_every_org_and_ages_from_the_oldest(
+    fresh_app_engine: Engine,
+) -> None:
+    a, b = new_member(fresh_app_engine), new_member(fresh_app_engine)
+    now = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    _erasure(fresh_app_engine, a.org_id, now - timedelta(hours=2), "pending")
+    _erasure(fresh_app_engine, b.org_id, now - timedelta(minutes=5), "running")
+    _erasure(fresh_app_engine, b.org_id, now - timedelta(days=3), "done")
+    _erasure(fresh_app_engine, a.org_id, now - timedelta(days=2), "failed")
+
+    body = metrics.render(metrics.registry_for(fresh_app_engine, lambda: now)).decode()
+
+    assert "munshi_erasures_pending 2.0" in body
+    assert "munshi_erasure_oldest_pending_seconds 7200.0" in body
+    assert "munshi_erasures_failed 1.0" in body
+    for line in body.splitlines():
+        if line.startswith("munshi_erasure"):
+            assert "{" not in line  # no labels
+    with transaction(fresh_app_engine) as tx:  # andai_app, no app.org_id
+        assert tx.execute(text("SELECT count(*) FROM erasure_requests")).scalar_one() == 0
 
 
 def test_join_stats_returns_aggregates_only(superuser_engine: Engine) -> None:

@@ -30,9 +30,14 @@ class FailingMailer:
 
 
 def counts(engine: Engine) -> dict[str, int]:
-    """Users in the database (a global table, readable by the app role without context)."""
+    """Users in the database (a global table, readable by the app role without context), the
+    tombstone user of migration 0019 left out."""
     with engine.connect() as conn:
-        return {"users": conn.execute(text("SELECT count(*) FROM users")).scalar_one()}
+        return {
+            "users": conn.execute(
+                text("SELECT count(*) FROM users WHERE email <> 'erased-user@munshi.invalid'")
+            ).scalar_one()
+        }
 
 
 def stored(engine: Engine, postgres) -> dict[str, int]:

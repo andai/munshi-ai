@@ -1,8 +1,8 @@
 """Password reset by email.
 
 `request_reset` issues a 30-minute, single-use link for an active account and returns the mail to
-send, or None for an unknown, invited or disabled address; the caller answers the same either
-way. Issuing a link voids any earlier unused link of that user. `confirm_reset` consumes the
+send, or None for an unknown, invited, disabled or erased address; the caller answers the same
+either way. Issuing a link voids any earlier unused link of that user. `confirm_reset` consumes the
 link, sets the new password and ends every session of the user.
 """
 

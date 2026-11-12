@@ -371,6 +371,10 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
         "meeting_removals": (
             "SELECT join_url_key, removed_at FROM meeting_removals WHERE org_id = :o"
         ),
+        "erasure_requests": (
+            "SELECT id, subject_user_id, state, step FROM erasure_requests"
+            " WHERE audit_org_id = :o OR org_id = :o"
+        ),
         "bot_settings": (
             "SELECT team_id, auto_join, updated_at, updated_by FROM bot_settings WHERE org_id = :o"
         ),
@@ -425,6 +429,18 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
     ("DELETE", "/api/v1/org/users/{user_id}/mfa"): lambda b: [
         ("B member", {"user_id": b.members["member"].user_id}, None),
         ("B owner", {"user_id": b.members["owner"].user_id}, None),
+    ],
+    ("POST", "/api/v1/org/users/{user_id}/erasure"): lambda b: [
+        (
+            "erase B member",
+            {"user_id": b.members["member"].user_id},
+            {"confirm": b.members["member"].email},
+        ),
+        (
+            "erase B admin",
+            {"user_id": b.members["admin"].user_id},
+            {"confirm": b.members["admin"].email},
+        ),
     ],
     ("PATCH", "/api/v1/org/users/{user_id}"): lambda b: [
         ("promote B member", {"user_id": b.members["member"].user_id}, {"role": "admin"}),
@@ -541,6 +557,7 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("GET", "/api/v1/org/intake/quarantine"): (ADMINS, None),
     ("GET", "/api/v1/org/audit"): (ADMINS, None),
     ("GET", "/api/v1/org/audit/actions"): (ADMINS, None),
+    ("GET", "/api/v1/org/erasures"): (ADMINS, None),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────

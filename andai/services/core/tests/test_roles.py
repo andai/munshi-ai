@@ -82,6 +82,16 @@ MATRIX: dict[str, Case] = {
     "GET /org/audit/actions": (
         "GET", lambda o: "/api/v1/org/audit/actions", None, (DENY, DENY, DENY, ALLOW, ALLOW)
     ),
+    # A random id: the role check answers first; an admitted caller then gets 404 (no member).
+    "POST /org/users/{user_id}/erasure": (
+        "POST",
+        lambda o: f"/api/v1/org/users/{uuid.uuid4()}/erasure",
+        lambda o: {"confirm": "nobody@example.test"},
+        (DENY, DENY, DENY, ALLOW, ALLOW),
+    ),
+    "GET /org/erasures": (
+        "GET", lambda o: "/api/v1/org/erasures", None, (DENY, DENY, DENY, ALLOW, ALLOW)
+    ),
     "GET /org/directory": (
         "GET", lambda o: "/api/v1/org/directory", None, (DENY, ALLOW, ALLOW, ALLOW, ALLOW)
     ),
@@ -143,7 +153,7 @@ def test_every_role_checked_route_has_matrix_cells() -> None:
     checked = {(m, p) for m, p in served(create_app()) if p.startswith(prefixes)}
     covered = {(case[0], "/api/v1" + name.split(" ")[1]) for name, case in MATRIX.items()}
     assert checked == {(m, p) for m, p in covered if p.startswith(prefixes)}
-    assert len(checked) == 15
+    assert len(checked) == 17
 
 
 def test_a_role_change_applies_on_the_next_request(harness: Harness, app_engine: Engine) -> None:

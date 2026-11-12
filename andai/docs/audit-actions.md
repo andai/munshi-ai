@@ -41,3 +41,6 @@ from `andai_core/audit_actions.py` with
 | `org.bootstrap` | platform | Created the organisation |
 | `platform_principal.provision` | platform | Provisioned the platform account |
 | `platform_principal.configure` | platform | Configured the platform account |
+| `user.erase.request` | erasure | Asked to erase a person's data |
+| `user.erase.complete` | erasure | Erased a person's data |
+| `user.erase.failed` | erasure | Could not finish erasing a person's data |

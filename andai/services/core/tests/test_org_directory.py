@@ -60,3 +60,28 @@ def test_a_member_lists_the_orgs_active_people_and_teams(
 
 def test_anonymous_is_401(app_engine: Engine) -> None:
     assert make_harness(app_engine).client().get(PATH).status_code == 401
+
+
+def test_the_directory_never_shows_the_tombstone_or_an_erased_account(
+    app_engine: Engine, superuser_engine: Engine
+) -> None:
+    from andai_core.db.models import TOMBSTONE_USER_ID
+
+    owner = new_member(app_engine)
+    erased = new_member(app_engine, role="member", org_id=owner.org_id)
+    with superuser_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE users SET status = 'erased' WHERE id = :u"), {"u": erased.user_id}
+        )
+        conn.execute(
+            text("INSERT INTO org_memberships (org_id, user_id, role) VALUES (:o, :u, 'member')"),
+            {"o": owner.org_id, "u": TOMBSTONE_USER_ID},
+        )
+    try:
+        users = sign_in(make_harness(app_engine), owner).get(PATH).json()["users"]
+        assert [u["id"] for u in users] == [str(owner.user_id)]
+    finally:
+        with superuser_engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM org_memberships WHERE user_id = :u"), {"u": TOMBSTONE_USER_ID}
+            )

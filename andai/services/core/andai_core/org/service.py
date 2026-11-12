@@ -40,6 +40,7 @@ from andai_core.auth.invites import create_invite
 from andai_core.auth.tokens import hash_token
 from andai_core.crypto import Keyring
 from andai_core.db.models import (
+    TOMBSTONE_USER_ID,
     Invite,
     Org,
     OrgMembership,
@@ -193,11 +194,16 @@ def _member_row(tx: Tx, org_id: uuid.UUID, user_id: uuid.UUID) -> tuple[OrgMembe
 
 
 def list_members(tx: Tx, org_id: uuid.UUID, now: datetime) -> dict:
-    """The org's members (with their teams) and its pending invites."""
+    """The org's members (with their teams) and its pending invites. The tombstone user and erased
+    accounts are never listed (they hold no membership; this keeps it so)."""
     rows = tx.execute(
         select(OrgMembership, User)
         .join(User, User.id == OrgMembership.user_id)
-        .where(OrgMembership.org_id == org_id)
+        .where(
+            OrgMembership.org_id == org_id,
+            User.status != "erased",
+            User.id != TOMBSTONE_USER_ID,
+        )
         .order_by(OrgMembership.created_at, User.email)
     ).all()
     user_ids = [user.id for _, user in rows]

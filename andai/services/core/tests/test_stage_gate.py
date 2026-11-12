@@ -86,6 +86,8 @@ KNOWN = {
     ("GET", "/api/v1/org/intake/quarantine"),
     ("GET", "/api/v1/org/audit"),
     ("GET", "/api/v1/org/audit/actions"),
+    ("POST", "/api/v1/org/users/{user_id}/erasure"),
+    ("GET", "/api/v1/org/erasures"),
     ("POST", "/internal/platform-events"),
     ("GET", "/metrics"),
 }
