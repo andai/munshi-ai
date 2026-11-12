@@ -14,6 +14,7 @@ import {
   useOrgMembers,
   type Member,
 } from "@/components/admin/shared";
+import { DownloadLink, ExportDetail, ExportStateBadge } from "@/components/app/data-export";
 import { PageHeader } from "@/components/app/page-header";
 import { Field } from "@/components/forms/field";
 import { FormAlert } from "@/components/forms/form-alert";
@@ -37,13 +38,19 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listErasures, requestErasure, type ErasureRequest } from "@/lib/admin";
 import { api } from "@/lib/api";
+import { EXPORT_POLL_MS, isOpen, listOrgExports, requestMemberExport, type DataExport } from "@/lib/exports";
 import { useSession, type OrgRole } from "@/lib/session";
 
 // Members: everyone in the organisation with their role, account status, two-factor state and
 // teams, plus pending invites. Admins invite people, change roles, disable or re-enable accounts,
-// reset a member's two-factor login and erase a member's data (OPS-02; never the owner's or their
-// own). andai-core decides every change; a control the server would refuse for this admin (their own
-// row, the owner's row for an admin) is shown locked.
+// reset a member's two-factor login, make a copy of a member's data for a DPDP access request and
+// erase a member's data (OPS-02; never the owner's or their own). andai-core decides every change; a
+// control the server would refuse for this admin (their own row, the owner's row for an admin) is
+// shown locked.
+//
+// "Data exports" lists the copies owners and admins asked for, with a Download link on the ones this
+// admin asked for (andai-core's `canDownload`); it is read again every few seconds while one is
+// being made.
 //
 // An erased member leaves the list at once (andai-core ends their membership in the request); the
 // "Data erasure" section shows each request's state from GET /org/erasures, which carries ids only.
@@ -289,6 +296,62 @@ function ErasureList({ items, names }: { items: ErasureRequest[]; names: Record<
   );
 }
 
+/** The copies owners and admins asked for, refreshed every few seconds while one is being made. */
+function useOrgExports() {
+  const [items, setItems] = useState<DataExport[] | null>(null);
+
+  const reload = useCallback(async () => {
+    setItems((await listOrgExports()).items);
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const open = items?.some(isOpen) ?? false;
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => void reload(), EXPORT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [open, reload]);
+
+  return { items, reload };
+}
+
+function ExportList({ items }: { items: DataExport[] }) {
+  if (!items.length) return null;
+  return (
+    <section aria-labelledby="exports-title" className="mt-8">
+      <h2 id="exports-title" className="mb-1 text-sm font-semibold">
+        Data exports
+      </h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Copies of a member&rsquo;s data for an access request. Only the admin who asked, and the member, can download one.
+      </p>
+      <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+        {items.map((item) => (
+          <li
+            key={item.id}
+            data-testid={`export-${item.id}`}
+            data-subject={item.subjectId}
+            data-state={item.state}
+            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3"
+          >
+            <span className="grid min-w-0 gap-0.5">
+              <span className="truncate text-sm">{item.subjectName ?? "A former member"}</span>
+              <ExportDetail item={item} />
+            </span>
+            <span className="flex items-center gap-2">
+              <ExportStateBadge state={item.state} />
+              <DownloadLink item={item} />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function RoleControl({ member, callerRole, isSelf, onChange }: {
   member: Member;
   callerRole: OrgRole;
@@ -331,6 +394,7 @@ export function Members() {
   const [erasing, setErasing] = useState<Member | null>(null);
   const [erasedNames, setErasedNames] = useState<Record<string, string>>({});
   const erasures = useErasures();
+  const exports = useOrgExports();
   const setNotice = (text: string) => setMessage({ tone: "success", text });
 
   if (!data) {
@@ -376,6 +440,17 @@ export function Members() {
     await api(`/org/users/${p.member.id}/mfa`, { method: "DELETE", redirect: false });
     setNotice(`Two-factor login is reset for ${who}.`);
     await reload();
+  }
+
+  async function exportData(member: Member) {
+    setMessage(null);
+    try {
+      await requestMemberExport(member.id);
+      setNotice(`A copy of ${personName(member)}'s data is being prepared. It appears under Data exports below.`);
+      await exports.reload();
+    } catch (err) {
+      setMessage({ tone: "error", text: errorText(err) });
+    }
   }
 
   async function changeRole(member: Member, role: OrgRole) {
@@ -470,6 +545,7 @@ export function Members() {
                       >
                         Reset two-factor login
                       </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void exportData(member)}>Export data</DropdownMenuItem>
                       {erasable && (
                         <DropdownMenuItem variant="destructive" onSelect={() => setErasing(member)}>
                           Erase data…
@@ -507,6 +583,7 @@ export function Members() {
         </section>
       )}
 
+      <ExportList items={exports.items ?? []} />
       <ErasureList items={erasures.items ?? []} names={erasedNames} />
 
       <EraseDialog

@@ -1,0 +1,87 @@
+{
+  "id": "a3c9e7d1-2f4b-4a86-b0c3-5d7e9f1a2b4c",
+  "title": "Quarterly budget review",
+  "platform": "google_meet",
+  "source": "portal_link",
+  "language": "hinglish",
+  "status": "done",
+  "failureReason": null,
+  "createdAt": "2026-11-03T09:55:00Z",
+  "scheduledStart": null,
+  "startedAt": "2026-11-03T10:00:00Z",
+  "endedAt": "2026-11-03T10:31:00Z",
+  "attendees": [
+    "Asha Verma",
+    "Rohan Mehta"
+  ],
+  "sharedWith": [
+    {
+      "type": "team",
+      "name": "Finance"
+    },
+    {
+      "type": "user",
+      "name": "Rohan Mehta"
+    }
+  ],
+  "consent": {
+    "botDisplayName": "munshi.ai (recording)",
+    "disclosureText": "This meeting is being recorded and transcribed by munshi.ai.",
+    "privacyNoticeUrl": "https://portal.example.test/privacy",
+    "disclosureChannel": "chat",
+    "disclosureDetail": null,
+    "disclosurePostedAt": "2026-11-03T10:00:04Z",
+    "admittedAt": "2026-11-03T10:00:03Z",
+    "removedAt": null,
+    "removedBy": null
+  },
+  "transcript": [
+    {
+      "id": "a3c9e7d10000000000000001",
+      "speaker": "Asha Verma",
+      "start": 1.0,
+      "end": 5.5,
+      "absoluteStart": "2026-11-03T10:00:01Z",
+      "textRaw": "चलो बजट से शुरू करते हैं",
+      "textCanonical": "chalo budget se shuru karte hain",
+      "language": "hi"
+    },
+    {
+      "id": "a3c9e7d10000000000000002",
+      "speaker": "Rohan Mehta",
+      "start": 6.0,
+      "end": 10.5,
+      "absoluteStart": "2026-11-03T10:00:06Z",
+      "textRaw": "The travel line is over by ten percent",
+      "textCanonical": "The travel line is over by ten percent",
+      "language": "en"
+    }
+  ],
+  "minutes": [
+    {
+      "version": 1,
+      "templateId": "general",
+      "outputLanguage": "en",
+      "createdAt": "2026-11-03T10:33:00Z",
+      "body": {
+        "meetingId": "a3c9e7d1-2f4b-4a86-b0c3-5d7e9f1a2b4c",
+        "version": 1,
+        "templateId": "general",
+        "outputLanguage": "en",
+        "summary": "The team reviewed the quarterly budget.",
+        "decisions": [],
+        "actionItems": [],
+        "topics": [],
+        "risks": []
+      }
+    }
+  ],
+  "recordings": [
+    {
+      "file": "recordings/a3c9e7d1-2f4b-4a86-b0c3-5d7e9f1a2b4c/7001-audio.wav",
+      "bytes": 1843244,
+      "sha256": "97cfa25a60f67cff798de359b6a176e870e7ab1b9c1dc369e7d914a5ac08996b",
+      "mediaType": "audio/wav"
+    }
+  ]
+}

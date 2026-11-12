@@ -1,0 +1,45 @@
+{
+  "schema": "munshi.export-bundle/v1",
+  "generatedAt": "2026-11-03T11:02:00Z",
+  "product": "munshi.ai",
+  "version": "0.10.0",
+  "subject": {
+    "userId": "5b0d3c1e-7a42-4f0e-9d51-2c8e6a1f0b34"
+  },
+  "org": {
+    "orgId": "0f6e2a9c-3b1d-4c55-8e7a-91d2b4c6e801",
+    "name": "Example Traders"
+  },
+  "files": [
+    {
+      "path": "account.json",
+      "bytes": 727,
+      "sha256": "31739caa132ee195e91010db9a6af305fd7c1b808efe5b4bdee9669d2a6edab5",
+      "mediaType": "application/json"
+    },
+    {
+      "path": "meetings/a3c9e7d1-2f4b-4a86-b0c3-5d7e9f1a2b4c.json",
+      "bytes": 2387,
+      "sha256": "ca137af7ba3ccbe783d8c39e3a919d0bc89a6556178c86e4dd4874725e107424",
+      "mediaType": "application/json"
+    },
+    {
+      "path": "meetings/c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f.json",
+      "bytes": 437,
+      "sha256": "42181eac84e6bb8969a93d8bb2470179bf8ef144034dbf5cf9a2d32dcd0921e9",
+      "mediaType": "application/json"
+    },
+    {
+      "path": "recordings/a3c9e7d1-2f4b-4a86-b0c3-5d7e9f1a2b4c/7001-audio.wav",
+      "bytes": 1843244,
+      "sha256": "97cfa25a60f67cff798de359b6a176e870e7ab1b9c1dc369e7d914a5ac08996b",
+      "mediaType": "audio/wav"
+    }
+  ],
+  "recordingsUnavailable": [
+    {
+      "meetingId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+      "reason": "no_master"
+    }
+  ]
+}

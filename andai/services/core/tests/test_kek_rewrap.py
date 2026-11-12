@@ -120,6 +120,7 @@ def test_rewrap_moves_every_value_to_the_active_key_and_secrets_keep_working(
     assert {t: (c.rewrapped, c.skipped, c.failed) for t, c in result.items()} == {
         "user_totp": (5, 0, 0),
         "platform_principals": (3, 0, 0),
+        "export_requests": (0, 0, 0),
     }
     assert _totals(engine) == {world.new_id: 8}  # nothing left under the old key
     assert sealed.counts_by_key(engine) == {
@@ -173,6 +174,7 @@ def test_a_run_that_crashes_after_its_first_batch_is_finished_by_a_second_run(
     assert {t: (c.rewrapped, c.skipped, c.failed) for t, c in resumed.items()} == {
         "user_totp": (3, 0, 0),  # no double work: the two committed rows are not touched again
         "platform_principals": (3, 0, 0),
+        "export_requests": (0, 0, 0),
     }
     assert _totals(engine) == {world.new_id: 8}
     _secrets_work(engine, world, Keyring(world.new), T0 + timedelta(minutes=2))
@@ -239,7 +241,7 @@ def test_a_dry_run_writes_nothing(fresh_app_engine: Engine, superuser_engine: En
     result = sealed.rewrap_all(engine, world.rotating, dry_run=True)
 
     assert {t: c.rewrapped for t, c in result.items()} == {
-        "user_totp": 5, "platform_principals": 3,
+        "user_totp": 5, "platform_principals": 3, "export_requests": 0,
     }
     assert _ciphertexts(superuser_engine, engine) == before
     assert _totals(engine) == {world.old_id: 8}
@@ -328,3 +330,57 @@ def test_the_cli_exits_1_when_a_value_cannot_be_re_wrapped(
     assert "user_totp: re-wrapped 5, skipped 0, failed 1" in output
     status, listing = _cli(capsys, engine, world.rotating, "kek-status")
     assert status == 1 and "(not loaded) 1" in listing
+
+
+def test_export_bundles_are_rewrapped_a_few_at_a_time_and_still_open(
+    fresh_app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from andai_core.db.models import ExportRequest
+    from andai_core.dpdp import builder
+
+    engine = fresh_app_engine
+    world = _world(engine)
+    org_id = next(iter(world.org_keys))
+    subject = new_member(engine, role="member", org_id=org_id)
+    bundles: dict[uuid.UUID, bytes] = {}
+    for n in range(7):
+        request_id = uuid.uuid4()
+        part = builder.Built(files={"manifest.json": f'{{"n": {n}}}'.encode()})
+        sealed_part = builder.seal_part(Keyring(world.old), org_id, request_id, part)
+        with transaction(engine, org_id=org_id) as tx:
+            tx.add(
+                ExportRequest(
+                    id=request_id, org_id=org_id, subject_user_id=subject.user_id,
+                    requested_by=subject.user_id, source="self",
+                    state="ready" if n else "expired",
+                    bundle_ciphertext=sealed_part.ciphertext if n else None,
+                    key_id=sealed_part.key_id if n else None,
+                    expires_at=T0 + timedelta(days=7),
+                )
+            )
+        if n:
+            bundles[request_id] = part.files["manifest.json"]
+    assert sealed.counts_by_key(engine)[("export_requests", world.old_id)] == 6  # not the expired
+
+    batches: dict[str, set[int]] = {}
+    original = sealed._rewrap_scope
+
+    def recording(engine_, keyring, column, org, count, *, batch, dry_run):
+        batches.setdefault(column.table, set()).add(batch)
+        return original(engine_, keyring, column, org, count, batch=batch, dry_run=dry_run)
+
+    monkeypatch.setattr(sealed, "_rewrap_scope", recording)
+    result = sealed.rewrap_all(engine, world.rotating, batch=100)
+
+    assert result["export_requests"].rewrapped == 6
+    assert ("export_requests", world.old_id) not in sealed.counts_by_key(engine)
+    for request_id, manifest in bundles.items():
+        with transaction(engine, org_id=org_id) as tx:
+            row = tx.get(ExportRequest, request_id)
+            files = builder.open_part(
+                Keyring(world.new), org_id, request_id, row.bundle_ciphertext, row.key_id
+            )
+        assert files == {"manifest.json": manifest}
+    cap = next(c for c in sealed.SEALED_COLUMNS if c.table == "export_requests").batch_cap
+    assert batches["export_requests"] == {cap} and cap < 100
+    assert batches["user_totp"] == {100}

@@ -42,4 +42,6 @@ def test_the_registry_lists_each_column_once() -> None:
     keys = [(c.table, c.ciphertext) for c in SEALED_COLUMNS]
 
     assert len(keys) == len(set(keys))
-    assert {c.table for c in SEALED_COLUMNS} >= {"user_totp", "platform_principals"}
+    assert {c.table for c in SEALED_COLUMNS} >= {
+        "user_totp", "platform_principals", "export_requests"
+    }

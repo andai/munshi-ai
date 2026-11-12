@@ -1,0 +1,22 @@
+{
+  "userId": "5b0d3c1e-7a42-4f0e-9d51-2c8e6a1f0b34",
+  "email": "asha.verma@example.test",
+  "displayName": "Asha Verma",
+  "createdAt": "2026-11-03T04:00:00Z",
+  "lastLoginAt": "2026-11-03T09:30:00Z",
+  "twoFactorEnabled": true,
+  "membership": {
+    "role": "member",
+    "joinedAt": "2026-11-03T04:05:00Z",
+    "teams": [
+      {
+        "teamId": "7e8f9a0b-1c2d-4e3f-8a5b-6c7d8e9f0a1b",
+        "name": "Finance",
+        "lead": false
+      }
+    ]
+  },
+  "processing": {
+    "note": "Meetings you send the notetaker to are recorded and transcribed on services this organisation runs; minutes are written from the transcript. Recipients: the people you share a meeting with and your organisation's administrators."
+  }
+}

@@ -1,4 +1,5 @@
 {
+  "andai/services/core/contracts/export-bundle.v1": "d043b03958db7fdb5dcd1577a7e2726e7f4fa8385d421be07c276c76cc3327d5",
   "core/agent/contracts/event.v1": "4a2980f66725ae1468fc1c7dc7fa357a2a2894bc349f34a9a9f2c4069fb88825",
   "core/agent/contracts/invoke.v1": "2992576a66b6c2f78484cecf5f84640838fcc03eedd00c2f2f141030caed144a",
   "core/agent/contracts/proactive-card.v1": "3686f2dae62b742b8dd33498802b117264233315210cccbf5a5af0127fc2827d",

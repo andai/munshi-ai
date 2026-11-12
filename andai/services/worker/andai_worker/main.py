@@ -1,6 +1,6 @@
 """andai-worker: join-time dispatch of scheduled meetings, transcript ingest, minutes of meeting and
-their recap mail, meeting deletion, user erasure, canary joins, metrics and operator alerts (BOT-04,
-D-34, PORT-04, MOM-01, MOM-05, INV-01, OPS-02).
+their recap mail, meeting deletion, user erasure, data exports, canary joins, metrics and operator
+alerts (BOT-04, D-34, PORT-04, MOM-01, MOM-05, INV-01, OPS-02).
 
 * `GET /healthz` — liveness.
 * `GET /metrics` — join, deletion, minutes, pipeline, intake and database-size metrics in
@@ -16,6 +16,8 @@ D-34, PORT-04, MOM-01, MOM-05, INV-01, OPS-02).
   - recap mail (`recap.py`), always: the first minutes to the requester and the meeting's team;
   - deletion (`deletion.py`), always: the purge of every meeting its users deleted;
   - erasure (`erasure.py`), always: every user erasure an admin or the operator asked for;
+  - data exports (`exports.py`), always: every copy of a person's data that was asked for, and
+    hourly the deletion of expired bundles;
   - canaries (`canary.py`) when at least one `ANDAI_CANARY_*_URL` is set;
   - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set.
 
@@ -51,6 +53,7 @@ from andai_worker import (
     canary,
     deletion,
     erasure,
+    exports,
     ingest,
     metrics,
     minutes,
@@ -151,6 +154,21 @@ def jobs(services: WorkerServices) -> list[asyncio.Task]:
     eraser = erasure.ErasureRunner(services.engine, services.meetings, clock=services.clock)
     tasks.append(asyncio.create_task(eraser.run(erasure.TICK_S)))
     log.info("user erasure every %s s", erasure.TICK_S)
+    exporter = exports.ExportRunner(
+        services.engine,
+        services.meetings.keyring,
+        services.meetings.gateway,
+        settings,
+        clock=services.clock,
+    )
+    tasks.append(asyncio.create_task(exporter.run(exports.TICK_S)))
+    expiry = exports.ExpiryRunner(services.engine, clock=services.clock)
+    tasks.append(asyncio.create_task(expiry.run(exports.EXPIRY_TICK_S)))
+    log.info(
+        "data exports every %s s, expired bundles deleted every %s s",
+        exports.TICK_S,
+        exports.EXPIRY_TICK_S,
+    )
     urls = settings.canary_urls
     if urls:
         runner = canary.CanaryRunner(

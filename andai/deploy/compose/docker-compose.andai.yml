@@ -81,6 +81,11 @@ services:
       - ANDAI_LLM_TIMEOUT_S=${ANDAI_LLM_TIMEOUT_S:-120}
       - ANDAI_LLM_PART_TOKENS=${ANDAI_LLM_PART_TOKENS:-5000}
       - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
+      # Data exports (OPS-02): days a ready bundle can be downloaded, the most its JSON part may
+      # hold, and the processing note written into account.json (empty: the built-in note).
+      - ANDAI_EXPORT_RETENTION_DAYS=${ANDAI_EXPORT_RETENTION_DAYS:-7}
+      - ANDAI_EXPORT_MAX_BYTES=${ANDAI_EXPORT_MAX_BYTES:-67108864}
+      - ANDAI_EXPORT_PROCESSING_NOTE=${ANDAI_EXPORT_PROCESSING_NOTE:-}
       # The secret meeting-api signs its system webhook with (POST /internal/platform-events);
       # meeting-api gets the same value below. gen-secrets.sh mints it.
       - ANDAI_PLATFORM_WEBHOOK_SECRET=${ANDAI_PLATFORM_WEBHOOK_SECRET?ANDAI_PLATFORM_WEBHOOK_SECRET must be in the env file (gen-secrets.sh mints it)}
@@ -161,6 +166,11 @@ services:
       - ANDAI_LLM_TIMEOUT_S=${ANDAI_LLM_TIMEOUT_S:-120}
       - ANDAI_LLM_PART_TOKENS=${ANDAI_LLM_PART_TOKENS:-5000}
       - ANDAI_DEFAULT_TIMEZONE=${ANDAI_DEFAULT_TIMEZONE:-Asia/Kolkata}
+      # Data exports (OPS-02): days a ready bundle can be downloaded, the most its JSON part may
+      # hold, and the processing note written into account.json (empty: the built-in note).
+      - ANDAI_EXPORT_RETENTION_DAYS=${ANDAI_EXPORT_RETENTION_DAYS:-7}
+      - ANDAI_EXPORT_MAX_BYTES=${ANDAI_EXPORT_MAX_BYTES:-67108864}
+      - ANDAI_EXPORT_PROCESSING_NOTE=${ANDAI_EXPORT_PROCESSING_NOTE:-}
       - SMTP_HOST=${SMTP_HOST:-mailpit}
       - SMTP_PORT=${SMTP_PORT:-1025}
       - SMTP_USER=${SMTP_USER:-}

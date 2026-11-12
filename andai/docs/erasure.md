@@ -1,8 +1,10 @@
-# Erasing a person's data
+# Erasing a person's data, and giving them a copy
 
 munshi.ai erases a person's data when an organisation's admin or owner asks for it on the members
 page, or when the operator asks for it across every organisation the person belongs to (OPS-02,
-DPDP). This page says what goes, what stays, how long it takes, and what copies outlive it.
+DPDP). This page says what goes, what stays, how long it takes, and what copies outlive it. The
+last sections cover the other half of a data principal's rights: a machine-readable copy of their
+data.
 
 ## Who can ask, and for what
 
@@ -37,10 +39,11 @@ andai-worker then works the request (every 10 s; `andai_core/erasure/runner.py`)
    meeting row), then in andai (transcript and its search text, minutes, shares, consent record, the
    meeting row; `meeting.purge`). A purge that fails 30 times fails the erasure (`purge_failed`).
 3. **The organisation's other rows are scrubbed** (one transaction): shares they received, invites
-   to their address, the calendar invites they sent the notetaker and the notetaker mail from their
-   address go; where another person's record names them (who granted a share, who deleted or
-   skipped someone's meeting, who sent an invite, who changed the auto-join setting) it is re-pointed
-   at the **Erased user** tombstone.
+   to their address, the calendar invites they sent the notetaker, the notetaker mail from their
+   address and every copy of their data (data exports, with their sealed bundles) go; where another
+   person's record names them (who granted a share, who deleted or skipped someone's meeting, who
+   sent an invite, who changed the auto-join setting, who asked for another member's copy) it is
+   re-pointed at the **Erased user** tombstone.
 4. **The account is anonymised** when the request carries it and no membership is left (and no
    other erasure of the person is unfinished): sessions, the two-factor secret, recovery codes and
    password reset links go, mail from their address that reached no organisation goes, and the
@@ -91,3 +94,57 @@ Every column that refers to a person is listed with what erasure does to it in
    meeting's delete; andai-worker's log names the meeting and the platform's answer).
 4. Answer the person within the period the law requires, stating what was erased, what stays and
    why (the sections above), and when the remaining copies age out of backups.
+
+## Copies of a person's data (DPDP access request)
+
+A person can download a copy of their data, and an organisation's owner or admin can make one for a
+member who asks for it (OPS-02, DPDP s.11).
+
+| Who | Where | Whose data |
+|---|---|---|
+| Any member | Profile → **Your data** (`/profile/data`, `POST /api/v1/me/exports`) | Their own, in the organisation they are signed in to. |
+| An org's owner or admin | `/admin/members` → a member's actions → **Export data** (`POST /api/v1/org/users/{id}/exports`); the **Data exports** section lists them | That member's, in this organisation. |
+
+One copy can be in the making per person per organisation, and three can be asked for per person a
+day. andai-worker builds it within seconds to minutes (every 10 s; `andai_core/dpdp/builder.py`).
+It can be downloaded for `ANDAI_EXPORT_RETENTION_DAYS` days (default 7) by the person, or by the
+owner or admin who asked for it; nobody else, other admins included. After that the copy is
+deleted (hourly) and a new one has to be asked for.
+
+**What is in it** (a zip; format `export-bundle.v1`, `andai/services/core/contracts/export-bundle.v1`):
+
+- `manifest.json` — when and by which version it was made, whose data it is, and every file with
+  its size and SHA-256; recordings that could not be included and why (`no_master`, `too_large`,
+  `unsupported_media`, `meeting_in_progress`).
+- `account.json` — the account (email, name, created, last sign-in, two-factor on or off), the
+  membership (role, joined, teams by name) and the operator's note on how the data is processed and
+  who receives it (`ANDAI_EXPORT_PROCESSING_NOTE`, or a built-in note).
+- `meetings/<id>.json` — one per meeting the person sent the notetaker to (the same meetings an
+  erasure deletes; deleted meetings are left out): the record, attendees and the people and teams
+  it was shared with, by name; the consent record; every transcript segment, as transcribed and in
+  Roman script; every version of the minutes.
+- `recordings/<meeting id>/…` — the recordings of those meetings.
+
+**What is not in it:** meetings other people own (even if shared with the person, or the person
+spoke in them), other people's email addresses, and any secret (password hash, two-factor secret,
+recovery codes, sessions, keys).
+
+**Where it is kept:** the JSON part is compressed, sealed with the envelope key
+(`andai/docs/encryption-at-rest.md`) and stored in the andai database until it expires; the
+recordings are not copied, they are read from the platform when the zip is downloaded and checked
+against the checksums taken when the copy was made. A recording that changed or was deleted since
+stops the download (`recording_changed`): ask for a new copy. A JSON part over
+`ANDAI_EXPORT_MAX_BYTES` (default 64 MiB) fails `too_large`.
+
+Every request, finished copy, failure and download is in the organisation's audit log
+(`user.export.request`, `.ready`, `.failed`, `.download`, `.download_failed`). Erasing the person
+deletes their copies.
+
+### Answering an access request
+
+1. Confirm the request comes from the person (or someone entitled to act for them).
+2. The person can download their copy themselves from **Your data**. If they cannot sign in, an
+   owner or admin of each organisation that holds their data uses **Export data** on the members
+   page and downloads the zip when it is ready.
+3. Send the zip to the person over a channel the organisation already uses for personal data, and
+   delete the local copy afterwards; munshi.ai does not mail it or make a share link.

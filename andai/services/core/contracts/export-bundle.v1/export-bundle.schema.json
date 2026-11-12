@@ -1,0 +1,731 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://munshi.ai/contracts/export-bundle.v1/export-bundle.schema.json",
+  "title": "munshi data export bundle (export-bundle.v1)",
+  "description": "The JSON files of a munshi data export: manifest.json (Manifest), account.json (Account) and meetings/<id>.json (MeetingExport). Generated from andai_core/dpdp/bundle.py.",
+  "$defs": {
+    "Account": {
+      "additionalProperties": false,
+      "description": "`account.json`.",
+      "properties": {
+        "userId": {
+          "format": "uuid",
+          "title": "Userid",
+          "type": "string"
+        },
+        "email": {
+          "title": "Email",
+          "type": "string"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "lastLoginAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Lastloginat"
+        },
+        "twoFactorEnabled": {
+          "title": "Twofactorenabled",
+          "type": "boolean"
+        },
+        "membership": {
+          "$ref": "#/$defs/Membership"
+        },
+        "processing": {
+          "$ref": "#/$defs/Processing"
+        }
+      },
+      "required": [
+        "userId",
+        "email",
+        "displayName",
+        "createdAt",
+        "lastLoginAt",
+        "twoFactorEnabled",
+        "membership",
+        "processing"
+      ],
+      "title": "Account",
+      "type": "object"
+    },
+    "Consent": {
+      "additionalProperties": false,
+      "description": "How the room was told about the recording (the meeting's consent record).",
+      "properties": {
+        "botDisplayName": {
+          "title": "Botdisplayname",
+          "type": "string"
+        },
+        "disclosureText": {
+          "title": "Disclosuretext",
+          "type": "string"
+        },
+        "privacyNoticeUrl": {
+          "title": "Privacynoticeurl",
+          "type": "string"
+        },
+        "disclosureChannel": {
+          "title": "Disclosurechannel",
+          "type": "string"
+        },
+        "disclosureDetail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Disclosuredetail"
+        },
+        "disclosurePostedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Disclosurepostedat"
+        },
+        "admittedAt": {
+          "format": "date-time",
+          "title": "Admittedat",
+          "type": "string"
+        },
+        "removedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Removedat"
+        },
+        "removedBy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Removedby"
+        }
+      },
+      "required": [
+        "botDisplayName",
+        "disclosureText",
+        "privacyNoticeUrl",
+        "disclosureChannel",
+        "disclosureDetail",
+        "disclosurePostedAt",
+        "admittedAt",
+        "removedAt",
+        "removedBy"
+      ],
+      "title": "Consent",
+      "type": "object"
+    },
+    "Manifest": {
+      "additionalProperties": false,
+      "description": "`manifest.json`.",
+      "properties": {
+        "schema": {
+          "const": "munshi.export-bundle/v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "generatedAt": {
+          "format": "date-time",
+          "title": "Generatedat",
+          "type": "string"
+        },
+        "product": {
+          "title": "Product",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/Subject"
+        },
+        "org": {
+          "$ref": "#/$defs/OrgRef"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ManifestFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "recordingsUnavailable": {
+          "items": {
+            "$ref": "#/$defs/RecordingUnavailable"
+          },
+          "title": "Recordingsunavailable",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema",
+        "generatedAt",
+        "product",
+        "version",
+        "subject",
+        "org",
+        "files",
+        "recordingsUnavailable"
+      ],
+      "title": "Manifest",
+      "type": "object"
+    },
+    "ManifestFile": {
+      "additionalProperties": false,
+      "description": "One file of the bundle other than the manifest.",
+      "properties": {
+        "path": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "mediaType": {
+          "minLength": 1,
+          "title": "Mediatype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "bytes",
+        "sha256",
+        "mediaType"
+      ],
+      "title": "ManifestFile",
+      "type": "object"
+    },
+    "MeetingExport": {
+      "additionalProperties": false,
+      "description": "`meetings/<meeting id>.json`.",
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "platform": {
+          "title": "Platform",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Language"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "failureReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Failurereason"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "scheduledStart": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scheduledstart"
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Startedat"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Endedat"
+        },
+        "attendees": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Attendees",
+          "type": "array"
+        },
+        "sharedWith": {
+          "items": {
+            "$ref": "#/$defs/ShareGrant"
+          },
+          "title": "Sharedwith",
+          "type": "array"
+        },
+        "consent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Consent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transcript": {
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "title": "Transcript",
+          "type": "array"
+        },
+        "minutes": {
+          "items": {
+            "$ref": "#/$defs/MinutesVersion"
+          },
+          "title": "Minutes",
+          "type": "array"
+        },
+        "recordings": {
+          "items": {
+            "$ref": "#/$defs/RecordingFile"
+          },
+          "title": "Recordings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "platform",
+        "source",
+        "language",
+        "status",
+        "failureReason",
+        "createdAt",
+        "scheduledStart",
+        "startedAt",
+        "endedAt",
+        "attendees",
+        "sharedWith",
+        "consent",
+        "transcript",
+        "minutes",
+        "recordings"
+      ],
+      "title": "MeetingExport",
+      "type": "object"
+    },
+    "Membership": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "owner",
+            "admin",
+            "member"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "joinedAt": {
+          "format": "date-time",
+          "title": "Joinedat",
+          "type": "string"
+        },
+        "teams": {
+          "items": {
+            "$ref": "#/$defs/TeamRef"
+          },
+          "title": "Teams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "role",
+        "joinedAt",
+        "teams"
+      ],
+      "title": "Membership",
+      "type": "object"
+    },
+    "MinutesVersion": {
+      "additionalProperties": false,
+      "description": "One version of the minutes; `body` is the minutes document as stored.",
+      "properties": {
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "templateId": {
+          "title": "Templateid",
+          "type": "string"
+        },
+        "outputLanguage": {
+          "enum": [
+            "en",
+            "hi",
+            "hinglish"
+          ],
+          "title": "Outputlanguage",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "body": {
+          "additionalProperties": true,
+          "title": "Body",
+          "type": "object"
+        }
+      },
+      "required": [
+        "version",
+        "templateId",
+        "outputLanguage",
+        "createdAt",
+        "body"
+      ],
+      "title": "MinutesVersion",
+      "type": "object"
+    },
+    "OrgRef": {
+      "additionalProperties": false,
+      "description": "The org the copy was made in.",
+      "properties": {
+        "orgId": {
+          "format": "uuid",
+          "title": "Orgid",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "orgId",
+        "name"
+      ],
+      "title": "OrgRef",
+      "type": "object"
+    },
+    "Processing": {
+      "additionalProperties": false,
+      "description": "What the operator tells the person about how their data is processed (DPDP s.11).",
+      "properties": {
+        "note": {
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "title": "Processing",
+      "type": "object"
+    },
+    "RecordingFile": {
+      "additionalProperties": false,
+      "description": "A recording in the bundle: its path in the zip, size and SHA-256.",
+      "properties": {
+        "file": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "mediaType": {
+          "minLength": 1,
+          "title": "Mediatype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "bytes",
+        "sha256",
+        "mediaType"
+      ],
+      "title": "RecordingFile",
+      "type": "object"
+    },
+    "RecordingUnavailable": {
+      "additionalProperties": false,
+      "description": "A recording of an owned meeting that is not in the bundle, and why: the platform has no\nfinished master of it (`no_master`), it is larger than a bundle takes (`too_large`), its\nmedia type is not one the bundle names (`unsupported_media`), or the meeting was still going on\nwhen the copy was made (`meeting_in_progress`: its recording is still growing).",
+      "properties": {
+        "meetingId": {
+          "format": "uuid",
+          "title": "Meetingid",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "no_master",
+            "too_large",
+            "unsupported_media",
+            "meeting_in_progress"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meetingId",
+        "reason"
+      ],
+      "title": "RecordingUnavailable",
+      "type": "object"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "One transcript segment: the platform's text (`textRaw`) and its Roman form\n(`textCanonical`); `start` and `end` are seconds from the start of the recording.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "speaker": {
+          "title": "Speaker",
+          "type": "string"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End"
+        },
+        "absoluteStart": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Absolutestart"
+        },
+        "textRaw": {
+          "title": "Textraw",
+          "type": "string"
+        },
+        "textCanonical": {
+          "title": "Textcanonical",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Language"
+        }
+      },
+      "required": [
+        "id",
+        "speaker",
+        "start",
+        "end",
+        "absoluteStart",
+        "textRaw",
+        "textCanonical",
+        "language"
+      ],
+      "title": "Segment",
+      "type": "object"
+    },
+    "ShareGrant": {
+      "additionalProperties": false,
+      "description": "Who the meeting was shared with: a person's or a team's name (null for a team that is\ngone).",
+      "properties": {
+        "type": {
+          "enum": [
+            "user",
+            "team"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Name"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "title": "ShareGrant",
+      "type": "object"
+    },
+    "Subject": {
+      "additionalProperties": false,
+      "description": "Whose data the bundle holds.",
+      "properties": {
+        "userId": {
+          "format": "uuid",
+          "title": "Userid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId"
+      ],
+      "title": "Subject",
+      "type": "object"
+    },
+    "TeamRef": {
+      "additionalProperties": false,
+      "properties": {
+        "teamId": {
+          "format": "uuid",
+          "title": "Teamid",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "lead": {
+          "title": "Lead",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "teamId",
+        "name",
+        "lead"
+      ],
+      "title": "TeamRef",
+      "type": "object"
+    }
+  }
+}

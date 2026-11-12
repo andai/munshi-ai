@@ -413,7 +413,10 @@ class FakeGateway:
     `deletions` lists the ids in order. `fail` maps a call ("dispatch", "list bots",
     "get meeting", "stop", "get transcript", "get participants", "delete meeting") to a status to
     answer, with the body `fail_body` holds for a failed dispatch; `dispatch_delay` stalls
-    dispatch."""
+    dispatch. Recordings: `add_recording(meeting id, bytes)` stores one (served by
+    `GET /recordings?meeting_id=`, `GET /recordings/{id}/master?type=` and
+    `GET /recordings/{id}/media/{media id}/raw` like meeting-api); `media[(recording id, media
+    id)]` holds the bytes, so a test can change them after a build."""
 
     LIVE = ("requested", "joining", "awaiting_admission", "active", "needs_human_help", "stopping")
 
@@ -427,6 +430,8 @@ class FakeGateway:
         self.invitees: dict[int, list[dict]] = {}  # platform meeting id -> {name, email}
         self.objects: dict[int, list[str]] = {}  # platform meeting id -> stored object keys
         self.deletions: list[int] = []
+        self.recordings: dict[int, list[dict]] = {}  # platform meeting id -> recordings
+        self.media: dict[tuple[int, int], bytes] = {}  # (recording id, media file id) -> bytes
         self.calls: list[tuple[str, str]] = []
         self.fail: dict[str, int] = {}
         self.fail_body: dict = {"detail": "refused"}
@@ -474,6 +479,37 @@ class FakeGateway:
     def set_data(self, meeting_id: int, **data) -> None:
         with self._lock:
             self.meetings[meeting_id]["data"].update(data)
+
+    def add_recording(
+        self, meeting_id: int, data: bytes, *, media_type: str = "audio", fmt: str = "wav"
+    ) -> int:
+        """A finished recording of platform meeting `meeting_id` with one media file of `data`;
+        returns its id."""
+        with self._lock:
+            recording_id, media_id = next(self._ids), next(self._ids)
+            self.recordings.setdefault(meeting_id, []).append(
+                {
+                    "id": recording_id,
+                    "meeting_id": meeting_id,
+                    "status": "completed",
+                    "created_at": "2026-11-12T10:00:00+00:00",
+                    "media_files": [
+                        {"id": media_id, "type": media_type, "format": fmt,
+                         "duration_seconds": 1.0, "file_size_bytes": len(data)}
+                    ],
+                }
+            )
+            self.media[(recording_id, media_id)] = data
+        return recording_id
+
+    def _recording(self, user: int, recording_id: int) -> dict | None:
+        for mid, recordings in self.recordings.items():
+            if self.owners.get(mid) != user:
+                continue
+            for recording in recordings:
+                if recording["id"] == recording_id:
+                    return recording
+        return None
 
     def by_native(self, native: str) -> dict:
         [found] = [m for m in self.meetings.values() if m["native_meeting_id"] == native]
@@ -634,8 +670,54 @@ class FakeGateway:
                 self.deletions.append(mid)
                 self.transcripts.pop(mid, None)
                 self.objects.pop(mid, None)
+                for recording in self.recordings.pop(mid, []):
+                    for media in recording["media_files"]:
+                        self.media.pop((recording["id"], media["id"]), None)
                 m["data"] = {"artifact_deletion": {"state": "completed"}}
             return httpx.Response(204)
+        if request.method == "GET" and path == "/recordings":
+            if "list recordings" in self.fail:
+                return httpx.Response(self.fail["list recordings"], json={"detail": "boom"})
+            wanted = request.url.params.get("meeting_id")
+            with self._lock:
+                rows = [
+                    {**r, "media_files": [dict(m) for m in r["media_files"]]}
+                    for mid, recordings in self.recordings.items()
+                    if self.owners.get(mid) == user and (wanted is None or str(mid) == wanted)
+                    for r in recordings
+                ]
+            return httpx.Response(
+                200,
+                json={"recordings": rows, "total": len(rows), "limit": 200, "offset": 0,
+                      "has_more": False},
+            )
+        master = re.fullmatch(r"/recordings/(\d+)/master", path)
+        if request.method == "GET" and master:
+            if "recording master" in self.fail:
+                return httpx.Response(self.fail["recording master"], json={"detail": "boom"})
+            recording = self._recording(user, int(master.group(1)))
+            if recording is None:
+                return httpx.Response(404, json={"detail": "Recording not found"})
+            kind = request.url.params.get("type", "audio")
+            media = next((m for m in recording["media_files"] if m["type"] == kind), None)
+            if media is None:
+                return httpx.Response(404, json={"detail": "No such media file to finalize"})
+            return httpx.Response(
+                200,
+                json={"id": recording["id"], "type": kind, "media_file_id": media["id"],
+                      "raw_url": f"/recordings/{recording['id']}/media/{media['id']}/raw"},
+            )
+        raw = re.fullmatch(r"/recordings/(\d+)/media/(\d+)/raw", path)
+        if request.method == "GET" and raw:
+            if "stream recording" in self.fail:
+                return httpx.Response(self.fail["stream recording"], json={"detail": "boom"})
+            recording = self._recording(user, int(raw.group(1)))
+            key = (int(raw.group(1)), int(raw.group(2)))
+            if recording is None or key not in self.media:
+                return httpx.Response(404, json={"detail": "No such media file"})
+            media = next(m for m in recording["media_files"] if m["id"] == key[1])
+            kind = "audio/wav" if media["format"] == "wav" else f"{media['type']}/webm"
+            return httpx.Response(200, content=self.media[key], headers={"content-type": kind})
         if request.method == "DELETE" and path.startswith("/bots/"):
             if "stop" in self.fail:
                 return httpx.Response(self.fail["stop"], json={"detail": "boom"})
@@ -1290,3 +1372,181 @@ def admin_api_server() -> Iterator[AdminApiServer]:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ─── data exports (OPS-02) ────────────────────────────────────────────────────────────────────────
+
+# What the export world's meetings say: Devanagari and Roman lines.
+EXPORT_LINES = [
+    ("Asha Verma", "चलो बजट से शुरू करते हैं"),
+    ("Rohan Mehta", "The travel line is over by ten percent"),
+    ("Asha Verma", "कल तक sheet भेज दो"),
+]
+
+
+@dataclass
+class ExportWorld:
+    """An org with a platform principal, its owner and an admin, the export's subject ("Asha
+    Verma") and another member ("Rohan Mehta", lead of the "Finance" team the subject is in).
+    The subject owns three meetings: `recorded` (on the platform, two recordings, three segments,
+    two minutes versions, shared with Finance and Rohan, a consent record), `masterless` (on the
+    platform, one recording whose master is gone) and `failed` (never on the platform); and a
+    deleted one. `received` is Rohan's meeting shared with the subject."""
+
+    harness: Harness
+    engine: Engine
+    org_id: uuid.UUID
+    key: str
+    owner: Member
+    admin: Member
+    subject: Member
+    other: Member
+    team_id: uuid.UUID
+    recorded: uuid.UUID
+    masterless: uuid.UUID
+    failed: uuid.UUID
+    deleted: uuid.UUID
+    received: uuid.UUID
+    audio: dict[int, bytes]  # platform recording id -> bytes of `recorded`'s recordings
+
+    @property
+    def owned(self) -> set[uuid.UUID]:
+        return {self.recorded, self.masterless, self.failed}
+
+
+def _platform_meeting_of(harness: Harness, key: str) -> int:
+    from datetime import UTC, datetime
+
+    gateway = harness.gateway
+    [platform_user] = [t["user_id"] for t in harness.admin_api.tokens.values() if t["token"] == key]
+    mid = next(gateway._ids)
+    now = datetime.now(UTC).isoformat()
+    native = f"{uuid.uuid4().int % 10**11:011d}"
+    gateway.meetings[mid] = {
+        "id": mid, "user_id": platform_user, "platform": "zoom", "native_meeting_id": native,
+        "constructed_meeting_url": f"https://zoom.us/j/{native}", "status": "completed",
+        "bot_container_id": None, "start_time": now, "end_time": now, "completion_reason": None,
+        "failure_stage": None, "data": {}, "created_at": now, "updated_at": now,
+    }
+    gateway.owners[mid] = platform_user
+    return mid
+
+
+def _rename(engine: Engine, user_id: uuid.UUID, name: str) -> None:
+    from sqlalchemy import update
+
+    from andai_core.db.models import User
+    from andai_core.db.session import transaction
+
+    with transaction(engine) as tx:
+        tx.execute(update(User).where(User.id == user_id).values(display_name=name))
+
+
+def export_world(engine: Engine, harness: Harness | None = None) -> ExportWorld:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import text, update
+
+    from andai_core.db.models import ConsentRecord, Meeting
+    from andai_core.db.session import transaction
+    from andai_core.meetings import mom
+
+    harness = harness or make_harness(engine)
+    owner = new_member(engine)
+    org_id = owner.org_id
+    key = give_principal(harness, engine, org_id)
+    admin = new_member(engine, role="admin", org_id=org_id)
+    subject = new_member(engine, role="member", org_id=org_id)
+    other = new_member(engine, role="member", org_id=org_id)
+    _rename(engine, subject.user_id, "Asha Verma")
+    _rename(engine, other.user_id, "Rohan Mehta")
+    team_id = new_team(
+        engine, org_id, {subject.user_id: "member", other.user_id: "lead"},
+        name=f"Finance {uuid.uuid4().hex[:6]}",
+    )
+
+    recorded = seed_meeting(
+        engine, org_id, subject.user_id, team_id, title="Quarterly budget review",
+        shares=(("team", team_id), ("user", other.user_id)),
+        started_at=datetime(2026, 11, 3, 10, tzinfo=UTC),
+        ended_at=datetime(2026, 11, 3, 10, 31, tzinfo=UTC),
+    )
+    masterless = seed_meeting(engine, org_id, subject.user_id, None, title="Vendor call")
+    failed = seed_meeting(engine, org_id, subject.user_id, None, status="failed")
+    deleted = seed_meeting(engine, org_id, subject.user_id, None, title="Deleted meeting")
+    received = seed_meeting(
+        engine, org_id, other.user_id, None, title="Rohan's planning",
+        shares=(("user", subject.user_id),),
+    )
+    ids = seed_segments(engine, org_id, recorded, EXPORT_LINES)
+    seed_segments(engine, org_id, received, ["not the subject's meeting"])
+    platform_recorded = _platform_meeting_of(harness, key)
+    platform_masterless = _platform_meeting_of(harness, key)
+    with transaction(engine, org_id=org_id) as tx:
+        mom.seed_version(tx, org_id, recorded, mom_body(ids))
+        mom.seed_version(tx, org_id, recorded, mom_body(ids, summary="Second version."))
+        tx.add(
+            ConsentRecord(
+                meeting_id=recorded, org_id=org_id, bot_display_name="munshi.ai (recording)",
+                disclosure_text="This meeting is being recorded.",
+                privacy_notice_url="http://portal.test/privacy", disclosure_channel="chat",
+                admitted_at=datetime(2026, 11, 3, 10, 0, 3, tzinfo=UTC),
+            )
+        )
+        tx.execute(
+            update(Meeting).where(Meeting.id == recorded).values(
+                platform_meeting_id=platform_recorded,
+                settings_snapshot={"language": "hinglish"},
+                attendees=[{"name": "Asha Verma", "source": "speaker"},
+                           {"name": "Rohan Mehta", "source": "speaker"},
+                           {"name": "Asha Verma", "source": "invite"}],
+            )
+        )
+        tx.execute(
+            update(Meeting).where(Meeting.id == masterless)
+            .values(platform_meeting_id=platform_masterless)
+        )
+        tx.execute(
+            text("UPDATE meetings SET deleted_at = now(), deletion_state = 'pending'"
+                 " WHERE id = :m"),
+            {"m": deleted},
+        )
+    audio = {}
+    for n in (1, 2):
+        data = (f"RIFF-test-recording-{n}-".encode() + os.urandom(16)) * (3000 * n)
+        audio[harness.gateway.add_recording(platform_recorded, data)] = data
+    gone = harness.gateway.add_recording(platform_masterless, b"lost")
+    [media] = harness.gateway.recordings[platform_masterless][0]["media_files"]
+    del harness.gateway.media[(gone, media["id"])]
+    return ExportWorld(
+        harness=harness, engine=engine, org_id=org_id, key=key, owner=owner, admin=admin,
+        subject=subject, other=other, team_id=team_id, recorded=recorded, masterless=masterless,
+        failed=failed, deleted=deleted, received=received, audio=audio,
+    )
+
+
+def export_request(
+    engine: Engine,
+    org_id: uuid.UUID,
+    subject: uuid.UUID,
+    requested_by: uuid.UUID | None = None,
+    *,
+    state: str = "running",
+    created_at=None,
+) -> uuid.UUID:
+    """An export request inserted directly (`running`: as if andai-worker had claimed it)."""
+    from andai_core.db.models import ExportRequest
+    from andai_core.db.session import transaction
+
+    requested_by = requested_by or subject
+    request_id = uuid.uuid4()
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(
+            ExportRequest(
+                id=request_id, org_id=org_id, subject_user_id=subject,
+                requested_by=requested_by,
+                source="self" if requested_by == subject else "org_admin", state=state,
+                **({} if created_at is None else {"created_at": created_at}),
+            )
+        )
+    return request_id

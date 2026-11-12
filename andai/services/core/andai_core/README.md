@@ -16,7 +16,8 @@ route tests and the e2e compose profile use; never started by the default stack)
 calls with typed errors, and a live probe), `minutes/` (minutes templates, prompts, transcript
 packing, draft generation with map-reduce, and the owner and due-date rules),
 `erasure/` (user erasure: the registry of user-referencing columns, the admin's request and the
-step machine andai-worker drives), `mail.py` (settings-only SMTP), `__main__.py` (operator CLI:
+step machine andai-worker drives), `dpdp/` (data export: the bundle format, the builder andai-worker
+runs and the request, list and download routes), `mail.py` (settings-only SMTP), `__main__.py` (operator CLI:
 `python -m andai_core bootstrap | principals-sync | canary-setup | kek-rewrap | kek-status |
 erase-user | erase-status`),
 `db/` (schema and RLS-scoped transactions), `crypto.py` (envelope encryption of stored secrets

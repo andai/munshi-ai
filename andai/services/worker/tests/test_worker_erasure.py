@@ -194,7 +194,7 @@ def test_the_worker_always_starts_the_erasure_loop_and_finishes_with_the_purge(
     with caplog.at_level(logging.INFO, logger="andai_worker.main"):
         started = asyncio.run(main())
 
-    assert started == 5
+    assert started == 7  # with the export build and expiry loops
     assert done()
     assert any("user erasure every" in r.getMessage() for r in caplog.records)
     with superuser.connect() as conn:

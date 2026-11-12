@@ -2,9 +2,9 @@
 
 Two orgs, A and B, each with an owner, an admin, a member and a team lead, a team, a pending
 invite, an enrolled TOTP, a platform principal, audit events, auto-join settings, a quarantined
-notetaker message and a meeting scheduled from an invite — so every org-scoped table holds rows of
-both. Every route the application serves must sit in exactly one case table (a new route
-fails `test_every_route_is_classified` until it is classified):
+notetaker message, a meeting scheduled from an invite and a ready data export — so every
+org-scoped table holds rows of both. Every route the application serves must sit in exactly one
+case table (a new route fails `test_every_route_is_classified` until it is classified):
 
 * `ID_ROUTES` — path parameters filled with org B's ids, called as every role of org A: 403 or
   404, and nothing of B's in the body.
@@ -30,6 +30,7 @@ from sqlalchemy import Engine, select, text, update
 from andai_core.auth.passwords import hash_password
 from andai_core.db.models import (
     ConsentRecord,
+    ExportRequest,
     Invite,
     InviteEvent,
     Meeting,
@@ -39,6 +40,7 @@ from andai_core.db.models import (
     User,
 )
 from andai_core.db.session import transaction
+from andai_core.dpdp import builder
 from andai_core.main import create_app
 from andai_core.meetings import mom, scheduled
 from andai_core.meetings.title import set_title
@@ -80,6 +82,7 @@ class SeededOrg:
     meeting_link: str
     share_id: uuid.UUID
     scheduled_id: uuid.UUID
+    export_id: uuid.UUID
     tag: str = ""
     values: set[str] = field(default_factory=set)
 
@@ -265,6 +268,20 @@ def seed_org(
             join_url=zoom_link(passcode=f"sch{tag}"), platform="zoom",
             title=f"{label} planning", language="en", now=harness.clock(),
         )
+    # A ready copy of the member's data the admin asked for; its sealed part carries the tag.
+    export_id = uuid.uuid4()
+    part = builder.Built(files={"manifest.json": f'{{"tag": "{label} export {tag}"}}'.encode()})
+    sealed_part = builder.seal_part(harness.services.keyring, org_id, export_id, part)
+    with transaction(engine, org_id=org_id) as tx:
+        tx.add(
+            ExportRequest(
+                id=export_id, org_id=org_id, subject_user_id=members["member"].user_id,
+                requested_by=members["admin"].user_id, source="org_admin", state="ready",
+                bundle_ciphertext=sealed_part.ciphertext, key_id=sealed_part.key_id,
+                bundle_bytes=len(part.files["manifest.json"]), ready_at=harness.clock(),
+                expires_at=harness.clock() + timedelta(days=7),
+            )
+        )
     with transaction(engine, org_id=org_id) as tx:
         slug = tx.scalar(text("SELECT slug FROM orgs WHERE id = :o"), {"o": org_id})
     seeded = SeededOrg(
@@ -284,6 +301,7 @@ def seed_org(
         meeting_link=meeting_link,
         share_id=share_id,
         scheduled_id=scheduled_id,
+        export_id=export_id,
         tag=tag,
     )
     seeded.values = {
@@ -291,6 +309,7 @@ def seed_org(
         str(share_id),
         str(scheduled_id),
         str(event_id),
+        str(export_id),
         meeting_link,
         f"pw{tag}",
         native_meeting_id,
@@ -375,6 +394,10 @@ def b_state(superuser_engine: Engine, b: SeededOrg) -> dict:
             "SELECT id, subject_user_id, state, step FROM erasure_requests"
             " WHERE audit_org_id = :o OR org_id = :o"
         ),
+        "export_requests": (
+            "SELECT id, subject_user_id, requested_by, state, bundle_ciphertext, expires_at"
+            " FROM export_requests WHERE org_id = :o"
+        ),
         "bot_settings": (
             "SELECT team_id, auto_join, updated_at, updated_by FROM bot_settings WHERE org_id = :o"
         ),
@@ -441,6 +464,13 @@ ID_ROUTES: dict[tuple[str, str], IdCase] = {
             {"user_id": b.members["admin"].user_id},
             {"confirm": b.members["admin"].email},
         ),
+    ],
+    ("POST", "/api/v1/org/users/{user_id}/exports"): lambda b: [
+        ("copy B member's data", {"user_id": b.members["member"].user_id}, None),
+        ("copy B owner's data", {"user_id": b.members["owner"].user_id}, None),
+    ],
+    ("GET", "/api/v1/exports/{export_id}/download"): lambda b: [
+        ("download B member's copy", {"export_id": b.export_id}, None),
     ],
     ("PATCH", "/api/v1/org/users/{user_id}"): lambda b: [
         ("promote B member", {"user_id": b.members["member"].user_id}, {"role": "admin"}),
@@ -558,6 +588,9 @@ ID_LESS_ROUTES: dict[tuple[str, str], tuple[frozenset[str], dict | None]] = {
     ("GET", "/api/v1/org/audit"): (ADMINS, None),
     ("GET", "/api/v1/org/audit/actions"): (ADMINS, None),
     ("GET", "/api/v1/org/erasures"): (ADMINS, None),
+    ("POST", "/api/v1/me/exports"): (ALL, None),
+    ("GET", "/api/v1/me/exports"): (ALL, None),
+    ("GET", "/api/v1/org/exports"): (ADMINS, None),
 }
 
 # ─── (c) the public allowlist, called with org B's identifiers ────────────────────────────────────

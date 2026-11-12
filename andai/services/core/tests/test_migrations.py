@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from alembic import command
 from sqlalchemy import Engine, create_engine, text
 
@@ -22,7 +24,7 @@ ALL_TABLES = (
     | set(INTAKE_TABLES)
     | set(ERASURE_TABLES)
 )
-HEAD = "0019"
+HEAD = "0020"
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -145,9 +147,10 @@ def test_app_role_grants(migrated: Postgres) -> None:
 
 # andai_scan's UPDATE column grants at head: the ingest columns (0006), the deletion lease (0009),
 # the MoM and recap state and leases (0010), the inbound mail state (0012), the scheduled
-# dispatch claim (0016) and the erasure claim (0019).
+# dispatch claim (0016), the erasure claim (0019) and the export claim and expiry (0020).
 ERASURE_SCAN_UPDATES = 2
-HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15 + 2 + ERASURE_SCAN_UPDATES
+EXPORT_SCAN_UPDATES = 4
+HEAD_SCAN_UPDATES = 3 + 1 + 5 + 15 + 2 + ERASURE_SCAN_UPDATES + EXPORT_SCAN_UPDATES
 
 TRANSCRIPT_COLUMNS = {
     "title",
@@ -204,6 +207,7 @@ def test_transcripts_downgrade_to_0005_and_upgrade_again(migrated: Postgres) -> 
         assert _revision(engine) == "0005"
         assert _tables(engine) == ALL_TABLES - {
             "erasure_requests",
+            "export_requests",
             "transcript_segments",
             "meeting_shares",
             "mom_documents",
@@ -246,6 +250,7 @@ def test_shares_downgrade_to_0006_and_upgrade_again(migrated: Postgres) -> None:
         assert _revision(engine) == "0006"
         assert _tables(engine) == ALL_TABLES - {
             "erasure_requests",
+            "export_requests",
             "meeting_shares",
             "mom_documents",
             "meeting_removals",
@@ -304,6 +309,7 @@ def test_mom_search_downgrade_to_0007_and_upgrade_again(migrated: Postgres) -> N
         assert _revision(engine) == "0007"
         assert _tables(engine) == ALL_TABLES - {
             "erasure_requests",
+            "export_requests",
             "mom_documents",
             "meeting_removals",
             "platform_webhook_events",
@@ -369,6 +375,7 @@ def test_deletion_downgrade_to_0008_and_upgrade_again(migrated: Postgres) -> Non
         assert _revision(engine) == "0008"
         assert _tables(engine) == ALL_TABLES - {
             "erasure_requests",
+            "export_requests",
             "meeting_removals",
             "platform_webhook_events",
             "inbound_mail",
@@ -690,7 +697,9 @@ def test_inbound_mail_downgrade_to_0011_and_upgrade_again(migrated: Postgres) ->
         assert _revision(engine) == "0011"
         assert _inbound_state(engine) == (False, 0)
         # 0012's, 0016's and 0019's
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 15 - 2 - ERASURE_SCAN_UPDATES
+        assert _scan_objects(engine)[2] == (
+            HEAD_SCAN_UPDATES - 15 - 2 - ERASURE_SCAN_UPDATES - EXPORT_SCAN_UPDATES
+        )
 
         command.upgrade(config, "head")
         assert _inbound_state(engine) == (True, 5)
@@ -1353,7 +1362,9 @@ def test_scheduled_claim_downgrade_to_0015_and_upgrade_again(migrated: Postgres)
         assert _revision(engine) == "0015"
         assert _dispatch_claim_state(engine) == (set(), 0, None, set(), set())
         assert "scheduled_end" not in _meeting_columns(engine)
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - 2 - ERASURE_SCAN_UPDATES
+        assert _scan_objects(engine)[2] == (
+            HEAD_SCAN_UPDATES - 2 - ERASURE_SCAN_UPDATES - EXPORT_SCAN_UPDATES
+        )
         assert _invite_state(engine)[0] is True  # 0015 untouched
 
         command.upgrade(config, "head")
@@ -1520,8 +1531,10 @@ def test_pipeline_stats_downgrade_to_0017_and_upgrade_again(migrated: Postgres) 
         assert _revision(engine) == "0017"
         assert _pipeline_state(engine) == ({}, set())
         assert _audit_state(engine)[3] == 1  # 0017 untouched
-        # only SELECT grants were added by 0018; 0019's erasure claim is gone too
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - ERASURE_SCAN_UPDATES
+        # only SELECT grants were added by 0018; 0019's and 0020's claims are gone too
+        assert _scan_objects(engine)[2] == (
+            HEAD_SCAN_UPDATES - ERASURE_SCAN_UPDATES - EXPORT_SCAN_UPDATES
+        )
 
         command.upgrade(config, "head")
         assert _revision(engine) == HEAD
@@ -1626,7 +1639,9 @@ def test_erasure_downgrade_to_0018_and_upgrade_again(migrated: Postgres) -> None
         # Gone, or kept as a disabled user when other tests' rows still point at it.
         assert tombstone is None or tombstone[2] == "disabled"
         assert "scan_erase" not in policies and "scan_purge" in policies
-        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - ERASURE_SCAN_UPDATES
+        assert _scan_objects(engine)[2] == (
+            HEAD_SCAN_UPDATES - ERASURE_SCAN_UPDATES - EXPORT_SCAN_UPDATES
+        )
         assert set(_pipeline_state(engine)[0]) == set(PIPELINE_FUNCTIONS)  # 0018 untouched
         with engine.connect() as conn:
             check = conn.execute(
@@ -1643,3 +1658,134 @@ def test_erasure_downgrade_to_0018_and_upgrade_again(migrated: Postgres) -> None
         assert _erasure_state(engine) == at_head
     finally:
         engine.dispose()
+
+
+EXPORT_FUNCTIONS = {
+    "andai_claim_exports": "TABLE(org_id uuid, request_id uuid, attempts integer)",
+    "andai_expire_exports": "bigint",
+}
+EXPORT_POLICIES = {
+    "org_isolation": ("ALL", ["public"]),
+    "scan_read": ("SELECT", ["andai_scan"]),
+    "scan_claim": ("UPDATE", ["andai_scan"]),
+    "scan_expire": ("UPDATE", ["andai_scan"]),
+}
+
+
+def _export_state(engine: Engine) -> tuple:
+    """(functions, export_requests exists, its policies, andai_scan's UPDATE columns there)."""
+    with engine.connect() as conn:
+        functions = {
+            row[0]: tuple(row[1:])
+            for row in conn.execute(
+                text(
+                    "SELECT p.proname, pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig,"
+                    " pg_get_function_result(p.oid),"
+                    " has_function_privilege('public', p.oid, 'EXECUTE'),"
+                    " has_function_privilege('andai_app', p.oid, 'EXECUTE')"
+                    " FROM pg_proc p WHERE p.proname = ANY(:n)"
+                ),
+                {"n": sorted(EXPORT_FUNCTIONS)},
+            ).all()
+        }
+        table = conn.execute(text("SELECT to_regclass('public.export_requests')")).scalar()
+        policies = {
+            row.policyname: (row.cmd, list(row.roles))
+            for row in conn.execute(
+                text("SELECT policyname, cmd, roles FROM pg_policies"
+                     " WHERE tablename = 'export_requests'")
+            )
+        }
+        updates = set(
+            conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.column_privileges"
+                    " WHERE grantee = 'andai_scan' AND privilege_type = 'UPDATE'"
+                    " AND table_name = 'export_requests'"
+                )
+            ).scalars()
+        )
+    return functions, table is not None, policies, updates
+
+
+def test_export_functions_belong_to_the_scan_role(migrated: Postgres) -> None:
+    engine = create_engine(migrated.superuser_url)
+    try:
+        functions, table, policies, updates = _export_state(engine)
+    finally:
+        engine.dispose()
+    assert functions == {
+        name: ("andai_scan", True, ["search_path=public, pg_temp"], result, False, True)
+        for name, result in EXPORT_FUNCTIONS.items()
+    }
+    assert table is True
+    assert policies == EXPORT_POLICIES
+    # the claim's lease and state, and the expiry's cleared bundle; never the recordings or bytes
+    assert updates == {"state", "lease_until", "bundle_ciphertext", "key_id"}
+    assert len(updates) == EXPORT_SCAN_UPDATES
+
+
+def test_exports_downgrade_to_0019_and_upgrade_again(migrated: Postgres) -> None:
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        at_head = _export_state(engine)
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES
+
+        command.downgrade(config, "0019")
+        assert _revision(engine) == "0019"
+        assert _export_state(engine) == ({}, False, {}, set())
+        assert _tables(engine) == ALL_TABLES - {"export_requests"}
+        assert _scan_objects(engine)[2] == HEAD_SCAN_UPDATES - EXPORT_SCAN_UPDATES
+        assert set(_erasure_state(engine)[0]) == set(ERASURE_FUNCTIONS)  # 0019 untouched
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == HEAD
+        assert _export_state(engine) == at_head
+    finally:
+        engine.dispose()
+
+
+def test_the_expiry_clears_only_due_ready_bundles_of_every_org(app_engine: Engine) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from andai_core.db.models import ExportRequest
+    from andai_core.db.session import transaction
+    from conftest import new_member
+
+    now = datetime.now(UTC)
+    rows = {}
+    for org in range(2):
+        member = new_member(app_engine)
+        for name, state, expires in (
+            ("due", "ready", now - timedelta(seconds=1)),
+            ("later", "ready", now + timedelta(hours=1)),
+            ("failed", "failed", None),
+        ):
+            request_id = uuid.uuid4()
+            sealed = state == "ready"
+            with transaction(app_engine, org_id=member.org_id) as tx:
+                tx.add(
+                    ExportRequest(
+                        id=request_id, org_id=member.org_id, subject_user_id=member.user_id,
+                        requested_by=member.user_id, source="self", state=state,
+                        error=None if sealed else "internal_error",
+                        bundle_ciphertext="ct" if sealed else None,
+                        key_id="kek-x" if sealed else None, expires_at=expires,
+                    )
+                )
+            rows[(org, name)] = (member.org_id, request_id)
+
+    with transaction(app_engine) as tx:
+        expired = tx.execute(text("SELECT andai_expire_exports(:at)"), {"at": now}).scalar_one()
+
+    assert expired >= 2
+    for (org, name), (org_id, request_id) in rows.items():
+        with transaction(app_engine, org_id=org_id) as tx:
+            row = tx.get(ExportRequest, request_id)
+            if name == "due":
+                assert (row.state, row.bundle_ciphertext, row.key_id) == ("expired", None, None)
+            elif name == "later":
+                assert (row.state, row.key_id) == ("ready", "kek-x")
+            else:
+                assert row.state == "failed"

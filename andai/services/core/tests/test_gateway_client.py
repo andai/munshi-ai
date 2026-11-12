@@ -13,6 +13,7 @@ from andai_core.platform.gateway_client import (
     DuplicateMeeting,
     GatewayError,
     HttpPlatformGateway,
+    RecordingTooLarge,
     live_url,
 )
 
@@ -230,3 +231,89 @@ def test_get_participants_reads_by_platform_and_native_id_with_the_org_key() -> 
 )
 def test_live_url_is_the_gateway_websocket(base: str, url: str) -> None:
     assert live_url(base) == url
+
+
+def test_list_recordings_reads_one_meetings_recordings_with_the_org_key() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"recordings": [{"id": 3, "media_files": []}, "junk"], "total": 1}
+        )
+
+    assert run(gateway(handler).list_recordings(KEY, 41)) == [{"id": 3, "media_files": []}]
+    [request] = seen
+    assert (request.method, request.url.path) == ("GET", "/recordings")
+    assert request.url.params["meeting_id"] == "41"
+    assert request.headers[API_KEY_HEADER] == KEY
+
+
+@pytest.mark.parametrize("status", [401, 500])
+def test_list_recordings_refusals_carry_the_status(status: int) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"detail": KEY})
+
+    with pytest.raises(GatewayError) as caught:
+        run(gateway(handler).list_recordings(KEY, 41))
+    assert caught.value.status == status
+    assert KEY not in str(caught.value)
+
+
+def _recording_server(body: bytes, seen: list, *, master_status: int = 200):
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/recordings/3/master":
+            if master_status != 200:
+                return httpx.Response(master_status, json={"detail": "No such media file"})
+            return httpx.Response(200, json={"id": 3, "media_file_id": 9, "type": "audio"})
+        if request.url.path == "/recordings/3/media/9/raw":
+            return httpx.Response(200, content=body, headers={"content-type": "audio/wav"})
+        return httpx.Response(404)
+
+    return handler
+
+
+async def _collect(stream) -> list[bytes]:
+    return [chunk async for chunk in stream]
+
+
+def test_stream_recording_finalises_the_master_then_reads_it_in_chunks() -> None:
+    from andai_core.platform import gateway_client
+
+    body = bytes(range(256)) * (gateway_client.CHUNK_BYTES // 256 * 2 + 3)
+    seen: list = []
+    chunks = run(
+        _collect(
+            gateway(_recording_server(body, seen)).stream_recording(
+                KEY, 3, media_type="audio", max_bytes=len(body)
+            )
+        )
+    )
+    assert b"".join(chunks) == body
+    assert len(chunks) >= 3
+    assert max(len(c) for c in chunks) <= gateway_client.CHUNK_BYTES
+    assert [r.url.path for r in seen] == ["/recordings/3/master", "/recordings/3/media/9/raw"]
+    assert seen[0].url.params["type"] == "audio"
+    assert all(r.headers[API_KEY_HEADER] == KEY for r in seen)
+
+
+def test_stream_recording_stops_past_the_size_limit() -> None:
+    seen: list = []
+    stream = gateway(_recording_server(b"x" * 5000, seen)).stream_recording(
+        KEY, 3, max_bytes=4999
+    )
+    with pytest.raises(RecordingTooLarge) as caught:
+        run(_collect(stream))
+    assert caught.value.max_bytes == 4999
+
+
+def test_stream_recording_without_a_master_is_a_404() -> None:
+    seen: list = []
+    stream = gateway(_recording_server(b"x", seen, master_status=404)).stream_recording(
+        KEY, 3, max_bytes=10
+    )
+    with pytest.raises(GatewayError) as caught:
+        run(_collect(stream))
+    assert caught.value.status == 404
+    assert [r.url.path for r in seen] == ["/recordings/3/master"]

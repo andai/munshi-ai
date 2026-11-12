@@ -74,6 +74,16 @@ types and TTLs and counts the shared `transcription_segments` entries that menti
 the redis container; names, types and numbers only, never a value). `E2E_ERASURE_LOG=/abs/file`
 appends each run's time from request to done and those counts as one JSON line.
 
+`export` makes copies of a member's data (OPS-02, DPDP access request) in an organisation of its own:
+the member sends the mock bot to a Hinglish meeting (`mock=hindi-lines`, one recording), opens "Your
+data" from the account menu, asks for a copy (the button stays off while it is prepared) and
+downloads the zip once it is ready with its expiry date; an admin asks for one from the member's row
+on `/admin/members` and downloads it from the "Data exports" section. The spec opens each zip with a
+small reader over node's zlib and checks every entry against the manifest's size and SHA-256, the
+account file, and that `meetings/*.json` holds the one owned meeting with as many segments as andai
+serves; another member and the owner get 404 on the download links, and the audit log lists the
+downloads. The zips go to a temporary directory that is removed at the end.
+
 Invite intake runs on the e2e stack too: the `e2e` profile also starts `fake-dns`
 (`andai_intake.testing.fake_dns`), a stub DNS server in andai-intake's network namespace, so the env
 file must set `ANDAI_INTAKE_DNS_RESOLVER=127.0.0.1:5353` (setup refuses otherwise) and the sender

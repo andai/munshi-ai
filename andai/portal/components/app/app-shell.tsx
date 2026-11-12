@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, ShieldCheck } from "lucide-react";
+import { FileArchive, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -115,6 +115,12 @@ function AccountMenu({ me }: { me: Me }) {
             <Link href="/profile/security">
               <ShieldCheck aria-hidden="true" />
               Security settings
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/profile/data">
+              <FileArchive aria-hidden="true" />
+              Your data
             </Link>
           </DropdownMenuItem>
         </DropdownMenuGroup>
