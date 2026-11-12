@@ -1,0 +1,19 @@
+{
+  "id": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+  "title": null,
+  "platform": "zoom",
+  "source": "invite_mail",
+  "language": "en",
+  "status": "failed",
+  "failureReason": "admission_timeout",
+  "createdAt": "2026-11-03T13:58:00Z",
+  "scheduledStart": "2026-11-03T14:00:00Z",
+  "startedAt": null,
+  "endedAt": null,
+  "attendees": [],
+  "sharedWith": [],
+  "consent": null,
+  "transcript": [],
+  "minutes": [],
+  "recordings": []
+}

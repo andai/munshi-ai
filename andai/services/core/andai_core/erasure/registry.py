@@ -82,6 +82,10 @@ ERASURE_RULES: tuple[ErasureRule, ...] = (
                 "mail whose envelope sender is the person's address (andai_erase_inbound)"),
     ErasureRule("bot_settings", "updated_by", "tombstone", "org",
                 "who last changed the notetaker's auto-join"),
+    ErasureRule("export_requests", "subject_user_id", "delete", "org",
+                "copies of the person's data (DPDP export) and their sealed bundles"),
+    ErasureRule("export_requests", "requested_by", "tombstone", "org",
+                "an export the person asked for, as an admin, of another member's data"),
     # ── kept on purpose ──
     ErasureRule("inbound_mail", "rcpt_to", "keep", "org",
                 "the notetaker mailbox's own addresses; rows of the person go by sender above"),

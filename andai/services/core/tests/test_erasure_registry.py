@@ -49,6 +49,8 @@ def test_every_foreign_key_to_users_is_covered() -> None:
         ("meeting_shares", "granted_by"),
         ("inbound_mail", "resolved_user_id"),
         ("bot_settings", "updated_by"),
+        ("export_requests", "subject_user_id"),
+        ("export_requests", "requested_by"),
     }
     assert fks <= set(registry.rules_by_column())
 

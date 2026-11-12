@@ -21,6 +21,16 @@ DEFAULT_DISCLOSURE_TEXT = (
     "To stop it, remove the munshi.ai bot from the call. Privacy notice:"
 )
 
+# The processing note a data export's account.json carries when the operator sets none
+# (`ANDAI_EXPORT_PROCESSING_NOTE`): what is processed, why, and who receives it (DPDP s.11).
+DEFAULT_PROCESSING_NOTE = (
+    "This organisation uses munshi.ai to record, transcribe and summarise the meetings its members"
+    " send the notetaker to. Recordings, transcripts and minutes are processed on services the"
+    " organisation's operator runs and are not sent to third parties. Recipients: the members a"
+    " meeting is shared with (by person or team), the organisation's owners and administrators,"
+    " and the recap mail's recipients (the requester and the meeting's team)."
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
@@ -137,6 +147,19 @@ class Settings(BaseSettings):
         default=7 * 24 * 3600, gt=0, validation_alias="ANDAI_INVITE_TTL_SECONDS"
     )
 
+    # Data exports (`andai_core.dpdp`): how many days a ready bundle can be downloaded, the most a
+    # bundle's JSON part may hold (bytes, before compression), and the operator's processing note
+    # for account.json (empty: `DEFAULT_PROCESSING_NOTE`).
+    export_retention_days: int = Field(
+        default=7, ge=1, le=30, validation_alias="ANDAI_EXPORT_RETENTION_DAYS"
+    )
+    export_max_bytes: int = Field(
+        default=64 * 1024 * 1024, ge=1024, validation_alias="ANDAI_EXPORT_MAX_BYTES"
+    )
+    export_processing_note_raw: str = Field(
+        default="", max_length=4000, validation_alias="ANDAI_EXPORT_PROCESSING_NOTE"
+    )
+
     @property
     def is_dev(self) -> bool:
         return self.andai_env.strip().lower() == "dev"
@@ -152,6 +175,10 @@ class Settings(BaseSettings):
     @property
     def privacy_notice_url(self) -> str:
         return self.privacy_notice_url_raw.strip() or f"{self.portal_origin.rstrip('/')}/privacy"
+
+    @property
+    def export_processing_note(self) -> str:
+        return self.export_processing_note_raw.strip() or DEFAULT_PROCESSING_NOTE
 
     @property
     def trusted_proxies(self) -> list[str]:

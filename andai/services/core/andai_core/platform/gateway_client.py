@@ -19,6 +19,13 @@ andai-core for that call only; this module never stores, logs or repeats it.
   under the meeting's storage prefix, then its transcript rows, and keeps the meeting row as a
   tombstone. 404 when the principal has no such meeting; 409 while the meeting is not terminal;
   503 while storage deletion is unavailable.
+* `list_recordings(key, meeting_id)` — `GET /recordings?meeting_id=`; the principal's recordings of
+  that platform meeting, each with its media files (`id`, `type`, `format`, `file_size_bytes`).
+* `stream_recording(key, recording_id, media_type=, max_bytes=)` — the finalised master's bytes:
+  `GET /recordings/{id}/master?type=` (meeting-api assembles the master and names its media file),
+  then `GET /recordings/{id}/media/{media file id}/raw` read in chunks. More than `max_bytes`
+  raises `RecordingTooLarge`; a recording with no master of that type is a 404 `GatewayError`.
+  Nothing is held in memory beyond one chunk.
 
 `live_url(base_url)` is the gateway's live WebSocket (`/ws`) for the same base URL; andai-core's
 live relay (`meetings/live.py`) connects to it with the same per-call key.
@@ -30,6 +37,7 @@ platform already runs for that link (its structured 409, `code: duplicate_meetin
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -40,6 +48,11 @@ TIMEOUT_SECONDS = 10.0
 # Spawning a bot starts a container before `POST /bots` answers.
 DISPATCH_TIMEOUT_SECONDS = 60.0
 LIST_LIMIT = 100
+# The platform caps a recordings page at 200.
+RECORDINGS_LIMIT = 200
+CHUNK_BYTES = 1024 * 1024
+# A recording's bytes: the gap allowed between two chunks (the master may be assembled first).
+STREAM_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 
 class GatewayError(Exception):
@@ -66,6 +79,14 @@ class DuplicateMeeting(GatewayError):
         self.native_meeting_id = native_meeting_id
 
 
+class RecordingTooLarge(GatewayError):
+    """A recording is larger than the caller allowed."""
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__("stream recording", None, f"more than {max_bytes} bytes")
+        self.max_bytes = max_bytes
+
+
 class PlatformGateway(Protocol):
     async def dispatch(self, key: str, body: dict) -> dict: ...
 
@@ -80,6 +101,12 @@ class PlatformGateway(Protocol):
     async def get_participants(self, key: str, platform: str, native_meeting_id: str) -> dict: ...
 
     async def delete_meeting(self, key: str, meeting_id: int) -> None: ...
+
+    async def list_recordings(self, key: str, meeting_id: int) -> list[dict]: ...
+
+    def stream_recording(
+        self, key: str, recording_id: int, *, media_type: str = "audio", max_bytes: int
+    ) -> AsyncIterator[bytes]: ...
 
 
 def live_url(base_url: str) -> str:
@@ -203,3 +230,50 @@ class HttpPlatformGateway:
         response = await self._call("delete meeting", key, "DELETE", f"/meetings/{int(meeting_id)}")
         if response.status_code >= 400:
             raise GatewayError("delete meeting", response.status_code)
+
+    async def list_recordings(self, key: str, meeting_id: int) -> list[dict]:
+        response = await self._call(
+            "list recordings",
+            key,
+            "GET",
+            "/recordings",
+            params={"meeting_id": int(meeting_id), "limit": RECORDINGS_LIMIT},
+        )
+        if response.status_code >= 400:
+            raise GatewayError("list recordings", response.status_code)
+        recordings = _object("list recordings", response).get("recordings")
+        if not isinstance(recordings, list):
+            raise GatewayError("list recordings", None, "no recordings list")
+        return [r for r in recordings if isinstance(r, dict)]
+
+    async def stream_recording(
+        self, key: str, recording_id: int, *, media_type: str = "audio", max_bytes: int
+    ) -> AsyncIterator[bytes]:
+        if not key:
+            raise GatewayError("stream recording", None, "no API key")
+        rid = int(recording_id)
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                headers={API_KEY_HEADER: key},
+                transport=self._transport,
+                timeout=STREAM_TIMEOUT,
+            ) as client:
+                master = await client.get(f"/recordings/{rid}/master", params={"type": media_type})
+                if master.status_code >= 400:
+                    raise GatewayError("recording master", master.status_code)
+                media_file_id = _object("recording master", master).get("media_file_id")
+                if isinstance(media_file_id, bool) or not isinstance(media_file_id, int):
+                    raise GatewayError("recording master", 404, "no media file")
+                path = f"/recordings/{rid}/media/{media_file_id}/raw"
+                async with client.stream("GET", path, params={"type": media_type}) as response:
+                    if response.status_code >= 400:
+                        raise GatewayError("stream recording", response.status_code)
+                    seen = 0
+                    async for chunk in response.aiter_bytes(CHUNK_BYTES):
+                        seen += len(chunk)
+                        if seen > max_bytes:
+                            raise RecordingTooLarge(max_bytes)
+                        yield chunk
+        except httpx.HTTPError as exc:
+            raise GatewayError("stream recording", None, type(exc).__name__) from None

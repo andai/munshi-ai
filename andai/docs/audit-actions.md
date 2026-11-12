@@ -44,3 +44,8 @@ from `andai_core/audit_actions.py` with
 | `user.erase.request` | erasure | Asked to erase a person's data |
 | `user.erase.complete` | erasure | Erased a person's data |
 | `user.erase.failed` | erasure | Could not finish erasing a person's data |
+| `user.export.request` | erasure | Asked for a copy of a person's data |
+| `user.export.ready` | erasure | A copy of a person's data is ready |
+| `user.export.failed` | erasure | Could not make a copy of a person's data |
+| `user.export.download` | erasure | Downloaded a copy of a person's data |
+| `user.export.download_failed` | erasure | A download of a person's data was stopped |

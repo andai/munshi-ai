@@ -19,8 +19,9 @@ the org being erased (`org_id`); the account step touches only the global tables
    attempts (`deletion_state = failed`) fails the request with `purge_failed`.
 4. `scrub` — one transaction applying every `org`-scope rule of the registry (`SCRUB_HANDLERS`):
    memberships and sessions, received shares, invites to their address, the invite events they
-   sent and the mailbox rows that are theirs go; who granted a share, deleted or skipped a meeting,
-   sent an invite or changed a setting is re-pointed at the tombstone user. Rows touched per table
+   sent, the mailbox rows that are theirs and the copies of their data (exports) go; who granted a
+   share, deleted or skipped a meeting, sent an invite, changed a setting or asked for another
+   member's export is re-pointed at the tombstone user. Rows touched per table
    go into `counts`.
 5. `account` — only for a request with `account` set, and only once no membership remains and no
    other request for the person is unfinished (`andai_erasure_siblings`; it waits otherwise): all
@@ -55,6 +56,7 @@ from andai_core.db.models import (
     TOMBSTONE_USER_ID,
     BotSetting,
     ErasureRequest,
+    ExportRequest,
     Invite,
     InviteEvent,
     Meeting,
@@ -324,6 +326,14 @@ def _invite_events(tx: Tx, s: Scrub) -> int:
     ).rowcount
 
 
+def _exports_of(tx: Tx, s: Scrub) -> int:
+    return tx.execute(
+        delete(ExportRequest).where(
+            ExportRequest.org_id == s.org_id, ExportRequest.subject_user_id == s.subject
+        )
+    ).rowcount
+
+
 def _inbound(tx: Tx, s: Scrub) -> int:
     return int(
         tx.execute(
@@ -350,6 +360,8 @@ SCRUB_HANDLERS: dict[tuple[str, str], Callable[[Tx, Scrub], int]] = {
     ("inbound_mail", "sender"): _inbound,
     ("inbound_mail", "mail_from"): _inbound,
     ("bot_settings", "updated_by"): _repoint(BotSetting, BotSetting.updated_by),
+    ("export_requests", "subject_user_id"): _exports_of,
+    ("export_requests", "requested_by"): _repoint(ExportRequest, ExportRequest.requested_by),
 }
 
 

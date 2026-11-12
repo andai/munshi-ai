@@ -88,6 +88,11 @@ KNOWN = {
     ("GET", "/api/v1/org/audit/actions"),
     ("POST", "/api/v1/org/users/{user_id}/erasure"),
     ("GET", "/api/v1/org/erasures"),
+    ("POST", "/api/v1/me/exports"),
+    ("GET", "/api/v1/me/exports"),
+    ("POST", "/api/v1/org/users/{user_id}/exports"),
+    ("GET", "/api/v1/org/exports"),
+    ("GET", "/api/v1/exports/{export_id}/download"),
     ("POST", "/internal/platform-events"),
     ("GET", "/metrics"),
 }

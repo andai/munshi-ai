@@ -3,7 +3,9 @@
 A sealed column holds a value from `Keyring.seal` (`crypto.py`) next to the `key_id` of the KEK
 that wrapped it. `SEALED_COLUMNS` lists them all; `test_sealed_registry.py` fails when a table gains
 a `*_ciphertext` column with a sibling `key_id` that is not listed here. Every new sealed column
-must be added (the Phase 8 provider keys and the 10-05 export bundles will be).
+must be added (the Phase 8 provider keys will be). A data export's sealed JSON part
+(`export_requests.bundle_ciphertext`) can be megabytes, so it is re-wrapped a few rows per batch
+(`batch_cap`); an expired export has neither ciphertext nor key id and is skipped.
 
 * `rewrap_all` moves every value that is not under the active KEK onto it with
   `Keyring.rewrap`: only the wrapped data key changes, the encrypted body is kept and the secret is
@@ -49,12 +51,17 @@ class SealedColumn:
     ciphertext: str
     key_id: str
     org_scoped: bool
+    # At most this many rows per batch (large values); None: the run's batch size.
+    batch_cap: int | None = None
 
 
 SEALED_COLUMNS: tuple[SealedColumn, ...] = (
     SealedColumn("user_totp", ("user_id",), "secret_ciphertext", "key_id", org_scoped=False),
     SealedColumn(
         "platform_principals", ("org_id",), "key_ciphertext", "key_id", org_scoped=True
+    ),
+    SealedColumn(
+        "export_requests", ("id",), "bundle_ciphertext", "key_id", org_scoped=True, batch_cap=5
     ),
 )
 
@@ -166,7 +173,13 @@ def rewrap_all(
         count = result.setdefault(column.table, RewrapCount())
         for org_id in _scopes(engine, column):
             _rewrap_scope(
-                engine, keyring, column, org_id, count, batch=batch, dry_run=dry_run
+                engine,
+                keyring,
+                column,
+                org_id,
+                count,
+                batch=min(batch, column.batch_cap or batch),
+                dry_run=dry_run,
             )
     return result
 
@@ -179,7 +192,8 @@ def counts_by_key(
     counts: dict[tuple[str, str], int] = {}
     for column in columns:
         sql = text(
-            f"SELECT {column.key_id}, count(*) FROM {column.table} GROUP BY {column.key_id}"
+            f"SELECT {column.key_id}, count(*) FROM {column.table}"
+            f" WHERE {column.key_id} IS NOT NULL GROUP BY {column.key_id}"
         )
         for org_id in _scopes(engine, column):
             with transaction(engine, org_id=org_id) as tx:

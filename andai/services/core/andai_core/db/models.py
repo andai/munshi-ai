@@ -8,7 +8,8 @@ Two kinds of table:
   `app.org_id` (migrations 0002 and 0004): `orgs` (its own `id`), `org_memberships`, `teams`,
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
   `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
-  (0008), `meeting_removals` (0009), `bot_settings` (0014), `invite_events` (0015).
+  (0008), `meeting_removals` (0009), `bot_settings` (0014), `invite_events` (0015),
+  `export_requests` (0020: data export requests, the sealed JSON part of a ready bundle).
 * Erasure requests (0019, `erasure_requests`): org-scoped under row-level security on
   `audit_org_id`, the org whose trail the request's audit events go to (`org_id`, the org whose data
   is scrubbed, is NULL only for an operator's account-only request).
@@ -154,6 +155,12 @@ TOMBSTONE_USER_ID = uuid.UUID("00000000-0000-4000-8000-00000000e7a5")
 TOMBSTONE_EMAIL = "erased-user@munshi.invalid"
 ERASED_NAME = "Erased user"
 
+# DPDP data export (migration 0020; `andai_core.dpdp`).
+EXPORT_SOURCES = ("self", "org_admin")
+EXPORT_STATES = ("pending", "running", "ready", "failed", "expired")
+EXPORT_OPEN_STATES = ("pending", "running")
+EXPORT_ERRORS = ("too_large", "not_a_member", "internal_error")
+
 # Tables protected by row-level security on org_id (migration 0002).
 ORG_SCOPED_TABLES = (
     "orgs",
@@ -171,6 +178,7 @@ ORG_SCOPED_TABLES = (
     "meeting_removals",
     "bot_settings",
     "invite_events",
+    "export_requests",
 )
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # Row-level security on a nullable org_id: a row is visible to no org until it is attributed (0012).
@@ -1107,3 +1115,73 @@ class ErasureRequest(Base):
     )
     created_at: Mapped[datetime] = _created_at()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExportRequest(Base):
+    """One copy of a person's data in one org (`andai_core.dpdp`, migration 0020). A ready
+    request's JSON part is sealed (`bundle_ciphertext`, `key_id`; AAD `export:<org>:<request>`);
+    `recordings` lists the recordings the download streams from the platform, with the size and
+    SHA-256 the build measured."""
+
+    __tablename__ = "export_requests"
+    __table_args__ = (
+        CheckConstraint(_in("source", EXPORT_SOURCES), name="source"),
+        CheckConstraint(_in("state", EXPORT_STATES), name="state"),
+        CheckConstraint(f"error IS NULL OR {_in('error', EXPORT_ERRORS)}", name="error"),
+        CheckConstraint("(state = 'failed') = (error IS NOT NULL)", name="failed_has_error"),
+        CheckConstraint("(bundle_ciphertext IS NULL) = (key_id IS NULL)", name="sealed_with_key"),
+        CheckConstraint(
+            "state <> 'ready' OR (bundle_ciphertext IS NOT NULL AND expires_at IS NOT NULL)",
+            name="ready_has_bundle",
+        ),
+        CheckConstraint(
+            "source <> 'self' OR requested_by = subject_user_id", name="self_is_subject"
+        ),
+        Index(
+            "uq_export_requests_open",
+            "org_id",
+            "subject_user_id",
+            unique=True,
+            postgresql_where=text(_in("state", EXPORT_OPEN_STATES)),
+        ),
+        Index(
+            "ix_export_requests_due",
+            "next_at",
+            postgresql_where=text(_in("state", EXPORT_OPEN_STATES)),
+        ),
+        Index("ix_export_requests_expiry", "expires_at", postgresql_where=text("state = 'ready'")),
+        Index(
+            "ix_export_requests_org_id_subject_user_id_created_at",
+            "org_id",
+            "subject_user_id",
+            "created_at",
+        ),
+        Index("ix_export_requests_org_id_requested_by", "org_id", "requested_by"),
+        Index("ix_export_requests_org_id_created_at", "org_id", "created_at", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="RESTRICT"), nullable=False
+    )
+    subject_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    requested_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    bundle_ciphertext: Mapped[str | None] = mapped_column(Text, deferred=True)
+    key_id: Mapped[str | None] = mapped_column(Text)
+    bundle_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    recordings: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    created_at: Mapped[datetime] = _created_at()
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
