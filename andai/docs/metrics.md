@@ -2,8 +2,8 @@
 
 munshi.ai's own services expose Prometheus metrics at `GET /metrics` (OPS-05). This page lists
 every series, its labels with their closed value sets, what it means and what reads it. The
-dashboards and alert rules that use them ship separately; GPU utilisation comes from the GPU
-exporter there, not from these services.
+dashboards and alert rules that use them are in `andai/deploy/monitoring` (`monitoring.md`); GPU
+utilisation comes from NVIDIA's dcgm-exporter there, not from these services.
 
 ## Where to scrape
 

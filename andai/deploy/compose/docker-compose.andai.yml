@@ -33,6 +33,12 @@
 # GET /metrics on their port 8000. Prometheus scrapes them on the munshi network
 # (andai-core:8000/metrics, andai-worker:8000/metrics, andai-intake:8000/metrics); no port is
 # published for it beyond the 127.0.0.1 mappings below, and the portal never forwards /metrics.
+#
+# Monitoring (OPS-05, D-62, andai/docs/monitoring.md): COMPOSE_PROFILES=monitoring adds Prometheus,
+# Alertmanager (its config rendered by alertmanager-config), a node exporter and Perses, all on
+# 127.0.0.1 only. Every alert receiver is off until the operator turns one on. The
+# `monitoring-test` profile adds a webhook sink and a fill-able test mount for the live alert run.
+# No Grafana (AGPL-3.0). Third-party images are pinned by tag and digest (andai/images.json).
 
 services:
   # ─── andai skeletons (health-only in Phase 1) ──────────────────────────────────────────────────
@@ -177,6 +183,12 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:-munshi.ai <no-reply@munshi.invalid>}
       - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
+      # Monitoring (andai/docs/monitoring.md): with ANDAI_MONITORING=1 the alert mail above stands
+      # down while alertmanager-config's state file (read-only volume below) names a receiver.
+      - ANDAI_MONITORING=${ANDAI_MONITORING:-0}
+      - ANDAI_ALERTING_STATE_FILE=/run/munshi-alerting/state.json
+    volumes:
+      - alerting-state:/run/munshi-alerting:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -340,6 +352,178 @@ services:
     networks: [munshi]
     restart: unless-stopped
 
+  # ─── monitoring (COMPOSE_PROFILES=monitoring; andai/docs/monitoring.md) ──────────────────────────
+  # Prometheus scrapes the andai services and the node exporter and evaluates the munshi alert
+  # rules (andai/deploy/monitoring/prometheus). UI and API on 127.0.0.1 only; 15 days of data.
+  prometheus:
+    image: prom/prometheus:v3.13.5@sha256:aafa9d694e6a883c02db516d9f6e5b84e14195f49a2a6456a4cca815edda72b9
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=:9090
+    volumes:
+      - ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/deploy/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/deploy/monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-19090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [munshi]
+    restart: unless-stopped
+
+  # One-shot: renders Alertmanager's config from the operator's settings with andai-worker's code
+  # (andai_worker/alerting_config.py), so receivers are turned on with env flags and secret files,
+  # never by editing YAML. Every receiver is off by default. It writes alertmanager.yml (and, when
+  # SMTP_PASSWORD is set, a 0600 password file owned by Alertmanager's uid 65534) to the
+  # alertmanager-config volume, and the receivers state file andai-worker reads to the
+  # alerting-state volume. Root only to hand the files to uid 65534; no network, read-only root.
+  # Webhook URLs stay in ANDAI_ALERT_SECRETS_DIR (slack_webhook_url, teams_webhook_url): it only
+  # checks that they exist.
+  alertmanager-config:
+    image: ghcr.io/andai/munshi-andai-worker:${IMAGE_TAG:-dev}
+    pull_policy: never
+    profiles: [monitoring]
+    command: ["python", "-m", "andai_worker.alerting_config", "--out", "/etc/alertmanager/munshi/alertmanager.yml", "--secrets-dir", "/etc/alertmanager/secrets", "--templates-dir", "/etc/alertmanager/templates", "--state-file", "/run/munshi-alerting/state.json", "--owner", "65534:65534"]
+    user: "0:0"
+    environment:
+      - ANDAI_ENV=${ANDAI_ENV:-dev}
+      # Email: the operator address (empty: no email receiver) through the stack's relay.
+      - ANDAI_ALERT_EMAIL=${ANDAI_ALERT_EMAIL:-}
+      # Slack / Teams (Workflows): on only with the flag AND the URL file in ANDAI_ALERT_SECRETS_DIR.
+      - ANDAI_ALERT_SLACK=${ANDAI_ALERT_SLACK:-0}
+      - ANDAI_ALERT_TEAMS=${ANDAI_ALERT_TEAMS:-0}
+      - SMTP_HOST=${SMTP_HOST:-mailpit}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-munshi.ai <no-reply@munshi.invalid>}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
+    volumes:
+      - ${ANDAI_ALERT_SECRETS_DIR:-./secrets/alerting}:/etc/alertmanager/secrets:ro
+      - alertmanager-config:/etc/alertmanager/munshi
+      - alerting-state:/run/munshi-alerting
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH]
+    restart: "no"
+
+  # Alertmanager: routes Prometheus' alerts to the receivers alertmanager-config enabled, with the
+  # munshi templates only (alert name, service, severity, fixed summary). Single instance: the
+  # cluster listener is off. UI and API on 127.0.0.1 only (silences: andai/docs/runbooks/alerts.md).
+  alertmanager:
+    image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/alertmanager/munshi/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=:9093
+      - --cluster.listen-address=
+    depends_on:
+      alertmanager-config:
+        condition: service_completed_successfully
+    volumes:
+      - alertmanager-config:/etc/alertmanager/munshi:ro
+      - ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/deploy/monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+      - ${ANDAI_ALERT_SECRETS_DIR:-./secrets/alerting}:/etc/alertmanager/secrets:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-19093}:9093"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [munshi]
+    restart: unless-stopped
+
+  # Filesystem use for the storage alert (filesystem collector only). It sees its own root (the
+  # disk holding Docker's data: images, Postgres and object-storage volumes) and the host's
+  # filesystems read-only under /host (ANDAI_NODE_EXPORTER_HOST_ROOT, default /). Overlay is
+  # reported so that its own root counts; container and kernel mounts are excluded. Not published.
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    profiles: [monitoring]
+    command:
+      - --collector.disable-defaults
+      - --collector.filesystem
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|erofs|sysfs|tracefs)$$
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|etc)($$|/)|^/host/(dev|proc|run|sys|snap|var/lib/docker/.+|var/lib/containers/storage/.+|var/lib/kubelet/.+)($$|/)
+      - --web.listen-address=:9100
+    volumes:
+      - ${ANDAI_NODE_EXPORTER_HOST_ROOT:-/}:/host:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9100/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks: [munshi]
+    restart: unless-stopped
+
+  # Perses (Apache-2.0) with the dashboards as code (andai/deploy/monitoring/perses), reading the
+  # stack's Prometheus through its datasource proxy. No sign-in; UI on 127.0.0.1 only. No telemetry
+  # to turn off (perses/config.yaml).
+  perses:
+    image: persesdev/perses:v0.55.1@sha256:292605f009770f07aa17217e70f877fabbc74858d0af9054d395064e1c411c06
+    profiles: [monitoring]
+    command: ["--config=/etc/perses/munshi/config.yaml", "--log.level=warning"]
+    depends_on:
+      prometheus:
+        condition: service_started
+    volumes:
+      - ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/deploy/monitoring/perses/config.yaml:/etc/perses/munshi/config.yaml:ro
+      - ${ANDAI_ROOT:?ANDAI_ROOT must be the repo root (andai/Makefile sets it)}/andai/deploy/monitoring/perses/provisioning:/etc/perses/provisioning:ro
+      - perses-data:/perses
+    ports:
+      - "127.0.0.1:${PERSES_PORT:-19080}:8080"
+    networks: [munshi]
+    restart: unless-stopped
+
+  # monitoring-test only (COMPOSE_PROFILES=...,monitoring-test): a local stand-in for Slack and
+  # Teams webhooks (andai_core.testing.alert_sink) for the live alert run; point the URL files at
+  # http://alert-sink:8000/slack and /teams. Never a real webhook; not published.
+  alert-sink:
+    image: ghcr.io/andai/munshi-andai-core:${IMAGE_TAG:-dev}
+    pull_policy: never
+    profiles: [monitoring-test]
+    command: ["python", "-m", "andai_core.testing.alert_sink", "--host", "0.0.0.0", "--port", "8000", "--out", "/tmp/alert-sink/captured.jsonl"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    init: true
+    networks: [munshi]
+    restart: unless-stopped
+
+  # monitoring-test only: a second node exporter that reports nothing but a 64 MiB tmpfs at
+  # /host/munshi-fill (inside the storage alert's default mount regex), so the live run can fill it
+  # past 80%. It shares the `node-exporter` network alias, which Prometheus resolves by DNS.
+  node-exporter-fill:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    profiles: [monitoring-test]
+    command:
+      - --collector.disable-defaults
+      - --collector.filesystem
+      - --collector.filesystem.mount-points-exclude=^/$$|^/(dev|proc|run|sys|etc)($$|/)
+      - --web.listen-address=:9100
+    tmpfs:
+      - /host/munshi-fill:size=64m,mode=1777
+    networks:
+      munshi:
+        aliases: [node-exporter]
+    restart: unless-stopped
+
   # ─── Munshi services: environment and ports only ─────────────────────────────────────────────────
   postgres:
     ports: !override
@@ -443,3 +627,12 @@ services:
   dashboard:
     ports: !override
       - "127.0.0.1:${DASHBOARD_PORT:-13001}:3000"
+
+# Monitoring data and the rendered Alertmanager config (`monitoring` profile). alerting-state is
+# also mounted read-only into andai-worker; without the profile it stays empty.
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  alertmanager-config:
+  alerting-state:
+  perses-data:

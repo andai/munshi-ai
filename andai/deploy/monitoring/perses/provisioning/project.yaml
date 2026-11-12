@@ -1,0 +1,9 @@
+# The Perses project that holds munshi.ai's dashboards (OPS-05). Provisioned from
+# /etc/perses/provisioning at start-up and re-applied every hour (config.yaml).
+kind: Project
+metadata:
+  name: munshi
+spec:
+  display:
+    name: munshi.ai
+    description: Operator dashboards for a munshi.ai deployment (andai/docs/monitoring.md).

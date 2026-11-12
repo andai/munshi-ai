@@ -1,0 +1,58 @@
+# Perses server config for munshi.ai's operator dashboards (OPS-05, D-62). Compose mounts it at
+# /etc/perses/munshi/config.yaml under the `monitoring` profile; Perses listens on 127.0.0.1 only
+# on the host (D-15). Pinned to v0.55.1 (andai/images.json); Perses is pre-1.0, so re-check this
+# file against its configuration reference on every upgrade.
+#
+# Outbound calls: none to configure. Perses v0.55.1 has no telemetry, usage reporting or update
+# check (its configuration reference and source were checked); plugins load from the archive
+# inside the image (/etc/perses/plugins-archive), never from the internet; the only outbound
+# requests are the datasource queries it proxies to Prometheus.
+
+database:
+  file:
+    folder: /perses
+    extension: json
+
+# No sign-in: the UI is bound to 127.0.0.1 on the host and is for the operator only.
+security:
+  enable_auth: false
+  readonly: false
+  cookie:
+    same_site: strict
+    secure: false
+
+# Dashboards as code: everything under this folder is (re)applied at start-up and every hour, and
+# overrides edits made in the UI.
+provisioning:
+  folders:
+    - /etc/perses/provisioning
+  interval: 1h
+
+# The one datasource is the provisioned global Prometheus; nobody adds others from the UI, and
+# the datasource proxy reaches the stack's Prometheus and nothing else.
+datasource:
+  global:
+    disable: false
+  project:
+    disable: true
+  disable_local: true
+  proxy:
+    allowed_hosts:
+      - prometheus
+    http:
+      allowed_schemes:
+        - http
+
+frontend:
+  information: |-
+    # munshi.ai
+
+    Operator dashboards: bot joins, speech-to-text latency, GPU, pipeline, invite intake and email
+    delivery. Alerts and what to do about them: `andai/docs/runbooks/alerts.md`.
+  important_dashboards:
+    - title: munshi.ai
+      dashboards:
+        - project: munshi
+          dashboard: joins
+        - project: munshi
+          dashboard: pipeline

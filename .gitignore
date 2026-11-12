@@ -39,6 +39,8 @@ releases/*/HANDOFF.md
 .work/.local/
 # andai deployment secrets and CI scratch — never committed
 andai/.ci/
+# Alert webhook URL files (ANDAI_ALERT_SECRETS_DIR default, relative to deploy/compose)
+deploy/compose/secrets/
 
 # GSDD planning state is local-only (D-26); never commit it to the public repo.
 .work/

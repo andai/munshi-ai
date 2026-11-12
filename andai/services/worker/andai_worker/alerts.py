@@ -14,6 +14,13 @@ An incident lives in one `alert_state` row. Opening it owes an `open` mail, clos
 only; the owed mail stays in the row until the relay accepts it, so a relay outage delays a mail
 but never loses or repeats it. A mail names the platform, the incident, the latest canary failure
 reasons and the 24 h counts; never a meeting link, org or person.
+
+With monitoring installed (D-63), Alertmanager raises the same two conditions
+(`andai/deploy/monitoring/prometheus/rules/munshi-alerts.yml`). `AlertMailGate` stands this mail
+down only while `ANDAI_MONITORING` is on and the receivers state file names at least one receiver;
+with monitoring on and no receiver (or no readable state file) the worker keeps mailing, so an
+operator is never left with no alert channel. The gate is checked on every tick, so a re-render
+takes effect without a restart.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import anyio.to_thread
 from sqlalchemy import Connection, Engine, select, text, update
@@ -30,6 +38,7 @@ from sqlalchemy import Connection, Engine, select, text, update
 from andai_core.db.models import PLATFORMS, AlertState
 from andai_core.db.session import transaction
 from andai_core.mail import Mail, Mailer, MailError
+from andai_worker.alerting_config import read_state
 from andai_worker.canary import canary_history
 from andai_worker.metrics import WINDOW, Rate, canary_summary, join_counts, rates
 
@@ -64,6 +73,35 @@ def _pct(rate: Rate | None) -> str:
     return f"{rate.ratio:.1%} ({rate.successes} of {rate.counted} counted joins)"
 
 
+class AlertMailGate:
+    """Whether the worker's own alert mail is on: always without monitoring; with monitoring, only
+    while the receivers state file is missing, unreadable or names no receiver. Logs each change."""
+
+    def __init__(self, monitoring: bool, state_file: Path) -> None:
+        self.monitoring = monitoring
+        self.state_file = state_file
+        self._last: bool | None = None
+
+    def __call__(self) -> bool:
+        if not self.monitoring:
+            return True
+        state = read_state(self.state_file)
+        on = state is None or state.receivers < 1
+        if on != self._last:
+            self._last = on
+            if on:
+                log.warning(
+                    "monitoring on but no alert receiver enabled; worker alert mail stays on"
+                )
+            else:
+                log.info(
+                    "monitoring on with alert receivers (%s): Alertmanager owns alerts;"
+                    " worker alert mail stands down",
+                    ", ".join(state.names),
+                )
+        return on
+
+
 class AlertEvaluator:
     def __init__(
         self,
@@ -72,11 +110,13 @@ class AlertEvaluator:
         to: str,
         *,
         clock: Callable[[], datetime],
+        gate: Callable[[], bool] | None = None,
     ) -> None:
         self.engine = engine
         self.mailer = mailer
         self.to = to
         self.clock = clock
+        self.gate = gate
         self._lock_conn: Connection | None = None
 
     # ── single runner ──
@@ -220,6 +260,9 @@ class AlertEvaluator:
         return sent
 
     async def tick(self) -> int:
+        if self.gate is not None and not await anyio.to_thread.run_sync(self.gate):
+            await anyio.to_thread.run_sync(self.release)
+            return 0
         if not await anyio.to_thread.run_sync(self.try_lock):
             return 0
         notices = await anyio.to_thread.run_sync(self.evaluate)

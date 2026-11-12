@@ -14,3 +14,8 @@ Test instruments shipped in the andai-core image that no default stack runs:
   `capacity_exhausted`, stops them all and writes a report of counts and timings
   (`andai/docs/load-test.md`). Runs on the operator's machine against a test stack, not in a
   service.
+- `alert_sink.py` — a local stand-in for Slack and Teams webhooks (`POST /slack`, `/teams`, counts at
+  `GET /captured`) that appends each body to a file, and `--scan FILE`, which counts email
+  addresses, UUIDs, URLs, IP addresses and meeting-link shapes in captured bodies (counts only;
+  exit 1 on any hit). The `monitoring-test` compose profile runs it as `alert-sink`
+  (`andai/docs/monitoring.md`).
