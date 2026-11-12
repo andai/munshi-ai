@@ -48,6 +48,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   meetings: "Meetings",
   minutes: "Minutes",
   platform: "Organisation",
+  erasure: "Data erasure",
 };
 
 const TARGET_LABEL: Record<string, string> = {

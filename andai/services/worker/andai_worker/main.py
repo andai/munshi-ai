@@ -1,6 +1,6 @@
 """andai-worker: join-time dispatch of scheduled meetings, transcript ingest, minutes of meeting and
-their recap mail, meeting deletion, canary joins, metrics and operator alerts (BOT-04, D-34,
-PORT-04, MOM-01, MOM-05, INV-01).
+their recap mail, meeting deletion, user erasure, canary joins, metrics and operator alerts (BOT-04,
+D-34, PORT-04, MOM-01, MOM-05, INV-01, OPS-02).
 
 * `GET /healthz` — liveness.
 * `GET /metrics` — join, deletion, minutes, pipeline, intake and database-size metrics in
@@ -15,6 +15,7 @@ PORT-04, MOM-01, MOM-05, INV-01).
     `ANDAI_LLM_MODEL`): the minutes of every finished meeting with a stored transcript;
   - recap mail (`recap.py`), always: the first minutes to the requester and the meeting's team;
   - deletion (`deletion.py`), always: the purge of every meeting its users deleted;
+  - erasure (`erasure.py`), always: every user erasure an admin or the operator asked for;
   - canaries (`canary.py`) when at least one `ANDAI_CANARY_*_URL` is set;
   - alerts (`alerts.py`) when `ANDAI_ALERT_EMAIL` is set.
 
@@ -45,7 +46,17 @@ from andai_core.llm.client import LlmClient, LlmConfig
 from andai_core.mail import Mailer, SmtpMailer
 from andai_core.meetings.service import Meetings
 from andai_core.platform.gateway_client import HttpPlatformGateway
-from andai_worker import alerts, canary, deletion, ingest, metrics, minutes, recap, scheduled
+from andai_worker import (
+    alerts,
+    canary,
+    deletion,
+    erasure,
+    ingest,
+    metrics,
+    minutes,
+    recap,
+    scheduled,
+)
 from andai_worker.settings import WorkerSettings, get_worker_settings
 
 SERVICE_NAME = "andai-worker"
@@ -137,6 +148,9 @@ def jobs(services: WorkerServices) -> list[asyncio.Task]:
     )
     tasks.append(asyncio.create_task(purger.run(deletion.TICK_S)))
     log.info("meeting deletion every %s s", deletion.TICK_S)
+    eraser = erasure.ErasureRunner(services.engine, services.meetings, clock=services.clock)
+    tasks.append(asyncio.create_task(eraser.run(erasure.TICK_S)))
+    log.info("user erasure every %s s", erasure.TICK_S)
     urls = settings.canary_urls
     if urls:
         runner = canary.CanaryRunner(

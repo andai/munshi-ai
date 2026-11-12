@@ -1,7 +1,7 @@
 "use client";
 
 import { MoreHorizontal, UserPlus } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import {
   ConfirmDialog,
@@ -35,13 +35,19 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { listErasures, requestErasure, type ErasureRequest } from "@/lib/admin";
 import { api } from "@/lib/api";
 import { useSession, type OrgRole } from "@/lib/session";
 
 // Members: everyone in the organisation with their role, account status, two-factor state and
-// teams, plus pending invites. Admins invite people, change roles, disable or re-enable accounts
-// and reset a member's two-factor login. andai-core decides every change; a control the server
-// would refuse for this admin (their own row, the owner's row for an admin) is shown locked.
+// teams, plus pending invites. Admins invite people, change roles, disable or re-enable accounts,
+// reset a member's two-factor login and erase a member's data (OPS-02; never the owner's or their
+// own). andai-core decides every change; a control the server would refuse for this admin (their own
+// row, the owner's row for an admin) is shown locked.
+//
+// An erased member leaves the list at once (andai-core ends their membership in the request); the
+// "Data erasure" section shows each request's state from GET /org/erasures, which carries ids only.
+// The name of someone erased in this visit is remembered in memory for that list, nowhere else.
 
 type Pending =
   | { kind: "role"; member: Member; role: OrgRole }
@@ -118,6 +124,171 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
   );
 }
 
+const ERASURE_POLL_MS = 5000;
+
+function EraseDialog({ member, orgName, onClose, onErased }: {
+  member: Member | null;
+  orgName: string;
+  onClose: () => void;
+  onErased: (member: Member) => Promise<void>;
+}) {
+  const [typed, setTyped] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const matches = member !== null && typed.trim().toLowerCase() === member.email.toLowerCase();
+
+  function close() {
+    setTyped("");
+    setError(null);
+    onClose();
+  }
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!member || !matches) return;
+    setPending(true);
+    setError(null);
+    try {
+      await requestErasure(member.id, typed.trim());
+      await onErased(member);
+      close();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const name = member ? personName(member) : "";
+  return (
+    <Dialog open={member !== null} onOpenChange={(open) => !open && !pending && close()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Erase {name}&rsquo;s data?</DialogTitle>
+          <DialogDescription>
+            This can&rsquo;t be undone. {name} loses access to {orgName} now, and munshi.ai removes their data within
+            24 hours, usually within minutes.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 text-sm sm:grid-cols-2">
+          <div className="rounded-lg border border-border p-3">
+            <p className="mb-1.5 font-medium">What goes</p>
+            <ul className="grid list-disc gap-1 pl-4 text-muted-foreground">
+              <li>Meetings they sent the notetaker to here, with recordings, transcripts and minutes</li>
+              <li>Their teams, shares, invites and the notetaker mail they sent here</li>
+              <li>Their account, if they belong to no other organisation</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <p className="mb-1.5 font-medium">What stays</p>
+            <ul className="grid list-disc gap-1 pl-4 text-muted-foreground">
+              <li>What they said in other people&rsquo;s meetings</li>
+              <li>The audit log, which keeps their user ID and shows them as &ldquo;Erased user&rdquo;</li>
+            </ul>
+          </div>
+        </div>
+        <form id="erase-form" onSubmit={onSubmit} className="grid gap-3">
+          {error && <FormAlert>{error}</FormAlert>}
+          <Field
+            id="erase-confirm"
+            name="confirm"
+            label="Type their email address to confirm"
+            hint={member?.email}
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            spellCheck={false}
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            autoFocus
+          />
+        </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={close} disabled={pending}>
+            Cancel
+          </Button>
+          <Button type="submit" form="erase-form" variant="destructive" disabled={!matches || pending} aria-busy={pending}>
+            Erase data
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const ERASURE_BADGE: Record<ErasureRequest["state"], { label: string; variant: "secondary" | "outline" | "destructive"; className?: string }> = {
+  pending: { label: "Pending", variant: "secondary" },
+  running: { label: "In progress", variant: "secondary" },
+  done: { label: "Erased", variant: "outline", className: "border-success/30 text-success" },
+  failed: { label: "Failed", variant: "destructive" },
+};
+
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
+
+/** The organisation's erasure requests, refreshed every few seconds while one is still open. */
+function useErasures() {
+  const [items, setItems] = useState<ErasureRequest[] | null>(null);
+
+  const reload = useCallback(async () => {
+    setItems((await listErasures()).items);
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const open = items?.some((item) => item.state === "pending" || item.state === "running") ?? false;
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => void reload(), ERASURE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [open, reload]);
+
+  return { items, reload };
+}
+
+function ErasureList({ items, names }: { items: ErasureRequest[]; names: Record<string, string> }) {
+  if (!items.length) return null;
+  return (
+    <section aria-labelledby="erasures-title" className="mt-8">
+      <h2 id="erasures-title" className="mb-1 text-sm font-semibold">
+        Data erasure
+      </h2>
+      <p className="mb-3 text-xs text-muted-foreground">Requests to erase a member&rsquo;s data. Each finishes within 24 hours.</p>
+      <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+        {items.map((item) => {
+          const badge = ERASURE_BADGE[item.state];
+          return (
+            <li
+              key={item.id}
+              data-testid={`erasure-${item.subjectId}`}
+              data-state={item.state}
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3"
+            >
+              <span className="min-w-0 truncate text-sm">{names[item.subjectId] ?? "A former member"}</span>
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>
+                  {item.finishedAt ? `Finished ${shortDate(item.finishedAt)}` : `Asked ${shortDate(item.createdAt)}`}
+                </span>
+                <Badge variant={badge.variant} className={badge.className}>
+                  {badge.label}
+                </Badge>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {items.some((item) => item.state === "failed") && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          A failed erasure needs your munshi.ai operator; nothing more happens on its own.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function RoleControl({ member, callerRole, isSelf, onChange }: {
   member: Member;
   callerRole: OrgRole;
@@ -157,6 +328,9 @@ export function Members() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [pending, setPending] = useState<Pending>(null);
+  const [erasing, setErasing] = useState<Member | null>(null);
+  const [erasedNames, setErasedNames] = useState<Record<string, string>>({});
+  const erasures = useErasures();
   const setNotice = (text: string) => setMessage({ tone: "success", text });
 
   if (!data) {
@@ -249,6 +423,7 @@ export function Members() {
             const isSelf = member.id === me.user.id;
             const ownerLocked = member.role === "owner" && me.role !== "owner";
             const actionsLocked = isSelf || ownerLocked;
+            const erasable = !isSelf && member.role !== "owner";
             return (
               <li
                 key={member.id}
@@ -295,6 +470,11 @@ export function Members() {
                       >
                         Reset two-factor login
                       </DropdownMenuItem>
+                      {erasable && (
+                        <DropdownMenuItem variant="destructive" onSelect={() => setErasing(member)}>
+                          Erase data…
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -327,6 +507,19 @@ export function Members() {
         </section>
       )}
 
+      <ErasureList items={erasures.items ?? []} names={erasedNames} />
+
+      <EraseDialog
+        member={erasing}
+        orgName={me.org.name}
+        onClose={() => setErasing(null)}
+        onErased={async (member) => {
+          const who = personName(member);
+          setErasedNames((names) => ({ ...names, [member.id]: who }));
+          setNotice(`${who} no longer has access. Their data is erased within 24 hours.`);
+          await Promise.all([reload(), erasures.reload()]);
+        }}
+      />
       <InviteDialog
         open={inviteOpen}
         onOpenChange={setInviteOpen}

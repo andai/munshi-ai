@@ -17,6 +17,7 @@ from sqlalchemy import Engine, create_engine, insert, select, text
 from sqlalchemy.exc import ProgrammingError
 
 from andai_core.db.models import (
+    ERASURE_TABLES,
     GLOBAL_TABLES,
     ORG_SCOPED_TABLES,
     SYSTEM_TABLES,
@@ -232,7 +233,7 @@ def test_rls_enabled_and_forced_exactly_on_org_scoped_tables(superuser_engine: E
                 )
             ).all()
         }
-    for table in ORG_SCOPED_TABLES:
+    for table in (*ORG_SCOPED_TABLES, *ERASURE_TABLES):
         assert flags[table] == (True, True), table
     for table in (*GLOBAL_TABLES, *SYSTEM_TABLES):
         assert flags[table] == (False, False), table

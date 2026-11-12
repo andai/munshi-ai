@@ -1,9 +1,10 @@
 // Organisation settings and records for owners and admins, through andai-core (same-origin
 // /api/v1/org/*): the bot's auto-join setting for the organisation and per team
 // (GET/PUT /org/bot-settings), the notetaker mail andai-intake quarantined for this organisation
-// (GET /org/intake/quarantine) and the organisation's audit trail (GET /org/audit and
-// /org/audit/actions). andai-core decides who may read or change them (members and leads get 403)
-// and which rows a caller sees; the portal shows its answers as they are.
+// (GET /org/intake/quarantine), the organisation's audit trail (GET /org/audit and
+// /org/audit/actions) and erasing a member's data (POST /org/users/{id}/erasure, GET /org/erasures).
+// andai-core decides who may read or change them (members and leads get 403) and which rows a caller
+// sees; the portal shows its answers as they are.
 
 import { api } from "@/lib/api";
 
@@ -94,4 +95,41 @@ export function listAudit(
   if (options.cursor) params.set("cursor", options.cursor);
   const query = params.size ? `?${params}` : "";
   return api<AuditPage>(`/org/audit${query}`, { signal: options.signal });
+}
+
+/** Where an erasure is: waiting for andai-worker, being worked, finished, or stopped by an error the
+ * operator has to look at. */
+export type ErasureState = "pending" | "running" | "done" | "failed";
+
+/** One erasure of a person's data in this organisation: ids and states only, never a name or an
+ * address. */
+export type ErasureRequest = {
+  id: string;
+  subjectId: string;
+  state: ErasureState;
+  step: string;
+  createdAt: string;
+  finishedAt: string | null;
+  error: string | null;
+};
+
+export type ErasurePage = { items: ErasureRequest[]; next: string | null };
+
+/** Newest first, 50 per page; with `cursor` (a `next`), the page after it. */
+export function listErasures(options: { cursor?: string | null; signal?: AbortSignal } = {}): Promise<ErasurePage> {
+  const query = options.cursor ? `?${new URLSearchParams({ cursor: options.cursor })}` : "";
+  return api<ErasurePage>(`/org/erasures${query}`, { signal: options.signal });
+}
+
+/** Ask andai-core to erase a member's data in this organisation. `confirm` is their email address as
+ * the admin typed it. Their access ends at once; the rest happens within 24 hours (`eraseBy`). */
+export function requestErasure(
+  userId: string,
+  confirm: string,
+): Promise<{ id: string; state: ErasureState; eraseBy: string }> {
+  return api(`/org/users/${encodeURIComponent(userId)}/erasure`, {
+    method: "POST",
+    body: { confirm },
+    redirect: false,
+  });
 }

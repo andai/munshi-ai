@@ -471,3 +471,21 @@ def test_limiter_key_follows_the_resolved_client_address(app_engine: Engine) -> 
         ).status_code
         == 429
     )
+
+
+def test_an_erased_account_fails_exactly_like_a_disabled_one(
+    harness: Harness, app_engine: Engine, superuser_engine: Engine
+) -> None:
+    disabled = new_member(app_engine)
+    set_status(superuser_engine, disabled.user_id, "disabled")
+    erased = new_member(app_engine)
+    set_status(superuser_engine, erased.user_id, "erased")
+
+    answers = [
+        login(harness.client(ip="198.51.100.31"), disabled.email),
+        login(harness.client(ip="198.51.100.32"), erased.email),
+    ]
+
+    assert [r.status_code for r in answers] == [401, 401]
+    assert answers[0].content == answers[1].content == b'{"detail":"invalid email or password"}'
+    assert session_rows(superuser_engine, erased.user_id) == []

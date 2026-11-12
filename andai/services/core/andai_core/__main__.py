@@ -35,27 +35,43 @@ changes, and it is safe to run again after a crash. `--dry-run` writes nothing a
 would move. `kek-status` prints how many values each KEK wraps per table and exits 1 while any
 value is under a key other than the active one. Both need the KEK (active and retired) and print
 counts and key ids only. `make -C andai kek-rewrap | kek-status` run them in the stack.
+
+    python -m andai_core erase-user --email E --confirm E [--audit-org ORG_ID]
+    python -m andai_core erase-status --id REQUEST_ID
+
+User erasure across orgs (andai/docs/erasure.md). `erase-user` refuses a user who owns any org
+(ownership is transferred first; there is no override). Otherwise it ends the user's membership in
+every org at once and creates one request per org (`source = operator`, audited in that org), the
+last of them also erasing the account; andai-worker does the rest. A user with no membership left
+needs `--audit-org`: an org they once belonged to (an audit event names them as actor or as
+`user:<id>` target there, or an earlier erasure request did), whose trail records the account-only
+request. `erase-status` prints one request's state, step, attempts, error and counts. Both print
+ids, states and counts only, never the address. `make -C andai erase-user | erase-status PROJECT=…` run
+them in the stack.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
+import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Engine, text, update
+from sqlalchemy import Engine, select, text, update
 from sqlalchemy.exc import DBAPIError
 
 from andai_core import sealed
 from andai_core.auth.bootstrap import AlreadyBootstrapped, bootstrap
 from andai_core.auth.links import InvalidEmail, canonical_email
 from andai_core.crypto import Keyring, KeyUnavailable, load_keyring
-from andai_core.db.models import Org
-from andai_core.db.session import create_app_engine
+from andai_core.db.models import ErasureRequest, Org, User
+from andai_core.db.session import create_app_engine, set_context, transaction
+from andai_core.erasure import requests as erasure
 from andai_core.mail import Mailer, MailError, SmtpMailer
-from andai_core.meetings.service import canary_org_id
+from andai_core.meetings.service import MeetingError, canary_org_id
 from andai_core.org.service import CreatedOrg, create_org
 from andai_core.platform import principals
 from andai_core.platform.admin_client import (
@@ -98,6 +114,18 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "kek-status", help="sealed values per table and KEK; exit 1 while any is not on the active"
     )
+    erase = commands.add_parser(
+        "erase-user", help="erase a user's data in every org they belong to, and their account"
+    )
+    erase.add_argument("--email", required=True, help="the user's email address")
+    erase.add_argument("--confirm", required=True, help="the same address again")
+    erase.add_argument(
+        "--audit-org",
+        default=None,
+        help="for a user with no membership left: an org they belonged to, whose trail records it",
+    )
+    status = commands.add_parser("erase-status", help="one erasure request's state and counts")
+    status.add_argument("--id", required=True, help="the request id erase-user printed")
     return parser
 
 
@@ -284,6 +312,191 @@ def _kek_status(settings: Settings, engine: Engine | None, keyring: Keyring | No
     return 1 if behind else 0
 
 
+# ─── user erasure ─────────────────────────────────────────────────────────────────────────────────
+
+AUDIT_FROM = datetime(2000, 1, 1, tzinfo=UTC)
+AUDIT_PAGE = 100
+
+
+class _Refused(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _named_in_trail(tx, org_id: uuid.UUID, user_id: uuid.UUID, now: datetime) -> bool:
+    """Whether an audit event of `org_id` (the transaction's org) names `user_id` as its actor or
+    `user:<id>` target, read page by page through `andai_audit_page`."""
+    target = f"user:{user_id}"
+    before_at = before_id = None
+    while True:
+        rows = tx.execute(
+            text(
+                "SELECT id, at, actor_user_id, target FROM andai_audit_page(:f, :t, NULL,"
+                " CAST(:ba AS timestamptz), CAST(:bi AS uuid), :n)"
+            ),
+            {
+                "f": AUDIT_FROM,
+                "t": now + timedelta(days=1),
+                "ba": before_at,
+                "bi": before_id,
+                "n": AUDIT_PAGE,
+            },
+        ).all()
+        if any(r.actor_user_id == user_id or r.target.split(" ", 1)[0] == target for r in rows):
+            return True
+        if len(rows) < AUDIT_PAGE:
+            return False
+        before_at, before_id = rows[-1].at, rows[-1].id
+
+
+def _belonged(tx, org_id: uuid.UUID, user_id: uuid.UUID, now: datetime) -> bool:
+    earlier = tx.scalar(
+        select(ErasureRequest.id).where(
+            ErasureRequest.audit_org_id == org_id, ErasureRequest.subject_user_id == user_id
+        ).limit(1)
+    )
+    return earlier is not None or _named_in_trail(tx, org_id, user_id, now)
+
+
+def _erase_user(
+    engine: Engine, email: str, audit_org: str | None, now: datetime
+) -> list[tuple[uuid.UUID, uuid.UUID, int]]:
+    """Create the requests; returns (request id, audit org, memberships removed) per request."""
+    created: list[tuple[uuid.UUID, uuid.UUID, int]] = []
+    with transaction(engine) as tx:
+        user = tx.scalar(select(User).where(User.email == email))
+        if user is None:
+            raise _Refused(1, "no account has this address; nothing was changed")
+        erasure.lock_subject(tx, user.id)
+        memberships = erasure.memberships_of(tx, user.id, caller=None)
+        if any(role == erasure.OWNER for _, role in memberships):
+            raise _Refused(
+                2,
+                "owner_cannot_be_erased: the user owns an organisation; transfer ownership first",
+            )
+        if memberships:
+            if audit_org is not None:
+                raise _Refused(2, "--audit-org is only for a user with no membership left")
+            for index, (org_id, _role) in enumerate(memberships):
+                set_context(tx, org_id=org_id)
+                removed = erasure.remove_from_org(tx, org_id, user.id)
+                request = erasure.create_request(
+                    tx,
+                    subject=user.id,
+                    org_id=org_id,
+                    audit_org_id=org_id,
+                    source="operator",
+                    requested_by=None,
+                    account=index == len(memberships) - 1,
+                    now=now,
+                    counts=removed,
+                )
+                created.append((request.id, org_id, removed["org_memberships"]))
+            return created
+        if audit_org is None:
+            raise _Refused(
+                2,
+                "the user has no membership left; name an org they belonged to with --audit-org",
+            )
+        if user.status == "erased":
+            raise _Refused(1, "this account is already erased; nothing was changed")
+        try:
+            org_id = uuid.UUID(audit_org)
+        except ValueError:
+            raise _Refused(2, "--audit-org must be an org id") from None
+        set_context(tx, org_id=org_id)
+        if tx.get(Org, org_id) is None:
+            raise _Refused(2, "no such org; nothing was changed")
+        if not _belonged(tx, org_id, user.id, now):
+            raise _Refused(
+                2,
+                "the user never belonged to that org (no audit event or erasure request names"
+                " them there); nothing was changed",
+            )
+        request = erasure.create_request(
+            tx,
+            subject=user.id,
+            org_id=None,
+            audit_org_id=org_id,
+            source="operator",
+            requested_by=None,
+            account=True,
+            now=now,
+        )
+        created.append((request.id, org_id, 0))
+    return created
+
+
+def _erase_user_command(
+    settings: Settings, engine: Engine | None, email: str, confirm: str, audit_org: str | None
+) -> int:
+    command = "erase-user"
+    try:
+        address = canonical_email(email)
+    except InvalidEmail:
+        print(f"{command}: --email is not an email address", file=sys.stderr)
+        return 2
+    if confirm.strip().lower() != address:
+        print(f"{command}: --confirm must repeat --email; nothing was changed", file=sys.stderr)
+        return 2
+    own_engine = engine is None
+    engine = engine or create_app_engine(settings=settings)
+    try:
+        created = _erase_user(engine, address, audit_org, datetime.now(UTC))
+    except _Refused as exc:
+        print(f"{command}: {exc}", file=sys.stderr)
+        return exc.code
+    except MeetingError as exc:  # an open request in one of the orgs
+        print(f"{command}: {exc.code}: {exc.detail}; nothing was changed", file=sys.stderr)
+        return 1
+    except DBAPIError as exc:
+        return _db_error(command, exc)
+    finally:
+        if own_engine:
+            engine.dispose()
+    removed = sum(n for _, _, n in created)
+    print(f"{command}: {len(created)} requests created; {removed} memberships removed")
+    for request_id, org_id, _ in created:
+        print(f"{command}: request {request_id} (org {org_id})")
+    return 0
+
+
+def _erase_status(settings: Settings, engine: Engine | None, request_id: str) -> int:
+    command = "erase-status"
+    try:
+        wanted = uuid.UUID(request_id)
+    except ValueError:
+        print(f"{command}: --id must be a request id", file=sys.stderr)
+        return 2
+    own_engine = engine is None
+    engine = engine or create_app_engine(settings=settings)
+    try:
+        with transaction(engine) as tx:
+            org_id = tx.scalar(text("SELECT andai_erasure_org(:r)"), {"r": wanted})
+            row = None
+            if org_id is not None:
+                set_context(tx, org_id=org_id)
+                row = tx.get(ErasureRequest, wanted)
+    except DBAPIError as exc:
+        return _db_error(command, exc)
+    finally:
+        if own_engine:
+            engine.dispose()
+    if row is None:
+        print(f"{command}: no such request", file=sys.stderr)
+        return 1
+    finished = "-" if row.finished_at is None else row.finished_at.isoformat()
+    print(
+        f"{command}: request {row.id} (org {row.audit_org_id}): state {row.state}, step"
+        f" {row.step}, attempts {row.attempts}, error {row.error or '-'}, account"
+        f" {'yes' if row.account else 'no'}, created {row.created_at.isoformat()}, finished"
+        f" {finished}"
+    )
+    print(f"{command}: counts {json.dumps(row.counts, sort_keys=True)}")
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -302,6 +515,10 @@ def main(
         return _kek_rewrap(settings, engine, keyring, args.batch, args.dry_run)
     if args.command == "kek-status":
         return _kek_status(settings, engine, keyring)
+    if args.command == "erase-user":
+        return _erase_user_command(settings, engine, args.email, args.confirm, args.audit_org)
+    if args.command == "erase-status":
+        return _erase_status(settings, engine, args.id)
     try:
         keyring = keyring or load_keyring(settings)
     except KeyUnavailable as exc:

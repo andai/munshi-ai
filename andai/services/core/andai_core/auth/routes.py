@@ -1,9 +1,9 @@
 """Authentication routes under /api/v1.
 
 Responses never contain a password, a password hash, a token or a token hash. Login failures look
-the same whatever the cause (unknown email, wrong password, no password yet, disabled user), and a
-password-reset request answers 202 whether or not the address has an account; its mail is sent
-after the response.
+the same whatever the cause (unknown email, wrong password, no password yet, disabled or erased
+user: any status but `active`, with no branch of its own for erasure), and a password-reset request
+answers 202 whether or not the address has an account; its mail is sent after the response.
 
 Two-factor login: a user with confirmed TOTP gets an `mfa_pending` session from the password step
 and a `full` one (new token) from `POST /auth/mfa/verify`; a user without it in an org that

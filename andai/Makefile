@@ -10,6 +10,7 @@
 #   make -C andai canary-setup     # create the canary org andai-worker sends canary bots as (once)
 #   make -C andai kek-status | kek-rewrap [DRY_RUN=1] [BATCH=100]   # key rotation (runbooks/key-rotation.md)
 #   make -C andai encryption-check PROJECT=andai-e2e   # are the project's data volumes on encrypted disks?
+#   make -C andai erase-user PROJECT=… EMAIL=… CONFIRM=… [AUDIT_ORG=id] | erase-status PROJECT=… ID=…   # docs/erasure.md
 #   make -C andai live-dispatch URL='<test meeting link>' LANGUAGE_CODE=en   # live harness (docs/live-test.md)
 #   make -C andai load-test PROJECT=andai-e2e N=8 CAP=5 HOLD_S=180 EMAIL=… PASSWORD_FILE=…   # docs/load-test.md
 #   make -C andai images        # build every image in andai/images.json from this repo
@@ -52,7 +53,7 @@ DB_INIT_SQL := $(ROOT)/andai/services/core/migrations/db-init.sql
 # read into shell variables and passed to containers through the environment, never as arguments.
 env_value = grep -E '^$(1)=' "$(ENV_FILE)" | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$$//'
 
-.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap encryption-check live-dispatch load-test agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
+.PHONY: help config config-json config-services up db-init db-migrate bootstrap principals-sync canary-setup kek-status kek-rewrap erase-user erase-status encryption-check live-dispatch load-test agent-worker images images-check images-push env-check env-example down ps logs health _env-ready _env-file _env-stack-json
 
 help:
 	@echo "make -C andai up       gen secrets, build missing catalogue images (PULL=1: pull them), start, wait healthy, db-init, db-migrate"
@@ -62,6 +63,7 @@ help:
 	@echo "make -C andai canary-setup                               create the canary org + principal andai-worker uses (once)"
 	@echo "make -C andai kek-status | kek-rewrap [DRY_RUN=1] [BATCH=n]   sealed values per KEK | move them onto the active KEK"
 	@echo "make -C andai encryption-check PROJECT=name              do the project's Postgres + object-storage volumes sit on encrypted storage?"
+	@echo "make -C andai erase-user PROJECT=name EMAIL=e CONFIRM=e [AUDIT_ORG=id] | erase-status PROJECT=name ID=id   erase a person across orgs | a request's state"
 	@echo "make -C andai live-dispatch URL=link [LANGUAGE_CODE=en] [STOP_AFTER=s] [LOG=/abs/file] [PRIVACY_URL=url]   real bot into a TEST meeting (PRIVACY_URL: + chat notice)"
 	@echo "make -C andai load-test PROJECT=name N=n CAP=c HOLD_S=s EMAIL=e PASSWORD_FILE=/abs [THRESHOLD=0.95] [REPORT=/abs/out.json]   mock-bot load test on a TEST stack"
 	@echo "make -C andai images [ONLY=a,b] [PLATFORM=linux/amd64]   build the catalogue (andai/images.json)"
@@ -163,6 +165,24 @@ kek-status: _env-file
 
 kek-rewrap: _env-file
 	@$(DC) exec -T andai-core python -m andai_core kek-rewrap $(if $(filter 1,$(DRY_RUN)),--dry-run) $(if $(BATCH),--batch "$(BATCH)")
+
+## erase-user / erase-status — the operator's user erasure across orgs (andai/docs/erasure.md).
+## erase-user asks for the erasure of EMAIL (CONFIRM must repeat it) in every org they belong to and
+## of their account; it refuses anyone who owns an org. AUDIT_ORG=id names the org whose trail
+## records an account-only erasure of a user with no membership left. erase-status ID=id prints a
+## request's state, step and counts. Both print ids, states and counts only. PROJECT must be given.
+CONFIRM ?=
+AUDIT_ORG ?=
+ID ?=
+erase-user: _env-file
+	@test "$(origin PROJECT)" != file || { echo "usage: make -C andai erase-user PROJECT=<compose project> EMAIL=<address> CONFIRM=<address> [AUDIT_ORG=<org id>]" >&2; exit 2; }
+	@test -n "$(EMAIL)" && test -n "$(CONFIRM)" || { echo "usage: make -C andai erase-user PROJECT=<compose project> EMAIL=<address> CONFIRM=<address> [AUDIT_ORG=<org id>]" >&2; exit 2; }
+	@$(DC) exec -T andai-core python -m andai_core erase-user --email '$(EMAIL)' --confirm '$(CONFIRM)' $(if $(AUDIT_ORG),--audit-org '$(AUDIT_ORG)')
+
+erase-status: _env-file
+	@test "$(origin PROJECT)" != file || { echo "usage: make -C andai erase-status PROJECT=<compose project> ID=<request id>" >&2; exit 2; }
+	@test -n "$(ID)" || { echo "usage: make -C andai erase-status PROJECT=<compose project> ID=<request id>" >&2; exit 2; }
+	@$(DC) exec -T andai-core python -m andai_core erase-status --id '$(ID)'
 
 ## encryption-check — read-only: do PROJECT's Postgres and object-storage volumes sit on encrypted
 ## storage (dm-crypt on Linux; FileVault under Docker Desktop on macOS)? Exit 0 encrypted, 1 NOT,

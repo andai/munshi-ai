@@ -6,9 +6,9 @@
 `andai/docs/audit-actions.md` lists exactly this registry.
 
 Later features add their actions here: every setting Phase 8 adds and every add-on Phase 9 adds
-writes an audit event under a key registered in this module, and user erasure and data export add
-their own categories. Keys are never renamed or removed once written, because stored rows keep
-them.
+writes an audit event under a key registered in this module, and user erasure (`erasure`) and data
+export add their own categories. Keys are never renamed or removed once written, because stored
+rows keep them.
 
 `python -m andai_core.audit_actions --markdown` prints the table in `andai/docs/audit-actions.md`.
 """
@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-CATEGORIES = ("auth", "members", "settings", "sharing", "meetings", "minutes", "platform")
+CATEGORIES = (
+    "auth", "members", "settings", "sharing", "meetings", "minutes", "platform", "erasure"
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,10 @@ ACTIONS: dict[str, AuditAction] = {
     "org.bootstrap": AuditAction("platform", "Created the organisation"),
     "platform_principal.provision": AuditAction("platform", "Provisioned the platform account"),
     "platform_principal.configure": AuditAction("platform", "Configured the platform account"),
+    # erasure: a person's data erased (OPS-02)
+    "user.erase.request": AuditAction("erasure", "Asked to erase a person's data"),
+    "user.erase.complete": AuditAction("erasure", "Erased a person's data"),
+    "user.erase.failed": AuditAction("erasure", "Could not finish erasing a person's data"),
 }
 
 

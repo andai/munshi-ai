@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session as Tx
 from andai_core import audit
 from andai_core.auth.invites import create_invite, invite_mail
 from andai_core.crypto import Keyring
-from andai_core.db.models import User
+from andai_core.db.models import TOMBSTONE_USER_ID, User
 from andai_core.mail import Mail
 from andai_core.org.service import CreatedOrg, create_org
 from andai_core.platform.admin_client import PlatformAdmin
@@ -43,7 +43,8 @@ class Bootstrapped:
 
 def _only_on_an_empty_database(tx: Tx) -> None:
     tx.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": BOOTSTRAP_LOCK})
-    if tx.scalar(select(User.id).limit(1)) is not None:
+    # The tombstone user (migration 0019) is in every database and is nobody.
+    if tx.scalar(select(User.id).where(User.id != TOMBSTONE_USER_ID).limit(1)) is not None:
         raise AlreadyBootstrapped
 
 

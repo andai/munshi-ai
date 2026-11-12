@@ -268,3 +268,31 @@ def test_the_list_holds_only_this_orgs_memberships_for_a_multi_org_admin(
     )
     assert [u["role"] for u in users if u["id"] == str(org.admin.user_id)] == ["admin"]
     assert elsewhere.email not in str(users)
+
+
+def test_the_list_never_shows_the_tombstone_or_an_erased_account(
+    harness: Harness, app_engine: Engine, superuser_engine: Engine
+) -> None:
+    from andai_core.db.models import TOMBSTONE_USER_ID
+
+    org = role_org(app_engine)
+    erased = org.lead
+    with superuser_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE users SET status = 'erased' WHERE id = :u"), {"u": erased.user_id}
+        )
+        conn.execute(
+            text("INSERT INTO org_memberships (org_id, user_id, role) VALUES (:o, :u, 'member')"),
+            {"o": org.owner.org_id, "u": TOMBSTONE_USER_ID},
+        )
+    try:
+        listed = sign_in(harness, org.admin).get(USERS).json()["users"]
+        ids = {u["id"] for u in listed}
+        assert str(TOMBSTONE_USER_ID) not in ids
+        assert str(erased.user_id) not in ids
+        assert {str(org.owner.user_id), str(org.admin.user_id), str(org.member.user_id)} <= ids
+    finally:
+        with superuser_engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM org_memberships WHERE user_id = :u"), {"u": TOMBSTONE_USER_ID}
+            )

@@ -15,7 +15,10 @@ route tests and the e2e compose profile use; never started by the default stack)
 `llm/` (the minutes language model: one env-configured OpenAI-compatible route, schema-constrained
 calls with typed errors, and a live probe), `minutes/` (minutes templates, prompts, transcript
 packing, draft generation with map-reduce, and the owner and due-date rules),
-`mail.py` (settings-only SMTP), `__main__.py` (operator CLI: `python -m andai_core bootstrap | principals-sync | canary-setup | kek-rewrap | kek-status`),
+`erasure/` (user erasure: the registry of user-referencing columns, the admin's request and the
+step machine andai-worker drives), `mail.py` (settings-only SMTP), `__main__.py` (operator CLI:
+`python -m andai_core bootstrap | principals-sync | canary-setup | kek-rewrap | kek-status |
+erase-user | erase-status`),
 `db/` (schema and RLS-scoped transactions), `crypto.py` (envelope encryption of stored secrets
 under the KEK; active and retired KEKs, re-wrap), `sealed.py` (every sealed column, and the key
 rotation's re-wrap job and counts per KEK), `audit.py` (append-only audit events) and `audit_actions.py` (the registry

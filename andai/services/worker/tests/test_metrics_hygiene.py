@@ -234,7 +234,10 @@ def test_no_metric_carries_identity_or_grows_with_the_data(
     try:
         found = _seed(fresh_app_engine, su, now)
         with su.connect() as conn:
-            users = conn.execute(text("SELECT count(*) FROM users")).scalar_one()
+            # The tombstone user (0019) is in every database; it is no person.
+            users = conn.execute(
+                text("SELECT count(*) FROM users WHERE email <> 'erased-user@munshi.invalid'")
+            ).scalar_one()
             meetings = conn.execute(text("SELECT count(*) FROM meetings")).scalar_one()
     finally:
         su.dispose()

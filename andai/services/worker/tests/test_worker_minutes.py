@@ -165,7 +165,7 @@ def test_without_an_llm_route_the_loop_is_not_started_and_nothing_is_claimed(
         started = _run_jobs(_services(world, settings), lambda: False, seconds=0.5)
 
     assert not any("MomRunner" in name for name in started)
-    assert len(started) == 4  # scheduled dispatch, ingest, recap mail and deletion
+    assert len(started) == 5  # scheduled dispatch, ingest, recap mail, deletion and erasure
     assert world.state(member.org_id, meeting_id) == ("none", 0, 0)
     off = [r.getMessage() for r in caplog.records if "minutes off" in r.getMessage()]
     assert len(off) == 1

@@ -38,6 +38,7 @@ from andai_core.auth.mfa import MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS
 from andai_core.auth.ratelimit import LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, ValkeyLimiter
 from andai_core.auth.stage_gate import StageGate
 from andai_core.crypto import load_keyring
+from andai_core.erasure import requests as erasure_requests
 from andai_core.db.session import create_app_engine
 from andai_core.meetings import routes as meeting_routes
 from andai_core.meetings.reconciler import Reconciler
@@ -125,6 +126,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(org_bot_settings.router)
     app.include_router(org_quarantine.router)
     app.include_router(org_audit_log.router)
+    app.include_router(erasure_requests.router)
     app.include_router(meeting_routes.router)
     app.include_router(search_routes.router)
     app.include_router(platform_webhook.router)

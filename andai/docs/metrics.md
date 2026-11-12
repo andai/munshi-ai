@@ -100,6 +100,14 @@ Minutes stay owed while the language model route is not configured (`ANDAI_LLM_B
 | `munshi_deletion_oldest_pending_seconds` | gauge | — | Seconds since the oldest unpurged deletion; above 900 misses PORT-04. | Deletion alert (> 900 s) |
 | `munshi_sealed_values` | gauge | table, key_id | Sealed values per table still wrapped by each KEK; read at most every 300 s. | Key rotation (`runbooks/key-rotation.md`) |
 
+### User erasure (andai-worker)
+
+| Series | Type | Labels | Meaning | Used by |
+|---|---|---|---|---|
+| `munshi_erasures_pending` | gauge | — | User erasure requests not yet done (pending or running), from `andai_erasure_backlog` (0019). | Erasure dashboard |
+| `munshi_erasure_oldest_pending_seconds` | gauge | — | Seconds since the oldest open erasure request was made (0 when none); above 86400 the 24-hour SLA is missed (`erasure.md`). | Erasure-SLA alert (> 86400 s) |
+| `munshi_erasures_failed` | gauge | — | Erasure requests that failed (`purge_failed`, `internal_error`) and need the operator. | Erasure-failure alert (> 0) |
+
 ### Intake (andai-worker and andai-intake)
 
 | Series | Type | Labels | Meaning | Used by |

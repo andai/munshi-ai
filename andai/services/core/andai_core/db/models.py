@@ -9,6 +9,9 @@ Two kinds of table:
   `team_memberships`, `invites`, `platform_principals`, `audit_events`, `meetings`,
   `consent_records`, `transcript_segments` (0006), `meeting_shares` (0007), `mom_documents`
   (0008), `meeting_removals` (0009), `bot_settings` (0014), `invite_events` (0015).
+* Erasure requests (0019, `erasure_requests`): org-scoped under row-level security on
+  `audit_org_id`, the org whose trail the request's audit events go to (`org_id`, the org whose data
+  is scrubbed, is NULL only for an operator's account-only request).
 * System tables with no org and no customer data (no row-level security): `canary_runs` and
   `alert_state` (0005), written by andai-worker, and `platform_webhook_events` (0010), written by
   andai-core's platform webhook.
@@ -64,7 +67,7 @@ NAMING_CONVENTION = {
 
 ORG_ROLES = ("owner", "admin", "member")
 TEAM_ROLES = ("lead", "member")
-USER_STATUSES = ("invited", "active", "disabled")
+USER_STATUSES = ("invited", "active", "disabled", "erased")
 SESSION_STAGES = ("mfa_pending", "enroll_required", "full")
 
 # Meetings (SPEC `AndaiMeeting`, `MeetingStatus`, `JoinFailureReason`, `ConsentRecord`).
@@ -140,6 +143,17 @@ DEFAULT_AUTO_JOIN = "only_when_invited"
 # Invite events (migration 0015): the state of one (UID, RECURRENCE-ID) of an org's invites.
 INVITE_EVENT_STATES = ("active", "cancelled")
 
+# User erasure (migration 0019; `andai_core.erasure`).
+ERASURE_SOURCES = ("org_admin", "operator")
+ERASURE_STATES = ("pending", "running", "done", "failed")
+ERASURE_OPEN_STATES = ("pending", "running")
+ERASURE_STEPS = ("stop_live", "delete_owned", "wait_purge", "scrub", "account", "done")
+ERASURE_ERRORS = ("purge_failed", "internal_error")
+# The tombstone user (0019): references to an erased person in an org's remaining rows point here.
+TOMBSTONE_USER_ID = uuid.UUID("00000000-0000-4000-8000-00000000e7a5")
+TOMBSTONE_EMAIL = "erased-user@munshi.invalid"
+ERASED_NAME = "Erased user"
+
 # Tables protected by row-level security on org_id (migration 0002).
 ORG_SCOPED_TABLES = (
     "orgs",
@@ -161,6 +175,8 @@ ORG_SCOPED_TABLES = (
 GLOBAL_TABLES = ("users", "sessions", "password_resets", "user_totp", "recovery_codes")
 # Row-level security on a nullable org_id: a row is visible to no org until it is attributed (0012).
 INTAKE_TABLES = ("inbound_mail",)
+# Row-level security on `audit_org_id` rather than `org_id` (0019).
+ERASURE_TABLES = ("erasure_requests",)
 # No org, no customer data, no row-level security (migrations 0005 and 0010).
 SYSTEM_TABLES = ("canary_runs", "alert_state", "platform_webhook_events")
 
@@ -1036,3 +1052,58 @@ class BotSetting(Base):
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+
+
+class ErasureRequest(Base):
+    """One erasure of a person's data in one org (`andai_core.erasure`, migration 0019). Ids,
+    states and counts only: no name or address of the person is stored here."""
+
+    __tablename__ = "erasure_requests"
+    __table_args__ = (
+        CheckConstraint(_in("source", ERASURE_SOURCES), name="source"),
+        CheckConstraint(_in("state", ERASURE_STATES), name="state"),
+        CheckConstraint(_in("step", ERASURE_STEPS), name="step"),
+        CheckConstraint(f"error IS NULL OR {_in('error', ERASURE_ERRORS)}", name="error"),
+        CheckConstraint("(state = 'failed') = (error IS NOT NULL)", name="failed_has_error"),
+        CheckConstraint("org_id IS NULL OR org_id = audit_org_id", name="audit_org"),
+        Index(
+            "uq_erasure_requests_open",
+            "audit_org_id",
+            "subject_user_id",
+            unique=True,
+            postgresql_where=text(_in("state", ERASURE_OPEN_STATES)),
+        ),
+        Index(
+            "ix_erasure_requests_due",
+            "next_at",
+            postgresql_where=text(_in("state", ERASURE_OPEN_STATES)),
+        ),
+        Index("ix_erasure_requests_audit_org_id_created_at", "audit_org_id", "created_at", "id"),
+        Index("ix_erasure_requests_subject_user_id", "subject_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # The org whose data is scrubbed; NULL only for an operator's account-only request.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="RESTRICT")
+    )
+    # The org every audit event of the request is written in (row-level security reads it).
+    audit_org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orgs.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Not foreign keys: the request outlives the user row's identity.
+    subject_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    account: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    step: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'stop_live'"))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    counts: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

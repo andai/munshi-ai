@@ -1,5 +1,5 @@
-"""Join, deletion, minutes and sealed-secret metrics in Prometheus text format, computed from
-andai's own rows on every scrape (the sealed-secret counts at most every 300 s).
+"""Join, deletion, minutes, erasure and sealed-secret metrics in Prometheus text format, computed
+from andai's own rows on every scrape (the sealed-secret counts at most every 300 s).
 
 The worker connects as `andai_app` and reads meetings across orgs only through
 `andai_join_stats(since)` (migration 0005), which returns `(platform, source, outcome, reason,
@@ -43,6 +43,10 @@ Exported series (labels are enums only: no link, name, email, org or id ever bec
   the last 24 h by status, outcome and quarantine reason ('' for none), org-less ones included, from
   `andai_intake_stats(since)` (0018).
 * `munshi_db_size_bytes` — the andai database's size on disk (`pg_database_size`).
+* `munshi_erasures_pending`, `munshi_erasure_oldest_pending_seconds` and `munshi_erasures_failed` —
+  user erasure requests still open, how long ago the oldest open one was made (0 when none; above
+  86400 the 24-hour SLA is missed) and the requests that failed, from `andai_erasure_backlog(at)`
+  (0019). Numbers only.
 
 Process metrics (mail delivery, ASR lag) come from `andai_core.metrics` in the worker's own process
 registry (`process_registry`); `/metrics` renders both registries.
@@ -501,6 +505,51 @@ class DbSizeCollector:
         )
 
 
+@dataclass(frozen=True)
+class ErasureBacklog:
+    pending: int
+    oldest_s: float
+    failed: int
+
+
+def erasure_backlog(engine: Engine, at: datetime) -> ErasureBacklog:
+    """`andai_erasure_backlog(at)` as `andai_app` with no org context."""
+    with transaction(engine) as tx:
+        row = tx.execute(
+            text("SELECT pending, oldest_s, failed FROM andai_erasure_backlog(:at)"), {"at": at}
+        ).one()
+    return ErasureBacklog(int(row.pending), float(row.oldest_s), int(row.failed))
+
+
+class ErasureCollector:
+    """User erasure requests still open or failed, read on every scrape."""
+
+    def __init__(self, engine: Engine, clock: Callable[[], datetime]) -> None:
+        self.engine = engine
+        self.clock = clock
+
+    def describe(self) -> list[Metric]:
+        return []
+
+    def collect(self) -> Iterator[Metric]:
+        backlog = erasure_backlog(self.engine, self.clock())
+        yield GaugeMetricFamily(
+            "munshi_erasures_pending",
+            "User erasure requests not yet done (pending or running).",
+            value=backlog.pending,
+        )
+        yield GaugeMetricFamily(
+            "munshi_erasure_oldest_pending_seconds",
+            "Seconds since the oldest open user erasure request was made (0 when none).",
+            value=backlog.oldest_s,
+        )
+        yield GaugeMetricFamily(
+            "munshi_erasures_failed",
+            "User erasure requests that failed and need the operator.",
+            value=backlog.failed,
+        )
+
+
 def registry_for(
     engine: Engine, clock: Callable[[], datetime], lead_s: int = DEFAULT_LEAD_S
 ) -> CollectorRegistry:
@@ -513,6 +562,7 @@ def registry_for(
     registry.register(PipelineCollector(engine, clock, lead_s))
     registry.register(IntakeCollector(engine, clock))
     registry.register(DbSizeCollector(engine))
+    registry.register(ErasureCollector(engine, clock))
     return registry
 
 

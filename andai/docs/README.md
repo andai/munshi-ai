@@ -5,5 +5,6 @@ with the real bot), `stt-self-hosted.md` (self-hosted speech-to-text for product
 `audit-actions.md` (every audited action, generated from the registry), `encryption-at-rest.md`
 (what munshi encrypts, what the operator must, and `make -C andai encryption-check`),
 `load-test.md` (concurrent mock meetings and the bot cap, `make -C andai load-test`),
-`metrics.md` (every metric the services expose, its labels and what it is for) and
+`metrics.md` (every metric the services expose, its labels and what it is for), `erasure.md`
+(erasing a person's data: scope, SLA, what stays, backups and other copies) and
 `runbooks/` (canaries and alerts, bot hotfix, key rotation, tenant admission).
