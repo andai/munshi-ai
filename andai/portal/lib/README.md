@@ -4,5 +4,7 @@
 `session.ts`: the signed-in account for the app pages. `meetings.ts`: meeting calls and the live
 follow (event stream, polling fallback, segments kept by id), and the skip of a scheduled meeting.
 `admin.ts`: the bot's auto-join setting and the quarantined notetaker mail (owners and admins).
+`exports.ts`: copies of a person's data (their own, or a member's for owners and admins) and the
+download link.
 `client-ip.cjs`: preloaded by the portal server to rewrite X-Forwarded-For to the address it
 believes. `utils.ts`: `cn` for class names.

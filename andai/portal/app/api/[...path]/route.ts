@@ -13,6 +13,11 @@
 // as bytes, never decoded as text, with its Content-Type, Content-Disposition (the file name) and
 // X-Content-Type-Options.
 //
+// A data export's zip (`/api/v1/exports/{id}/download`) is assembled by andai-core before it
+// answers, streaming every recording from the platform, so its headers may take minutes: that path
+// waits up to 15 minutes for them instead of 30 seconds, then passes the body on chunk by chunk with
+// no time limit, and a browser that goes away aborts the upstream request.
+//
 // Server-sent events (a `text/event-stream` answer, e.g. a meeting's live stream) pass through as
 // a stream: each chunk is written to the browser as andai-core sends it, marked
 // `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no` so neither the portal's own
@@ -24,6 +29,7 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_CORE_URL = "http://andai-core:8000";
 const UPSTREAM_TIMEOUT_MS = 30_000;
+const EXPORT_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 const REQUEST_HEADERS = [
   "accept",
   "cache-control",
@@ -70,7 +76,8 @@ async function forward(request: Request, context: Context): Promise<Response> {
   const abort = new AbortController();
   const onClientGone = () => abort.abort();
   request.signal.addEventListener("abort", onClientGone, { once: true });
-  const timer = setTimeout(() => abort.abort(), UPSTREAM_TIMEOUT_MS);
+  const exportDownload = isExportDownload(path);
+  const timer = setTimeout(() => abort.abort(), exportDownload ? EXPORT_DOWNLOAD_TIMEOUT_MS : UPSTREAM_TIMEOUT_MS);
 
   let upstream: Response;
   try {
@@ -102,6 +109,11 @@ async function forward(request: Request, context: Context): Promise<Response> {
     request.signal.removeEventListener("abort", onClientGone);
     return new Response(null, { status: upstream.status, headers: responseHeaders });
   }
+  if (exportDownload) {
+    // The zip is ready once andai-core answered: no time limit on the transfer itself.
+    clearTimeout(timer);
+    return new Response(passThrough(upstream.body, abort, true), { status: upstream.status, headers: responseHeaders });
+  }
   if (!isEventStream(upstream)) {
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   }
@@ -118,12 +130,21 @@ async function forward(request: Request, context: Context): Promise<Response> {
   });
 }
 
+/** `/api/v1/exports/{id}/download`: a data export's zip. */
+function isExportDownload(path: string[]): boolean {
+  return path.length === 4 && path[0] === "v1" && path[1] === "exports" && path[3] === "download";
+}
+
 function isEventStream(response: Response): boolean {
   return (response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/event-stream");
 }
 
 /** The upstream body chunk by chunk; cancelling it (the browser left) aborts the upstream request. */
-function passThrough(body: ReadableStream<Uint8Array>, abort: AbortController): ReadableStream<Uint8Array> {
+function passThrough(
+  body: ReadableStream<Uint8Array>,
+  abort: AbortController,
+  failOnError = false,
+): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -131,9 +152,11 @@ function passThrough(body: ReadableStream<Uint8Array>, abort: AbortController): 
         const { done, value } = await reader.read();
         if (done) controller.close();
         else controller.enqueue(value);
-      } catch {
-        // andai-core went away mid-stream: end the browser's stream; EventSource reports it.
-        controller.close();
+      } catch (err) {
+        // andai-core went away mid-stream: an event stream just ends (EventSource reports it); a
+        // download fails, so the browser never keeps a truncated file as complete.
+        if (failOnError) controller.error(err);
+        else controller.close();
       }
     },
     cancel() {
