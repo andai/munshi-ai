@@ -61,6 +61,19 @@ checks one version and one recap. Times come from andai's database (`pipelineRow
 (`useLlmRoute`; values never printed) and back on the fake route afterwards: use it only with the
 mock bot's synthetic lines and a route you are allowed to send them to.
 
+`erasure` erases a member's data from `/admin/members` in an organisation of its own: the member
+sends the mock bot to a Hinglish meeting (`mock=hindi-lines`, one recording chunk) and andai stores
+its transcript; an admin finds no actions on the owner's row or their own, opens "Erase data…" on the
+member's row, whose button stays disabled until the member's email is typed, and submits. The member
+leaves the list and is signed out at once, the "Data erasure" section shows the request pending and
+then "Erased" without a reload, andai's rows of the meeting, the objects under the organisation's
+recordings prefix and the platform's transcript rows end at 0, and the audit log lists the request
+and its completion. `platformTranscriptRows` counts the platform's transcript rows (psql in the
+postgres container) and `valkeyKeysFor` lists the Valkey keys naming the platform meeting with their
+types and TTLs and counts the shared `transcription_segments` entries that mention it (valkey-cli in
+the redis container; names, types and numbers only, never a value). `E2E_ERASURE_LOG=/abs/file`
+appends each run's time from request to done and those counts as one JSON line.
+
 Invite intake runs on the e2e stack too: the `e2e` profile also starts `fake-dns`
 (`andai_intake.testing.fake_dns`), a stub DNS server in andai-intake's network namespace, so the env
 file must set `ANDAI_INTAKE_DNS_RESOLVER=127.0.0.1:5353` (setup refuses otherwise) and the sender

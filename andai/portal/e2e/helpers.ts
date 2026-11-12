@@ -544,6 +544,50 @@ export function pipelineRow(meetingId: string): PipelineRow {
   return JSON.parse(output);
 }
 
+/** How many transcript rows the platform's meeting-api still holds for one of its meetings (its
+ * `transcriptions` table, read as the database superuser inside the postgres container). */
+export function platformTranscriptRows(platformMeetingId: number): number {
+  if (!Number.isSafeInteger(platformMeetingId)) throw new Error("not a platform meeting id");
+  return Number(psql("platform", `SELECT count(*) FROM transcriptions WHERE meeting_id = ${platformMeetingId}`));
+}
+
+/** One Valkey key of a platform meeting: its name pattern (the id replaced by `{id}`), type and TTL
+ * in seconds (-1: no expiry). */
+export type ValkeyKey = { pattern: string; type: string; ttl: number };
+
+/**
+ * The stack's Valkey keys that name a platform meeting (`*meeting:<id>*`: the live segment hash, the
+ * transcript and processed-notes streams), with type and TTL, and how many entries of the shared
+ * `transcription_segments` stream still mention it. Run with valkey-cli inside the redis container;
+ * only names, types, TTLs and counts leave it, never a value.
+ */
+export function valkeyKeysFor(platformMeetingId: number): { keys: ValkeyKey[]; streamEntries: number } {
+  if (!Number.isSafeInteger(platformMeetingId)) throw new Error("not a platform meeting id");
+  const id = String(platformMeetingId);
+  const script = [
+    `for k in $(valkey-cli --scan --pattern '*meeting:${id}*'); do`,
+    `  echo "key $k $(valkey-cli TYPE "$k") $(valkey-cli TTL "$k")";`,
+    "done;",
+    `echo "stream $(valkey-cli XRANGE transcription_segments - + | grep -c -E '\"meeting_id\":\"?${id}[\",}]' || true)"`,
+  ].join("\n");
+  const output = execFileSync("docker", ["exec", "-i", serviceContainer("redis"), "sh"], {
+    input: script,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  const keys: ValkeyKey[] = [];
+  let streamEntries = 0;
+  for (const line of output.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts[0] === "key" && parts.length === 4) {
+      keys.push({ pattern: parts[1].split(id).join("{id}"), type: parts[2], ttl: Number(parts[3]) });
+    } else if (parts[0] === "stream") {
+      streamEntries = Number(parts[1]) || 0;
+    }
+  }
+  return { keys, streamEntries };
+}
+
 /** The status the platform's meeting-api holds for one of its meetings (read from its database). */
 export function platformStatus(platformMeetingId: number): string | null {
   if (!Number.isSafeInteger(platformMeetingId)) throw new Error("not a platform meeting id");
