@@ -37,7 +37,9 @@ def reset_mail(settings: Settings, *, email: str, token: str) -> Mail:
         "Setting a new password signs you out everywhere. If you did not ask for this, ignore\n"
         "this message; your password stays as it is.\n"
     )
-    return Mail(to=email, subject="Reset your munshi.ai password", text=text)
+    return Mail(
+        to=email, subject="Reset your munshi.ai password", text=text, kind="password_reset"
+    )
 
 
 def request_reset(engine: Engine, *, email: str, settings: Settings, now: datetime) -> Mail | None:

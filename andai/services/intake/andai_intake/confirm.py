@@ -245,6 +245,7 @@ def build(notice: Notice, *, lead_s: int, horizon_days: int, notetaker: str | No
         subject=f"munshi.ai: {OUTCOMES.get(outcome, outcome)} — {title}",
         text="\n".join(lines) + "\n",
         headers=(("Auto-Submitted", "auto-replied"),),
+        kind="confirmation",
     )
 
 

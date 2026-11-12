@@ -567,6 +567,8 @@ PUBLIC_ROUTES: dict[tuple[str, str], PublicCase] = {
         "org_name": b.name,
     },
     ("GET", "/healthz"): lambda b: None,
+    # The metrics scrape (no session, counts by closed labels only).
+    ("GET", "/metrics"): lambda b: None,
     # Webhook-auth (HMAC, no session): unsigned here, so 401 or 503 and nothing written.
     ("POST", "/internal/platform-events"): lambda b: {
         "event_id": f"evt_{b.meeting_id.hex}",
