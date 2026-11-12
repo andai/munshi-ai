@@ -28,6 +28,11 @@
 # the Claude subscription token and the credentials mount are forced EMPTY here as literals, so
 # neither a deploy/compose/.env file (read by Munshi's `env_file`) nor the shell can hand them one.
 # The runtime spawns agent workers from AGENT_WORKER_IMAGE (the hardened andai worker).
+#
+# Metrics (OPS-05, andai/docs/metrics.md): andai-core, andai-worker and andai-intake each serve
+# GET /metrics on their port 8000. Prometheus scrapes them on the munshi network
+# (andai-core:8000/metrics, andai-worker:8000/metrics, andai-intake:8000/metrics); no port is
+# published for it beyond the 127.0.0.1 mappings below, and the portal never forwards /metrics.
 
 services:
   # ─── andai skeletons (health-only in Phase 1) ──────────────────────────────────────────────────

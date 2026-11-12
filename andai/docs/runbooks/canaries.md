@@ -77,7 +77,9 @@ recreates only andai-worker).
 ## 3. Reading `/metrics`
 
 `curl -s http://127.0.0.1:${ANDAI_WORKER_PORT:-18301}/metrics` (bound to 127.0.0.1 only). Every scrape
-reads the andai database. Labels are enums only: no link, name, email, org or id ever appears.
+reads the andai database. Labels are enums only: no link, name, email, org or id ever appears. The
+join and canary series are below; every other series (pipelines, intake, mail, ASR lag, database
+size) and the label rule are in the catalogue, `andai/docs/metrics.md`.
 
 | Series | Meaning |
 |---|---|

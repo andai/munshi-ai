@@ -639,8 +639,9 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
     assert (fn[4], fn[5]) == (False, True)
     # 0004 (open meetings), 0005 (join statistics), 0006 (the ingest claim), 0009 (the deletion
     # claim and backlog), 0010 (the MoM and recap claims and stats) and 0016 (the scheduled
-    # dispatch claim) together; never the link, the title, attendees, people, the minutes request
-    # or the error.
+    # dispatch claim) and 0018 (the pipeline stats: when the transcript was stored and the recap
+    # sent) together; never the link, the title, attendees, people, the minutes request or the
+    # error.
     assert readable == {
         "org_id", "status", "platform", "source", "failure_reason", "end_reason", "started_at",
         "created_at", "id", "platform_meeting_id", "transcript_state", "transcript_attempts",
@@ -648,7 +649,7 @@ def test_open_meeting_orgs_reveals_org_ids_only(superuser_engine: Engine) -> Non
         "deletion_next_at", "ended_at", "mom_state", "mom_attempts", "mom_next_at", "mom_at",
         "mom_lease", "mom_lease_until", "recap_state", "recap_attempts", "recap_next_at",
         "recap_lease", "scheduled_start", "skipped_at", "dispatch_attempts",
-        "dispatch_lease_until",
+        "dispatch_lease_until", "transcript_at", "recap_at",
     }
     assert consent_columns == 0
     assert can_create is False
@@ -1405,7 +1406,7 @@ def test_the_webhook_table_holds_no_org_data_and_the_app_may_only_read_and_add(
     [
         "SELECT mom_request FROM meetings",
         "SELECT mom_error FROM meetings",
-        "SELECT recap_at FROM meetings",
+        "SELECT attendees FROM meetings",
         "UPDATE meetings SET mom_attempts = 0",
         "UPDATE meetings SET mom_at = now()",
         "UPDATE meetings SET mom_request = NULL",

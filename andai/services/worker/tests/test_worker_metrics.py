@@ -1,6 +1,8 @@
 """andai-worker `/metrics`: join counts across orgs through `andai_join_stats`, D-39 success rates,
 canary streaks, the deletion backlog through `andai_deletion_backlog`, the minutes pipeline through
-`andai_mom_stats`, sealed secrets per KEK id, and labels that carry no personal or customer data.
+`andai_mom_stats`, sealed secrets per KEK id, pipeline backlogs, failures and stage durations through
+`andai_pipeline_stats` / `andai_pipeline_durations`, intake counts through `andai_intake_stats`, the
+database size, and labels that carry no personal or customer data.
 
 Each test that counts rows uses a brand-new database (`fresh_app_engine`), so the golden text is
 exact.
@@ -15,8 +17,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, insert, text
+from sqlalchemy import Engine, create_engine, insert, text
 
+from andai_core import metrics as core_metrics
 from andai_core.db.models import CanaryRun, Org
 from andai_core.db.session import transaction
 from andai_core.mail import MemoryMailer
@@ -159,9 +162,110 @@ munshi_sealed_values{key_id="WORLD_KEY_ID",table="platform_principals"} 1.0
 """
 
 
+# The families 0018 added, after the existing ones (which stay byte for byte as in GOLDEN). The
+# world has no scheduled, ingested or deleted meeting and no inbound mail, so every stage is empty.
+PIPELINE_GOLDEN = """\
+# HELP munshi_pipeline_pending Work still owed per pipeline stage (scheduled dispatch, transcript ingest, minutes, recap mail, deletion, intake).
+# TYPE munshi_pipeline_pending gauge
+munshi_pipeline_pending{stage="dispatch"} 0.0
+munshi_pipeline_pending{stage="ingest"} 0.0
+munshi_pipeline_pending{stage="minutes"} 0.0
+munshi_pipeline_pending{stage="recap"} 0.0
+munshi_pipeline_pending{stage="deletion"} 0.0
+munshi_pipeline_pending{stage="intake"} 0.0
+# HELP munshi_pipeline_oldest_pending_seconds Seconds since the oldest pending item of the stage became due (0 when none).
+# TYPE munshi_pipeline_oldest_pending_seconds gauge
+munshi_pipeline_oldest_pending_seconds{stage="dispatch"} 0.0
+munshi_pipeline_oldest_pending_seconds{stage="ingest"} 0.0
+munshi_pipeline_oldest_pending_seconds{stage="minutes"} 0.0
+munshi_pipeline_oldest_pending_seconds{stage="recap"} 0.0
+munshi_pipeline_oldest_pending_seconds{stage="deletion"} 0.0
+munshi_pipeline_oldest_pending_seconds{stage="intake"} 0.0
+# HELP munshi_pipeline_failed_24h Items of the stage that failed for good in the last 24 hours.
+# TYPE munshi_pipeline_failed_24h gauge
+munshi_pipeline_failed_24h{stage="dispatch"} 0.0
+munshi_pipeline_failed_24h{stage="ingest"} 0.0
+munshi_pipeline_failed_24h{stage="minutes"} 0.0
+munshi_pipeline_failed_24h{stage="recap"} 0.0
+munshi_pipeline_failed_24h{stage="deletion"} 0.0
+munshi_pipeline_failed_24h{stage="intake"} 0.0
+# HELP munshi_pipeline_stage_seconds Seconds each stage took, for the items it finished in the last 24 hours (dispatch: due to recording; ingest: end to transcript; minutes: transcript to first minutes; recap: first minutes to recap sent).
+# TYPE munshi_pipeline_stage_seconds histogram
+munshi_pipeline_stage_seconds_bucket{le="1.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="5.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="15.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="30.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="60.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="120.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="300.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="600.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="900.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1800.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="3600.0",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="+Inf",stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_count{stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_sum{stage="dispatch"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="5.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="15.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="30.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="60.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="120.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="300.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="600.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="900.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1800.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="3600.0",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="+Inf",stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_count{stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_sum{stage="ingest"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="5.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="15.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="30.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="60.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="120.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="300.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="600.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="900.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1800.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="3600.0",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="+Inf",stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_count{stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_sum{stage="minutes"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="5.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="15.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="30.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="60.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="120.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="300.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="600.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="900.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="1800.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="3600.0",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_bucket{le="+Inf",stage="recap"} 0.0
+munshi_pipeline_stage_seconds_count{stage="recap"} 0.0
+munshi_pipeline_stage_seconds_sum{stage="recap"} 0.0
+# HELP munshi_intake_messages_24h Messages the notetaker mailbox received in the last 24 hours by status, outcome and quarantine reason.
+# TYPE munshi_intake_messages_24h gauge
+# HELP munshi_db_size_bytes Size of the andai database on disk in bytes.
+# TYPE munshi_db_size_bytes gauge
+munshi_db_size_bytes DB_SIZE
+"""
+
+
 def _golden(world: dict) -> str:
     """The canary org's principal is the world's only sealed value, under the harness's KEK."""
-    return GOLDEN.replace("WORLD_KEY_ID", world["key_id"])
+    return GOLDEN.replace("WORLD_KEY_ID", world["key_id"]) + PIPELINE_GOLDEN
+
+
+def _masked(body: str) -> str:
+    """`body` with the database size (it changes with every write) replaced by DB_SIZE."""
+    size = _value(body, "munshi_db_size_bytes")
+    assert size > 0
+    return re.sub(r"^munshi_db_size_bytes \S+$", "munshi_db_size_bytes DB_SIZE", body,
+                  flags=re.MULTILINE)
 
 
 def _scrape(engine: Engine) -> str:
@@ -171,7 +275,10 @@ def _scrape(engine: Engine) -> str:
 def test_metrics_text_golden(fresh_app_engine: Engine) -> None:
     world = _world(fresh_app_engine)
 
-    assert _scrape(fresh_app_engine) == _golden(world)
+    scraped = _scrape(fresh_app_engine)
+
+    assert _masked(scraped) == _golden(world)
+    assert scraped.startswith(GOLDEN.replace("WORLD_KEY_ID", world["key_id"]))  # unchanged
 
 
 def test_metrics_carry_no_links_names_emails_or_ids(fresh_app_engine: Engine) -> None:
@@ -185,8 +292,9 @@ def test_metrics_carry_no_links_names_emails_or_ids(fresh_app_engine: Engine) ->
     assert "http" not in body and "@" not in body and "secret" not in body
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", body)
     labels = set(re.findall(r'(\w+)="', body))
-    # le: histogram bounds; table and key_id: sealed values per KEK
-    assert labels == {"platform", "source", "outcome", "reason", "le", "table", "key_id"}
+    # le: histogram bounds; table and key_id: sealed values per KEK; stage: the pipelines
+    assert labels == {"platform", "source", "outcome", "reason", "le", "table", "key_id", "stage"}
+    assert labels <= core_metrics.LABEL_ALLOWLIST
 
 
 def test_collector_sees_every_org_while_the_app_role_sees_no_meeting(
@@ -277,7 +385,13 @@ def test_metrics_endpoint(fresh_app_engine: Engine) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain; version=")
-    assert response.text == _golden(world)
+    database, process = response.text.split("# HELP munshi_mail_sent_total ", 1)
+    assert _masked(database) == _golden(world)
+    # then the process's own counters: mail delivery and ASR lag
+    for family in ("munshi_mail_sent_total", "munshi_asr_segment_lag_seconds",
+                   "munshi_asr_segment_lag_missing_total"):
+        assert f"# TYPE {family} " in "# HELP munshi_mail_sent_total " + process
+    assert '_created' not in process
 
 
 def test_metrics_without_a_database_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -405,3 +519,202 @@ def test_sealed_values_count_each_table_by_key_id_and_are_cached_for_300_s(
     assert first == expected and cached == expected
     # a key that wraps nothing in a table has no series there
     assert fresh == {k: v for k, v in expected.items() if k != ("user_totp", new_id)}
+
+
+# ── pipelines (0018) ──
+
+
+def _superuser(postgres, engine: Engine) -> Engine:
+    """A superuser engine on `engine`'s database (inbound mail is written by andai-intake's
+    functions; tests put rows of every state straight in)."""
+    return create_engine(postgres.url("postgres", postgres.superuser_password, engine.url.database))
+
+
+def _inbound(su: Engine, *, status: str, received_at: datetime, org_id=None, outcome=None,
+             reason=None, attempts: int = 1) -> None:
+    with su.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO inbound_mail (raw_sha256, mail_from, rcpt_to, status, outcome,"
+                " quarantine_reason, attempts, received_at, lease_until, org_id, sender,"
+                " subject_trim)"
+                " VALUES (:sha, :sender, ARRAY['notetaker@munshi.test'], :status, :outcome,"
+                " :reason, :attempts, :at, :lease, :org, :sender, :subject)"
+            ),
+            {
+                "sha": uuid.uuid4().hex * 2, "sender": f"{uuid.uuid4().hex[:8]}@sender.test",
+                "status": status, "outcome": outcome, "reason": reason, "attempts": attempts,
+                "at": received_at, "org": org_id, "subject": "Synthetic standup invite",
+                "lease": received_at + timedelta(minutes=5) if status == "processing" else None,
+            },
+        )
+
+
+def _pipeline_world(engine: Engine, su: Engine, now: datetime) -> None:
+    """Three orgs with work in every stage, and inbound mail with and without an org."""
+    a, b, c = new_member(engine), new_member(engine), new_member(engine)
+
+    def m(member, status="done", failure_reason=None, **values):
+        meeting_id = seed_meeting(
+            engine, member.org_id, member.user_id, status=status, failure_reason=failure_reason,
+            started=status in ("recording", "done"),
+        )
+        if values:
+            _set(engine, member.org_id, meeting_id, **values)
+        return meeting_id
+
+    ago = lambda **kw: now - timedelta(**kw)  # noqa: E731
+    # dispatch: lead 120 s, so due 120 s before the start
+    m(a, "scheduled", scheduled_start=now + timedelta(seconds=60))         # due 60 s ago
+    m(b, "scheduled", scheduled_start=now + timedelta(seconds=30))         # due 90 s ago
+    m(b, "scheduled", scheduled_start=now + timedelta(minutes=10))         # not due yet
+    m(c, "scheduled", scheduled_start=ago(minutes=5), skipped_at=ago(hours=1))   # skipped
+    m(a, "failed", scheduled_start=ago(hours=2), ended_at=ago(hours=1),
+      failure_reason="internal_error")                                     # failed, no bot
+    m(c, "failed", scheduled_start=ago(hours=31), ended_at=ago(hours=30),
+      failure_reason="internal_error")                                     # failed, too long ago
+    m(b, "failed", scheduled_start=ago(hours=2), ended_at=ago(hours=1),
+      failure_reason="admission_timeout", platform_meeting_id=7,
+      transcript_state="stored", mom_state="skipped")                      # a bot was sent: a join
+    # dispatch durations: due → recording
+    m(c, "done", scheduled_start=ago(minutes=30), started_at=ago(minutes=30) + timedelta(seconds=40))
+    # ingest
+    m(a, platform_meeting_id=11, ended_at=ago(minutes=10))                 # owed, never claimed
+    m(b, platform_meeting_id=12, ended_at=ago(minutes=40), transcript_state="pending")
+    m(c, platform_meeting_id=13, ended_at=ago(hours=2), transcript_state="failed")
+    m(c, platform_meeting_id=14, ended_at=ago(minutes=50), transcript_state="stored",
+      transcript_at=ago(minutes=50) + timedelta(seconds=20),
+      mom_state="skipped")                                                 # ingest took 20 s
+    # minutes
+    m(a, platform_meeting_id=21, transcript_state="stored", transcript_at=ago(minutes=5))
+    m(b, platform_meeting_id=22, transcript_state="stored", transcript_at=ago(minutes=15),
+      mom_state="pending", mom_attempts=1)
+    m(c, platform_meeting_id=23, transcript_state="stored", ended_at=ago(hours=3),
+      mom_state="failed", mom_error="llm_unavailable")
+    m(a, platform_meeting_id=24, transcript_state="stored", ended_at=ago(hours=1),
+      transcript_at=ago(minutes=59), mom_state="stored", mom_at=ago(minutes=57),
+      recap_state="sent", recap_at=ago(minutes=56))                        # 120 s, then 60 s
+    # recap
+    m(a, platform_meeting_id=31, transcript_state="stored", transcript_at=ago(minutes=4),
+      mom_state="stored", mom_at=ago(minutes=2), recap_state="pending")
+    m(b, platform_meeting_id=32, transcript_state="stored", ended_at=ago(hours=1),
+      mom_state="stored", mom_at=ago(minutes=50), recap_state="failed")
+    # deletion
+    m(c, deleted_at=ago(minutes=7), deletion_state="pending")
+    m(a, deleted_at=ago(hours=3), deletion_state="failed")
+
+    # intake: two open (one org-less), one given up, one quarantined at once, one done
+    _inbound(su, status="received", received_at=ago(seconds=50))
+    _inbound(su, status="processing", received_at=ago(seconds=20), attempts=1)
+    _inbound(su, status="quarantined", outcome="quarantined", reason="parse_error",
+             attempts=5, received_at=ago(hours=1))
+    _inbound(su, status="quarantined", outcome="quarantined", reason="unknown_user",
+             received_at=ago(hours=2))
+    _inbound(su, status="done", outcome="scheduled", org_id=a.org_id, received_at=ago(hours=3))
+    _inbound(su, status="done", outcome="scheduled", org_id=b.org_id, received_at=ago(hours=30))
+
+
+def test_pipeline_stats_count_every_org_and_age_from_the_oldest(
+    fresh_app_engine: Engine, postgres
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    su = _superuser(postgres, fresh_app_engine)
+    try:
+        _pipeline_world(fresh_app_engine, su, now)
+    finally:
+        su.dispose()
+
+    stats = {s.stage: s for s in metrics.pipeline_stats(fresh_app_engine, now, 120)}
+
+    assert list(stats) == list(metrics.PIPELINE_STAGES)
+    got = {stage: (s.pending, round(s.oldest_s), s.failed_24h) for stage, s in stats.items()}
+    assert got == {
+        "dispatch": (2, 90, 1),
+        "ingest": (2, 2400, 1),
+        "minutes": (2, 900, 1),
+        "recap": (1, 120, 1),
+        "deletion": (1, 420, 1),
+        "intake": (2, 50, 1),
+    }
+    with transaction(fresh_app_engine) as tx:  # andai_app, no app.org_id
+        assert tx.execute(text("SELECT count(*) FROM meetings")).scalar_one() == 0
+
+
+def test_pipeline_durations_and_intake_counts(fresh_app_engine: Engine, postgres) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    su = _superuser(postgres, fresh_app_engine)
+    try:
+        _pipeline_world(fresh_app_engine, su, now)
+    finally:
+        su.dispose()
+
+    durations = metrics.pipeline_durations(fresh_app_engine, now - metrics.WINDOW, 120)
+    intake = metrics.intake_stats(fresh_app_engine, now - metrics.WINDOW)
+
+    assert {stage: sorted(round(v) for v in values) for stage, values in durations.items()} == {
+        "dispatch": [160],  # due 120 s before the start, recording 40 s after it
+        "ingest": [20, 60],
+        "minutes": [120, 120],
+        "recap": [60],
+    }
+    assert {(c.status, c.outcome, c.reason): c.count for c in intake} == {
+        ("received", "", ""): 1,
+        ("processing", "", ""): 1,
+        ("quarantined", "quarantined", "parse_error"): 1,
+        ("quarantined", "quarantined", "unknown_user"): 1,
+        ("done", "scheduled", ""): 1,  # the one received 30 h ago is out of the window
+    }
+
+
+def test_pipeline_metrics_text(fresh_app_engine: Engine, postgres) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    su = _superuser(postgres, fresh_app_engine)
+    try:
+        _pipeline_world(fresh_app_engine, su, now)
+    finally:
+        su.dispose()
+
+    body = metrics.render(metrics.registry_for(fresh_app_engine, lambda: now, 120)).decode()
+
+    assert _value(body, 'munshi_pipeline_pending{stage="dispatch"}') == 2
+    assert _value(body, 'munshi_pipeline_oldest_pending_seconds{stage="ingest"}') == 2400
+    assert _value(body, 'munshi_pipeline_failed_24h{stage="intake"}') == 1
+    assert _value(body, 'munshi_pipeline_stage_seconds_bucket{le="30.0",stage="ingest"}') == 1
+    assert _value(body, 'munshi_pipeline_stage_seconds_bucket{le="60.0",stage="ingest"}') == 2
+    assert _value(body, 'munshi_pipeline_stage_seconds_count{stage="minutes"}') == 2
+    assert _value(body, 'munshi_pipeline_stage_seconds_sum{stage="dispatch"}') == 160
+    assert _value(
+        body,
+        'munshi_intake_messages_24h{outcome="quarantined",reason="parse_error",'
+        'status="quarantined"}',
+    ) == 1
+    assert _value(body, 'munshi_intake_messages_24h{outcome="",reason="",status="received"}') == 1
+    assert _value(body, "munshi_db_size_bytes") > 1_000_000
+    assert "@" not in body and "Synthetic" not in body and "sender.test" not in body
+
+
+def test_pipeline_functions_return_aggregates_only(superuser_engine: Engine) -> None:
+    with superuser_engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT p.proname, pg_get_function_result(p.oid) FROM pg_proc p"
+                " WHERE p.proname IN ('andai_pipeline_stats', 'andai_pipeline_durations',"
+                " 'andai_intake_stats')"
+            )
+        ).all()
+    assert dict(rows) == {
+        "andai_pipeline_stats": (
+            "TABLE(stage text, pending bigint, oldest_s double precision, failed_24h bigint)"
+        ),
+        "andai_pipeline_durations": "TABLE(stage text, seconds double precision)",
+        "andai_intake_stats": "TABLE(status text, outcome text, reason text, n bigint)",
+    }
+
+
+def test_intake_failure_threshold_matches_the_processor() -> None:
+    import importlib
+
+    from andai_intake import processor
+
+    migration = importlib.import_module("migrations.versions.0018_pipeline_stats")
+    assert migration.INTAKE_MAX_ATTEMPTS == processor.MAX_ATTEMPTS

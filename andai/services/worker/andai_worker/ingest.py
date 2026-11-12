@@ -9,7 +9,8 @@ Every `TICK_S` seconds the runner does two things:
   (row-level security), with the org's own platform key.
 
 Retries, backoff and the final state are `ingest`'s. A failed meeting is logged and the loop goes
-on.
+on. Each copied segment's ASR lag is observed in this process's
+`munshi_asr_segment_lag_seconds` (`andai_core.metrics`), served at the worker's `/metrics`.
 """
 
 from __future__ import annotations
