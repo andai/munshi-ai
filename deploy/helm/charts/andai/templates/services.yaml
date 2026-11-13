@@ -1,0 +1,92 @@
+{{- /*
+Services of the andai workloads, named like the Compose services so Prometheus' jobs
+(andai-core:8000, andai-worker:8000, andai-intake:8000) and the portal's ANDAI_CORE_URL work
+unchanged. All ClusterIP: only the portal is exposed (ingress-portal.yaml) and SMTP reaches the
+intake through its own Service of the operator's chosen type. The HTTP ports (health, /metrics)
+are never on an external Service.
+*/ -}}
+{{- $sel := include "andai.selectorLabels" . -}}
+{{- range $name := list "andai-core" "andai-worker" "andai-intake" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "andai.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+  selector:
+    {{- $sel | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: andai-portal
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-portal
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  selector:
+    {{- $sel | nindent 4 }}
+    app.kubernetes.io/component: andai-portal
+---
+# The portal's Pod addresses, for andai-core's ANDAI_TRUSTED_PROXIES (DNS gives each Pod's IP).
+apiVersion: v1
+kind: Service
+metadata:
+  name: andai-portal-pods
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-portal
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  selector:
+    {{- $sel | nindent 4 }}
+    app.kubernetes.io/component: andai-portal
+---
+{{- $smtp := .Values.andai.intake.smtpService }}
+# The notetaker mailbox's SMTP port. Type is the operator's (ClusterIP behind an MX relay, NodePort
+# or LoadBalancer); nothing else listens on it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: andai-intake-smtp
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-intake
+  {{- with $smtp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $smtp.type }}
+  {{- if and (eq $smtp.type "LoadBalancer") $smtp.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml $smtp.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  ports:
+    - name: smtp
+      port: {{ $smtp.port }}
+      targetPort: smtp
+      {{- if and (eq $smtp.type "NodePort") $smtp.nodePort }}
+      nodePort: {{ $smtp.nodePort }}
+      {{- end }}
+  selector:
+    {{- $sel | nindent 4 }}
+    app.kubernetes.io/component: andai-intake

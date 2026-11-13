@@ -1,0 +1,560 @@
+# munshi.ai on Kubernetes — values for the `andai` umbrella chart.
+#
+# One release runs the whole product: the munshi platform (subchart `munshi`, this repository's
+# deploy/helm/charts/munshi), the andai services (andai-core, andai-worker, andai-intake, the
+# portal), object storage (SeaweedFS with SSE-S3, or your own S3 bucket), optional GPU pools for
+# speech-to-text and the language model, and opt-in monitoring (Prometheus, Alertmanager, Perses).
+# Install guide: andai/docs/kubernetes.md. One release per namespace: the andai workloads have
+# fixed names (deploy/andai-core, ...).
+#
+# Secrets never live in these values. The operator creates them in the release namespace and the
+# chart references them by name: the KEK, the andai database passwords, the munshi platform
+# secrets, the S3 keys, the SeaweedFS S3 identities and SSE key, SMTP, and the alert webhook URLs.
+# A subchart's values cannot be computed by this chart, so where a subchart value must agree with
+# an andai value (the S3 endpoint, the transcription URL, Secret names mounted into Alertmanager)
+# both are set here and templates/validate.yaml refuses a render where they disagree.
+
+global:
+  # Tag of every ghcr.io/andai/munshi-* image, the munshi platform's included. Keep it equal to the
+  # chart's appVersion and the repository's VERSION (images are published at the release version).
+  imageTag: "0.1.0"
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  clusterDomain: cluster.local
+  podAnnotations: {}
+  # Placement of every platform and andai workload (not the bot Pods: munshi.runtime below, and not
+  # the GPU pools: gpuPools below).
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─── andai services ────────────────────────────────────────────────────────────────────────────────
+andai:
+  imageRegistry: ghcr.io/andai
+  # ANDAI_ENV: anything but `dev` is production (a missing KEK refuses to start, Secure cookies).
+  andaiEnv: production
+
+  # REQUIRED. The key-encryption key: a Secret with the keys `active` (base64 of 32 bytes) and
+  # `retired` (the previous keys during a rotation, one per line; empty otherwise). Mounted
+  # read-only at /run/secrets/andai-kek/ (ANDAI_KEK_FILE, ANDAI_KEK_RETIRED_FILE); never an env value.
+  #   kubectl -n munshi create secret generic andai-kek \
+  #     --from-literal=active="$(openssl rand -base64 32)" --from-literal=retired=
+  kek:
+    existingSecret: ""
+
+  # The andai database (`andai`, roles andai_owner / andai_app / andai_scan). Default: on the munshi
+  # Postgres. existingSecret holds both role passwords (URL-safe, e.g. `openssl rand -hex 24`).
+  database:
+    host: ""                  # default: the munshi Postgres Service (or munshi.database.host)
+    port: ""                  # default: munshi.database.port
+    name: andai
+    sslMode: ""               # default: munshi.database.sslMode
+    existingSecret: andai-db
+    ownerPasswordKey: owner-password
+    appPasswordKey: app-password
+    # The Postgres superuser db-init connects as (keys POSTGRES_USER, POSTGRES_PASSWORD,
+    # POSTGRES_DB). Default: munshi.postgres.credentialsSecretName.
+    adminSecret: ""
+
+  # Valkey for sessions and rate limits. Default: database 1 of the munshi Valkey.
+  redisUrl: ""
+
+  # Outgoing mail (invites, password resets, recaps, confirmations, alert mail).
+  smtp:
+    host: ""
+    port: 587
+    user: ""
+    from: "munshi.ai <no-reply@munshi.invalid>"
+    starttls: true
+    existingSecret: ""        # a Secret holding the SMTP password (empty: no SMTP auth)
+    passwordKey: password
+
+  # The language model minutes are written with: one OpenAI-compatible route the operator runs (the
+  # LLM GPU pool below, or another in-house endpoint). Base URL without /v1; empty turns minutes off.
+  llm:
+    baseUrl: ""
+    model: ""
+    existingSecret: ""        # a Secret holding the route's API key (empty: none)
+    apiKeyKey: api-key
+
+  # Standing test meetings for canary joins (andai/docs/runbooks/canaries.md): a Secret with the
+  # optional keys meet-url, teams-url, zoom-url. Empty: canaries off.
+  canary:
+    existingSecret: ""
+    intervalSeconds: 14400
+
+  # The operator address alert mail goes to (andai-worker's own mail; also Alertmanager's email
+  # receiver when monitoring.alerting.email is on). Empty: no alert mail.
+  alertEmail: ""
+
+  # Non-secret settings, as in the Compose overlay (andai/deploy/compose/docker-compose.andai.yml).
+  orgMaxConcurrentBots: 3
+  botName: ""
+  defaultLanguage: en
+  defaultTimezone: Asia/Kolkata
+  disclosureText: ""
+  privacyNoticeUrl: ""
+  # Extra non-secret environment for andai-core, andai-worker and andai-intake (KEY: value). Keys
+  # that carry secrets are refused (validate.yaml); put those in Secrets.
+  env: {}
+
+  core:
+    replicaCount: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 1000m, memory: 1Gi }
+
+  worker:
+    replicaCount: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 1000m, memory: 1Gi }
+
+  intake:
+    replicaCount: 1
+    # The notetaker addresses the SMTP receiver accepts mail for (comma-separated).
+    addresses: ""
+    dnsResolver: ""           # the resolver sender checks use (empty: the Pod's own)
+    arcSealers: ""
+    # SMTP reaches the receiver through its own Service; pick the type your MX path needs. The HTTP
+    # port (health, /metrics) stays on the ClusterIP Service andai-intake.
+    smtpService:
+      type: ClusterIP         # ClusterIP | NodePort | LoadBalancer
+      port: 25
+      nodePort: ""
+      annotations: {}
+      loadBalancerSourceRanges: []
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+
+  portal:
+    replicaCount: 1
+    # REQUIRED. The portal's external origin (https://munshi.example.com): andai-core accepts
+    # state-changing browser requests from it only, and mails link to it.
+    origin: ""
+    # Proxies whose X-Forwarded-For the portal believes (the ingress controller's addresses).
+    trustedProxies: ""
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: ""
+      tls: []
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+
+  migrations:
+    backoffLimit: 6
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+
+  # Key rotation (andai/docs/runbooks/key-rotation.md): with run=true every install/upgrade runs
+  # `python -m andai_core kek-rewrap` as a Job after the services roll. Leave false otherwise.
+  kekRewrap:
+    run: false
+    batch: ""
+
+# ─── munshi platform (subchart; deploy/helm/charts/munshi/values.yaml documents every key) ─────────
+munshi:
+  munshiEnv: production
+  # The platform secrets (ADMIN_API_TOKEN, INTERNAL_API_SECRET, TRANSCRIPTION_SERVICE_TOKEN,
+  # MUNSHI_SYSTEM_WEBHOOK_SECRET, MUNSHI_DISPATCH_SIGNING_KEY, NEXTAUTH_SECRET, ...): a Secret the
+  # operator creates. andai-core reads ADMIN_API_TOKEN and MUNSHI_SYSTEM_WEBHOOK_SECRET from it.
+  secrets:
+    existingSecretName: munshi-secrets
+  # The Postgres superuser password the munshi chart writes into its postgres-credentials Secret.
+  # REQUIRED with the bundled Postgres (validate.yaml refuses the munshi default `postgres`).
+  database:
+    password: ""
+  # Recordings: SeaweedFS below (this endpoint must be its S3 Service, andai.s3Endpoint) or your own
+  # bucket with seaweedfs.enabled=false. existingSecret holds AWS_ACCESS_KEY_ID /
+  # AWS_SECRET_ACCESS_KEY: an identity in the SeaweedFS S3 config Secret, or your bucket's keys.
+  storage:
+    s3:
+      endpoint: "http://seaweedfs-s3:8333"
+      bucket: munshi-recordings
+      region: us-east-1
+      forcePathStyle: true
+      existingSecret: andai-s3
+  meetingApi:
+    # meeting.completed and bot.failed reach andai-core (signed with MUNSHI_SYSTEM_WEBHOOK_SECRET).
+    systemWebhookUrl: "http://andai-core:8000/internal/platform-events"
+    systemWebhookAllowPrivateHttp: "true"
+    # Speech-to-text the bots use: with gpuPools.asr.enabled it must be http://andai-asr:8000
+    # (andai.asrUrl); otherwise another in-house endpoint (base URL; the client appends
+    # /v1/audio/transcriptions).
+    transcriptionServiceUrl: ""
+  runtime:
+    backend: k8s
+    replicaCount: 1
+    # Cluster-wide cap on meeting bots starting or running at once (429 capacity_exhausted above it,
+    # never a Pending bot Pod). Size it to the bot nodes:
+    #   floor(sum of the bot nodes' allocatable memory MiB / meetingBot.memoryMb) - headroom
+    # e.g. two 32 GiB bot nodes with ~30 GiB allocatable each: floor(61440 / 2560) = 24, cap 22.
+    # Empty or 0 = no cap.
+    maxActiveBots: ""
+    # Every spawned Pod gets a memory-backed /dev/shm of this size; it counts against the Pod's
+    # memory limit, so the bot's 2560 MiB covers heap and shm. Do not lower memoryMb while it is on.
+    k8sShmSize: 2Gi
+    workloadResources:
+      meetingBot:
+        cpu: 1
+        memoryMb: 2560
+      agentWorker:
+        cpu: 0.5
+        memoryMb: 1024
+    # The bot pool. Bot Pods (and agent worker Pods: the runtime stamps the same settings on every
+    # Pod it spawns) go to nodes labelled munshi.ai/pool=bots and tolerate that taint. Empty here so
+    # a one-node cluster schedules bots anywhere; values-staging.yaml sets them. They reach
+    # RUNTIME_K8S_NODE_SELECTOR / RUNTIME_K8S_TOLERATIONS; the runtime Deployment itself keeps
+    # global.nodeSelector / global.tolerations. On a multi-node cluster label AND taint bot nodes:
+    #   kubectl label node <n> munshi.ai/pool=bots
+    #   kubectl taint node <n> munshi.ai/pool=bots:NoSchedule
+    #   nodeSelector: { munshi.ai/pool: bots }
+    #   tolerations: [ { key: munshi.ai/pool, operator: Equal, value: bots, effect: NoSchedule } ]
+    nodeSelector: {}
+    tolerations: []
+  # The Compose stack does not run the munshi terminal for users; the portal is the front door.
+  ingress:
+    enabled: false
+
+# ─── Object storage: SeaweedFS (Apache-2.0) with SSE-S3 ───────────────────────────────────────────
+# seaweedfs.enabled=false for your own S3 bucket (set munshi.storage.s3 to it; its own encryption
+# applies). With SeaweedFS:
+#   * telemetry off on every master (-telemetry=false; SeaweedFS reports usage by default);
+#   * S3 on the filer with auth: the identities come from the Secret andai-seaweedfs-s3 (key
+#     seaweedfs_s3_config, JSON), one of them with the keys in munshi.storage.s3.existingSecret;
+#   * SSE-S3: the KEK (64 hex characters) from the Secret andai-seaweedfs-sse (key kek) as
+#     WEED_S3_SSE_KEK; the bucket's default encryption (AES256) is set by the andai bucket Job;
+#   * data on PersistentVolumeClaims (put them on an encrypted StorageClass; see kubernetes.md).
+seaweedfs:
+  enabled: true
+  fullnameOverride: seaweedfs
+  image:
+    repository: chrislusf/seaweedfs
+    tag: "4.53"
+  global:
+    seaweedfs:
+      # No SeaweedFS component calls the Kubernetes API; the chart's pod-RW ClusterRole is unused.
+      createClusterRole: false
+      automountServiceAccountToken: false
+      # Off: it would add a Grafana dashboard ConfigMap (no Grafana ships with munshi.ai).
+      monitoring:
+        enabled: false
+  master:
+    replicas: 1
+    extraArgs: ["-telemetry=false"]
+    data:
+      type: persistentVolumeClaim
+      size: 1Gi
+      storageClass: ""
+    logs:
+      type: emptyDir
+  volume:
+    replicas: 1
+    dataDirs:
+      - name: data1
+        type: persistentVolumeClaim
+        size: 50Gi
+        storageClass: ""
+        maxVolumes: 0
+    logs:
+      type: emptyDir
+    resizeHook:
+      enabled: false
+  filer:
+    replicas: 1
+    data:
+      type: persistentVolumeClaim
+      size: 5Gi
+      storageClass: ""
+    logs:
+      type: emptyDir
+    s3:
+      enabled: true
+      port: 8333
+      enableAuth: true
+      existingConfigSecret: andai-seaweedfs-s3
+    secretExtraEnvironmentVars:
+      WEED_S3_SSE_KEK:
+        secretKeyRef:
+          name: andai-seaweedfs-sse
+          key: kek
+
+# The bucket Job (post-install/post-upgrade): creates munshi.storage.s3.bucket on SeaweedFS if it is
+# missing and sets its default encryption to SSE-S3 (AES256), from the munshi meeting-api image
+# (boto3), then reads the setting back.
+objectStorage:
+  bucketJob:
+    backoffLimit: 10
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+
+# ─── GPU pools ─────────────────────────────────────────────────────────────────────────────────────
+# Separate node pools for speech-to-text and the language model. Each Pod selects its pool by the
+# node label munshi.ai/gpu-pool, tolerates the nvidia.com/gpu taint and requests whole GPUs
+# (nvidia.com/gpu, a limit; the NVIDIA device plugin or GPU Operator must run on those nodes).
+gpuPools:
+  asr:
+    enabled: false
+    # Default: the munshi transcription unit (ghcr.io/andai/munshi-transcription:<global.imageTag>).
+    image: ""
+    replicas: 1
+    gpus: 1
+    port: 8000
+    nodeSelector:
+      munshi.ai/gpu-pool: asr
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    env:
+      MODEL_SIZE: large-v3-turbo
+      COMPUTE_TYPE: int8
+      VAD_MIN_SILENCE_DURATION_MS: "80"
+    # Downloaded model weights (emptyDir; re-downloaded when a Pod moves).
+    modelCacheSizeLimit: 20Gi
+    resources:
+      requests: { cpu: 1000m, memory: 4Gi }
+      limits:   { memory: 12Gi }
+  llm:
+    enabled: false
+    # REQUIRED when enabled: any OpenAI-compatible server image (e.g. a vLLM build you approved).
+    image: ""
+    args: []
+    replicas: 1
+    gpus: 1
+    port: 8000
+    nodeSelector:
+      munshi.ai/gpu-pool: llm
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    env: {}
+    resources:
+      requests: { cpu: 2000m, memory: 16Gi }
+      limits:   { memory: 32Gi }
+
+# ─── Monitoring (opt-in) ───────────────────────────────────────────────────────────────────────────
+# Prometheus 3.13 LTS with Alertmanager, node-exporter and kube-state-metrics (subchart
+# prometheus-community/prometheus) and Perses (subchart perses), with the same rules, notification
+# templates and dashboards as the Compose `monitoring` profile (files/monitoring, copies of
+# andai/deploy/monitoring). No Grafana. Nothing is exposed outside the cluster (ClusterIP only;
+# reach the UIs with kubectl port-forward).
+monitoring:
+  enabled: false
+  # Every receiver is off by default. URLs are credentials: they stay in the Secret
+  # (existingSecret, keys slack_webhook_url / teams_webhook_url), mounted into Alertmanager and
+  # referenced as *_file; the chart never reads them. Teams goes through a Workflows webhook
+  # (msteamsv2) only.
+  alerting:
+    # Must equal prometheus.alertmanager.extraSecretMounts[name=alerting-secrets].secretName.
+    existingSecret: andai-alerting
+    email:
+      enabled: false
+      to: ""                  # default: andai.alertEmail; sent through andai.smtp
+    slack:
+      enabled: false
+    teams:
+      enabled: false
+
+# NVIDIA dcgm-exporter for the GPU dashboard: opt-in, off by default (its image is under NVIDIA's
+# own terms, not yet cleared). When enabled, name the image you have cleared; it runs as a
+# DaemonSet on the GPU pool nodes and Prometheus scrapes it.
+gpuMetrics:
+  enabled: false
+  image: ""
+  port: 9400
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+prometheus:
+  # The config is andai's (templates/monitoring-config.yaml): the Compose scrape jobs, rules and
+  # Alertmanager target, plus kube-state-metrics and (gpuMetrics) dcgm-exporter.
+  rbac:
+    create: false
+  configmapReload:
+    prometheus:
+      image:
+        repository: quay.io/prometheus-operator/prometheus-config-reloader
+        tag: v0.95.1
+      # Reload Prometheus when the rules change too, not only its config.
+      extraConfigmapMounts:
+        - name: rules
+          mountPath: /etc/prometheus/rules
+          configMap: andai-prometheus-rules
+          readOnly: true
+      extraVolumeDirs:
+        - /etc/prometheus/rules
+  server:
+    fullnameOverride: prometheus
+    configMapOverrideName: andai-prometheus
+    image:
+      repository: prom/prometheus
+      # The 3.13 LTS line (the chart's default app is 3.16, a non-LTS minor), pinned by digest.
+      tag: "v3.13.5@sha256:aafa9d694e6a883c02db516d9f6e5b84e14195f49a2a6456a4cca815edda72b9"
+    extraConfigmapMounts:
+      - name: andai-prometheus-rules
+        mountPath: /etc/prometheus/rules
+        configMap: andai-prometheus-rules
+        readOnly: true
+    retention: 15d
+    persistentVolume:
+      enabled: true
+      size: 8Gi
+    service:
+      type: ClusterIP
+      servicePort: 9090
+    ingress:
+      enabled: false
+  alertmanager:
+    enabled: true
+    fullnameOverride: alertmanager
+    image:
+      repository: prom/alertmanager
+      tag: "v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b"
+    # The config is the Secret andai-alertmanager-config (templates/monitoring-config.yaml).
+    config:
+      enabled: false
+    extraArgs:
+      config.file: /etc/alertmanager/munshi/alertmanager.yml
+      # Single instance: no cluster listener (as in Compose).
+      cluster.listen-address: ""
+    configmapReload:
+      enabled: true
+      extraArgs:
+        watched-dir: /etc/alertmanager/munshi
+      extraVolumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager/munshi
+          readOnly: true
+    extraSecretMounts:
+      - name: alertmanager-config
+        secretName: andai-alertmanager-config
+        mountPath: /etc/alertmanager/munshi
+        readOnly: true
+      - name: alerting-secrets
+        secretName: andai-alerting
+        mountPath: /etc/alertmanager/secrets
+        readOnly: true
+        optional: true
+      - name: smtp
+        secretName: andai-smtp
+        mountPath: /etc/alertmanager/smtp
+        readOnly: true
+        optional: true
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: false
+  kube-state-metrics:
+    enabled: true
+    fullnameOverride: kube-state-metrics
+    image:
+      registry: registry.k8s.io
+      repository: kube-state-metrics/kube-state-metrics
+      tag: v2.20.0
+    # Only what capacity needs: Pod phases (Pending bot Pods) and node capacity. Fewer series, and
+    # a ClusterRole that reads Pods and Nodes only.
+    collectors:
+      - pods
+      - nodes
+    metricAllowlist:
+      - kube_pod_status_phase
+      - kube_node_status_allocatable
+      - kube_node_status_capacity
+  prometheus-node-exporter:
+    enabled: true
+    fullnameOverride: node-exporter
+    image:
+      registry: docker.io
+      repository: prom/node-exporter
+      tag: v1.12.1
+      digest: "sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0"
+    # Headless: Prometheus finds every node's exporter by DNS (job node-exporter), as in Compose.
+    service:
+      clusterIP: None
+  prometheus-pushgateway:
+    enabled: false
+
+perses:
+  fullnameOverride: perses
+  image:
+    registry: docker.io
+    name: persesdev/perses
+    version: v0.55.1
+    digest: "sha256:292605f009770f07aa17217e70f877fabbc74858d0af9054d395064e1c411c06"
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  testFramework:
+    enabled: false
+  # As andai/deploy/monitoring/perses/config.yaml: no sign-in (ClusterIP only, port-forward for the
+  # operator), dashboards provisioned from the andai ConfigMap, one global datasource proxied to
+  # Prometheus and nothing else. Perses v0.55 has no telemetry.
+  config:
+    security:
+      readonly: false
+      enable_auth: false
+      cookie:
+        same_site: strict
+        secure: false
+    provisioning:
+      folders:
+        - /etc/perses/provisioning
+      interval: 1h
+    datasource:
+      global:
+        disable: false
+      project:
+        disable: true
+      disable_local: true
+      proxy:
+        allowed_hosts:
+          - prometheus
+        http:
+          allowed_schemes:
+            - http
+    frontend:
+      explorer:
+        enable: true
+      information: |-
+        # munshi.ai
+
+        Operator dashboards: bot joins, speech-to-text latency, GPU, pipeline, invite intake and email
+        delivery. Alerts and what to do about them: `andai/docs/runbooks/alerts.md`.
+      important_dashboards:
+        - title: munshi.ai
+          dashboards:
+            - project: munshi
+              dashboard: joins
+            - project: munshi
+              dashboard: pipeline
+  volumes:
+    - name: andai-perses-provisioning
+      configMap:
+        name: andai-perses-provisioning
+        items:
+          - { key: project.yaml, path: project.yaml }
+          - { key: datasource.yaml, path: datasource.yaml }
+          - { key: dashboard-joins.yaml, path: dashboards/joins.yaml }
+          - { key: dashboard-asr.yaml, path: dashboards/asr.yaml }
+          - { key: dashboard-gpu.yaml, path: dashboards/gpu.yaml }
+          - { key: dashboard-pipeline.yaml, path: dashboards/pipeline.yaml }
+          - { key: dashboard-intake.yaml, path: dashboards/intake.yaml }
+          - { key: dashboard-email.yaml, path: dashboards/email.yaml }
+  volumeMounts:
+    - name: andai-perses-provisioning
+      mountPath: /etc/perses/provisioning
+      readOnly: true

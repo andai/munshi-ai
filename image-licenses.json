@@ -47,25 +47,49 @@
       "name": "prom/prometheus",
       "license": "Apache-2.0",
       "disposition": "sidecar",
-      "note": "Metrics and alert-rule evaluation in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62). Pinned to the 3.13 LTS line by tag and digest (andai/images.json third_party). Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+      "note": "Metrics and alert-rule evaluation in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62). Pinned to the 3.13 LTS line by tag and digest (andai/images.json third_party). Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact. The andai Helm chart's opt-in monitoring runs the same tag and digest (subchart prometheus-community/prometheus 29.45.1)."
     },
     {
       "name": "prom/alertmanager",
       "license": "Apache-2.0",
       "disposition": "sidecar",
-      "note": "Alert routing (email, Slack, Teams Workflows receivers, all off by default) in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62). Pinned by tag and digest. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+      "note": "Alert routing (email, Slack, Teams Workflows receivers, all off by default) in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62). Pinned by tag and digest. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact. The andai Helm chart's opt-in monitoring runs the same tag and digest (subchart alertmanager in prometheus-community/prometheus 29.45.1)."
     },
     {
       "name": "prom/node-exporter",
       "license": "Apache-2.0",
       "disposition": "sidecar",
-      "note": "Filesystem metrics for the storage alert in the andai compose overlay's opt-in `monitoring` and `monitoring-test` profiles (OPS-05). Pinned by tag and digest. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+      "note": "Filesystem metrics for the storage alert in the andai compose overlay's opt-in `monitoring` and `monitoring-test` profiles (OPS-05). Pinned by tag and digest. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact. The andai Helm chart's opt-in monitoring runs the same tag and digest as a DaemonSet (subchart prometheus-node-exporter in prometheus-community/prometheus 29.45.1)."
     },
     {
       "name": "persesdev/perses",
       "license": "Apache-2.0",
       "disposition": "sidecar",
-      "note": "Operator dashboards as code in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62: an Apache-2.0 viewer instead of AGPL Grafana). Pinned by tag and digest; pre-1.0, so dashboards are linted against the pinned version. No telemetry setting exists in v0.55.1. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+      "note": "Operator dashboards as code in the andai compose overlay's opt-in `monitoring` profile (OPS-05, D-62: an Apache-2.0 viewer instead of AGPL Grafana). Pinned by tag and digest; pre-1.0, so dashboards are linted against the pinned version. No telemetry setting exists in v0.55.1. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact. The andai Helm chart's opt-in monitoring runs the same tag and digest (subchart perses/perses 0.24.0)."
+    },
+    {
+      "name": "chrislusf/seaweedfs",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Object storage for the andai Helm chart (deploy/helm/charts/andai, subchart seaweedfs 4.53.0): master, volume and filer with the S3 gateway, SSE-S3 keyed from an operator Secret. SeaweedFS reports usage to its vendor by default; the chart runs every master with -telemetry=false and refuses a render without it. Pinned by tag (4.53); the digest is pinned before the first pull. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "quay.io/prometheus-operator/prometheus-config-reloader",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Reloads Prometheus and Alertmanager when their mounted config or rules change, in the andai Helm chart's opt-in monitoring (subchart prometheus-community/prometheus 29.45.1). Pinned by tag (v0.95.1); the digest is pinned before the first pull. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "registry.k8s.io/kube-state-metrics/kube-state-metrics",
+      "license": "Apache-2.0",
+      "disposition": "sidecar",
+      "note": "Pod phase and node capacity series (Pending bot Pods) for the andai Helm chart's opt-in monitoring (subchart prometheus-community/prometheus 29.45.1, collectors pods and nodes only). Pinned by tag (v2.20.0); the digest is pinned before the first pull. Apache-2.0, Category A. User-pulled and not redistributed inside any ghcr.io/andai/* artifact."
+    },
+    {
+      "name": "nvcr.io/nvidia/k8s/dcgm-exporter",
+      "license": "Apache-2.0",
+      "disposition": "opt-in",
+      "note": "GPU metrics for the GPU dashboard in the andai Helm chart (gpuMetrics.enabled, off by default). The exporter's source is Apache-2.0, but the container image bundles NVIDIA DCGM under NVIDIA's own terms, which are not yet checked: the chart names no image and refuses to render dcgm-exporter until the operator sets gpuMetrics.image to one they have cleared. Not pulled, not shipped, not redistributed."
     }
   ],
   "bundled": [

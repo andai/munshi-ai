@@ -1,0 +1,35 @@
+apiVersion: v2
+name: andai
+description: munshi.ai on Kubernetes — the munshi platform, the andai services, object storage with encryption, GPU pools and opt-in monitoring in one release
+type: application
+# Chart version (SemVer). appVersion is the munshi.ai release (root VERSION) the andai images are tagged with.
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/andai/munshi-ai
+sources:
+  - https://github.com/andai/munshi-ai
+keywords:
+  - munshi
+  - meeting-assistant
+  - transcription
+maintainers:
+  - name: AND AI Platforms
+dependencies:
+  # The munshi platform chart from this repository, never copied (helm dependency build packages it).
+  - name: munshi
+    version: 0.12.3
+    repository: file://../munshi
+  # Object storage (SSE-S3, telemetry off). Off for a bring-your-own S3 bucket.
+  - name: seaweedfs
+    version: 4.53.0
+    repository: https://seaweedfs.github.io/seaweedfs/helm
+    condition: seaweedfs.enabled
+  # Monitoring (opt-in): Prometheus with Alertmanager, node-exporter and kube-state-metrics; Perses.
+  - name: prometheus
+    version: 29.45.1
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: monitoring.enabled
+  - name: perses
+    version: 0.24.0
+    repository: https://perses.github.io/helm-charts
+    condition: monitoring.enabled

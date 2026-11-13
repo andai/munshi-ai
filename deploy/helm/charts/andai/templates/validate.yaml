@@ -1,0 +1,119 @@
+{{- /*
+Render-time guards. This file renders no manifest: a failing guard stops helm install, upgrade and
+template with a message naming what to set. The KEK comes first, so a render with the chart's
+defaults stops on it.
+
+Values a subchart reads cannot be computed by this chart, so where a subchart value must agree with
+an andai value the agreement is checked here.
+*/ -}}
+{{- $a := .Values.andai -}}
+
+{{- /* 1. Secrets come from operator Secrets, never from values. */ -}}
+{{- if not $a.kek.existingSecret -}}
+{{- fail "andai.kek.existingSecret is required: the name of a Secret in the release namespace holding the key-encryption key, keys `active` (base64 of 32 bytes) and `retired` (empty unless a rotation is under way). Create it with: kubectl -n <namespace> create secret generic andai-kek --from-literal=active=\"$(openssl rand -base64 32)\" --from-literal=retired= ; then set andai.kek.existingSecret=andai-kek. See andai/docs/kubernetes.md." -}}
+{{- end -}}
+{{- if not $a.database.existingSecret -}}
+{{- fail "andai.database.existingSecret is required: a Secret with the andai_owner and andai_app passwords (keys andai.database.ownerPasswordKey and andai.database.appPasswordKey)" -}}
+{{- end -}}
+{{- if not $a.portal.origin -}}
+{{- fail "andai.portal.origin is required: the portal's external origin, e.g. https://munshi.example.com (andai-core accepts browser writes from it only and mails link to it)" -}}
+{{- end -}}
+{{- if not (regexMatch "^https?://[^/?#\\s]+$" $a.portal.origin) -}}
+{{- fail (printf "andai.portal.origin must be a scheme and host with no path, e.g. https://munshi.example.com (got %q)" $a.portal.origin) -}}
+{{- end -}}
+{{- $secretKeys := list "ANDAI_KEK" "ANDAI_KEK_FILE" "ANDAI_KEK_RETIRED_FILE" "ANDAI_DB_URL_APP" "ANDAI_DB_URL_OWNER" "ANDAI_DB_PASSWORD_APP" "ANDAI_DB_PASSWORD_OWNER" "SMTP_PASSWORD" "ANDAI_LLM_API_KEY" "PLATFORM_ADMIN_TOKEN" "ANDAI_PLATFORM_WEBHOOK_SECRET" "ANDAI_CANARY_MEET_URL" "ANDAI_CANARY_TEAMS_URL" "ANDAI_CANARY_ZOOM_URL" -}}
+{{- range $k, $v := $a.env -}}
+{{- if has $k $secretKeys -}}
+{{- fail (printf "andai.env.%s is refused: it carries a secret or is set by the chart from a Secret. Use the andai.* Secret settings instead (andai/docs/kubernetes.md)." $k) -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.munshi.postgres.enabled (or (not .Values.munshi.database.password) (eq (toString .Values.munshi.database.password) "postgres")) -}}
+{{- fail "munshi.database.password is required with the bundled Postgres (munshi.postgres.enabled=true): the munshi chart writes it into its postgres-credentials Secret as the superuser password, and its default `postgres` is refused. Pass it from a file or your secrets tooling (--set-file / -f), e.g. openssl rand -hex 24." -}}
+{{- end -}}
+
+{{- /* 2. Object storage: SeaweedFS with SSE-S3, or the operator's own bucket. */ -}}
+{{- $s3 := .Values.munshi.storage.s3 -}}
+{{- if .Values.seaweedfs.enabled -}}
+{{- $want := include "andai.s3Endpoint" . -}}
+{{- if ne (toString $s3.endpoint) $want -}}
+{{- fail (printf "munshi.storage.s3.endpoint must be %s while seaweedfs.enabled=true (the SeaweedFS S3 Service); got %q. For your own bucket set seaweedfs.enabled=false." $want (toString $s3.endpoint)) -}}
+{{- end -}}
+{{- $master := .Values.seaweedfs.master | default dict -}}
+{{- if not (has "-telemetry=false" ($master.extraArgs | default list)) -}}
+{{- fail "seaweedfs.master.extraArgs must contain -telemetry=false: SeaweedFS reports usage to its vendor by default, and munshi.ai makes no outbound calls" -}}
+{{- end -}}
+{{- $filer := .Values.seaweedfs.filer -}}
+{{- if not (and $filer.s3.enabled $filer.s3.enableAuth $filer.s3.existingConfigSecret) -}}
+{{- fail "seaweedfs.filer.s3 must be enabled with enableAuth=true and existingConfigSecret (the S3 identities, key seaweedfs_s3_config)" -}}
+{{- end -}}
+{{- $sse := ((($filer.secretExtraEnvironmentVars | default dict).WEED_S3_SSE_KEK | default dict).secretKeyRef | default dict) -}}
+{{- if not (and $sse.name $sse.key) -}}
+{{- fail "seaweedfs.filer.secretExtraEnvironmentVars.WEED_S3_SSE_KEK.secretKeyRef (name, key) is required: without the SSE-S3 key SeaweedFS stores recordings unencrypted" -}}
+{{- end -}}
+{{- else if eq (toString $s3.endpoint) (include "andai.s3Endpoint" .) -}}
+{{- fail "munshi.storage.s3.endpoint points at the chart's SeaweedFS, but seaweedfs.enabled=false: set munshi.storage.s3 (endpoint, bucket, existingSecret) to your own bucket" -}}
+{{- end -}}
+
+{{- /* 3. GPU pools: separate pools, and never the bot pool's nodes. */ -}}
+{{- $asr := .Values.gpuPools.asr -}}
+{{- $llm := .Values.gpuPools.llm -}}
+{{- if and $llm.enabled (not $llm.image) -}}
+{{- fail "gpuPools.llm.image is required when gpuPools.llm.enabled=true: name the OpenAI-compatible server image you approved (there is no default)" -}}
+{{- end -}}
+{{- range $pool := list $asr $llm -}}
+{{- if and $pool.enabled (not $pool.nodeSelector) -}}
+{{- fail "gpuPools.<pool>.nodeSelector must not be empty: each GPU pool selects its own nodes (munshi.ai/gpu-pool: asr | llm)" -}}
+{{- end -}}
+{{- if and $pool.enabled (lt (int $pool.gpus) 1) -}}
+{{- fail "gpuPools.<pool>.gpus must be at least 1" -}}
+{{- end -}}
+{{- end -}}
+{{- $disjoint := false -}}
+{{- range $k, $v := $asr.nodeSelector -}}
+{{- if and (hasKey $llm.nodeSelector $k) (ne (toString $v) (toString (get $llm.nodeSelector $k))) -}}{{- $disjoint = true -}}{{- end -}}
+{{- end -}}
+{{- if and $asr.enabled $llm.enabled (not $disjoint) -}}
+{{- fail "gpuPools.asr.nodeSelector and gpuPools.llm.nodeSelector must be disjoint: give them one label key with different values (munshi.ai/gpu-pool: asr / llm)" -}}
+{{- end -}}
+{{- if and $asr.enabled (ne (toString .Values.munshi.meetingApi.transcriptionServiceUrl) (include "andai.asrUrl" .)) -}}
+{{- fail (printf "munshi.meetingApi.transcriptionServiceUrl must be %s while gpuPools.asr.enabled=true, so bots transcribe on the ASR pool (got %q)" (include "andai.asrUrl" .) (toString .Values.munshi.meetingApi.transcriptionServiceUrl)) -}}
+{{- end -}}
+{{- $bots := .Values.munshi.runtime.nodeSelector | default dict -}}
+{{- range $k, $v := $bots -}}
+{{- range $pool := list $asr $llm -}}
+{{- if and (hasKey $pool.nodeSelector $k) (eq (toString $v) (toString (get $pool.nodeSelector $k))) -}}
+{{- fail (printf "munshi.runtime.nodeSelector (the bot pool) shares %s=%s with a GPU pool: bot Pods must not land on GPU nodes" $k (toString $v)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* 4. Monitoring: receivers only from Secrets mounted into Alertmanager. */ -}}
+{{- if .Values.monitoring.enabled -}}
+{{- $al := .Values.monitoring.alerting -}}
+{{- if or $al.slack.enabled $al.teams.enabled -}}
+{{- $m := include "andai.alertmanagerMount" (list . "alerting-secrets") | fromYaml -}}
+{{- if not $al.existingSecret -}}
+{{- fail "monitoring.alerting.existingSecret is required for Slack or Teams: the Secret holding slack_webhook_url / teams_webhook_url" -}}
+{{- end -}}
+{{- if ne (toString $m.secretName) (toString $al.existingSecret) -}}
+{{- fail (printf "prometheus.alertmanager.extraSecretMounts[name=alerting-secrets].secretName must equal monitoring.alerting.existingSecret (%q), so Alertmanager reads the webhook URL files from it" $al.existingSecret) -}}
+{{- end -}}
+{{- end -}}
+{{- if $al.email.enabled -}}
+{{- if not (include "andai.alertEmailTo" .) -}}
+{{- fail "monitoring.alerting.email.enabled needs monitoring.alerting.email.to or andai.alertEmail" -}}
+{{- end -}}
+{{- if not $a.smtp.host -}}
+{{- fail "monitoring.alerting.email.enabled needs andai.smtp.host (Alertmanager sends through the same relay)" -}}
+{{- end -}}
+{{- if $a.smtp.existingSecret -}}
+{{- $m := include "andai.alertmanagerMount" (list . "smtp") | fromYaml -}}
+{{- if ne (toString $m.secretName) (toString $a.smtp.existingSecret) -}}
+{{- fail (printf "prometheus.alertmanager.extraSecretMounts[name=smtp].secretName must equal andai.smtp.existingSecret (%q), so Alertmanager reads the SMTP password file from it" $a.smtp.existingSecret) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.gpuMetrics.enabled (not .Values.gpuMetrics.image) -}}
+{{- fail "gpuMetrics.image is required when gpuMetrics.enabled=true: the dcgm-exporter image is under NVIDIA's own terms and the chart ships no default; name the image you have cleared" -}}
+{{- end -}}

@@ -1,0 +1,113 @@
+{{- /*
+The andai database migrations, as a Helm hook Job on every install and upgrade:
+  1. copy db-init.sql out of the andai-core image (it has no psql);
+  2. db-init with psql from the munshi Postgres image, as the Postgres superuser (the admin Secret):
+     database `andai` and the roles andai_owner / andai_app / andai_scan, passwords from
+     andai.database.existingSecret (idempotent; re-asserts every role attribute);
+  3. `alembic upgrade head` as andai_owner from the andai-core image. The services never hold the
+     owner password.
+Hook phases: pre-upgrade always. On install the Job runs pre-install when the database and its
+admin Secret already exist outside the release, and post-install when the bundled munshi Postgres
+(and its chart-made credentials Secret) only appear with the release; the services start, and
+their readiness does not need the schema.
+*/ -}}
+{{- $a := .Values.andai -}}
+{{- $inChartDb := and .Values.munshi.postgres.enabled (not $a.database.host) -}}
+{{- $chartAdminSecret := and .Values.munshi.postgres.enabled (not $a.database.adminSecret) -}}
+{{- $install := ternary "post-install" "pre-install" (or $inChartDb $chartAdminSecret) -}}
+{{- $admin := include "andai.dbAdminSecret" . -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: andai-migrations
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-migrations
+  annotations:
+    "helm.sh/hook": {{ printf "%s,pre-upgrade" $install }}
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ $a.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-migrations
+    spec:
+      restartPolicy: Never
+      {{- include "andai.podSecurity" (list . 10001) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      initContainers:
+        - name: copy-db-init
+          image: {{ include "andai.image" (list . "andai-core") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          command: ["cp", "/app/migrations/db-init.sql", "/work/db-init.sql"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          resources:
+            {{- toYaml $a.migrations.resources | nindent 12 }}
+        - name: db-init
+          image: {{ .Values.munshi.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              tries=0
+              until pg_isready -q; do
+                tries=$((tries + 1))
+                [ "$tries" -lt 60 ] || { echo "db-init: Postgres not ready after 5 minutes" >&2; exit 1; }
+                sleep 5
+              done
+              psql -q -v ON_ERROR_STOP=1 -f /work/db-init.sql
+              echo "db-init: database andai and roles andai_owner, andai_app, andai_scan ready"
+          env:
+            - name: PGHOST
+              value: {{ include "andai.dbHost" . | quote }}
+            - name: PGPORT
+              value: {{ include "andai.dbPort" . | toString | quote }}
+            - name: PGSSLMODE
+              value: {{ include "andai.dbSslMode" . | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: { name: {{ $admin | quote }}, key: POSTGRES_USER }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $admin | quote }}, key: POSTGRES_PASSWORD }
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef: { name: {{ $admin | quote }}, key: POSTGRES_DB }
+            - name: ANDAI_DB_PASSWORD_OWNER
+              valueFrom:
+                secretKeyRef: { name: {{ $a.database.existingSecret | quote }}, key: {{ $a.database.ownerPasswordKey | quote }} }
+            - name: ANDAI_DB_PASSWORD_APP
+              valueFrom:
+                secretKeyRef: { name: {{ $a.database.existingSecret | quote }}, key: {{ $a.database.appPasswordKey | quote }} }
+          volumeMounts:
+            - name: work
+              mountPath: /work
+              readOnly: true
+          resources:
+            {{- toYaml $a.migrations.resources | nindent 12 }}
+      containers:
+        - name: alembic
+          image: {{ include "andai.image" (list . "andai-core") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          env:
+            - name: ANDAI_DB_PASSWORD_OWNER
+              valueFrom:
+                secretKeyRef: { name: {{ $a.database.existingSecret | quote }}, key: {{ $a.database.ownerPasswordKey | quote }} }
+            - name: ANDAI_DB_URL_OWNER
+              value: {{ include "andai.dbUrl" (list . "andai_owner" "ANDAI_DB_PASSWORD_OWNER") | quote }}
+          resources:
+            {{- toYaml $a.migrations.resources | nindent 12 }}
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: 1Mi

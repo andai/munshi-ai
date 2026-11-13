@@ -1,0 +1,35 @@
+{{- /* The only Ingress the chart renders: the portal. andai-core, the platform, SeaweedFS and
+monitoring are never exposed by an Ingress. */ -}}
+{{- $in := .Values.andai.portal.ingress -}}
+{{- if $in.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: andai-portal
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-portal
+  {{- with $in.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $in.className }}
+  ingressClassName: {{ $in.className | quote }}
+  {{- end }}
+  rules:
+    - host: {{ required "andai.portal.ingress.host is required when the ingress is enabled" $in.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: andai-portal
+                port:
+                  number: 3000
+  {{- with $in.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

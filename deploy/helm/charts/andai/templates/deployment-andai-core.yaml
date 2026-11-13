@@ -1,0 +1,55 @@
+{{- /* andai-core: the API behind the portal (auth, orgs, meetings, minutes, search, DPDP). */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andai-core
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-core
+spec:
+  replicas: {{ .Values.andai.core.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: andai-core
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-core
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-andai.yaml") . | sha256sum }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "andai.podSecurity" (list . 10001) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: andai-core
+          image: {{ include "andai.image" (list . "andai-core") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: andai-config
+          env:
+            {{- include "andai.coreEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "andai.kekVolumeMount" . | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.andai.core.resources | nindent 12 }}
+      volumes:
+        {{- include "andai.kekVolume" . | nindent 8 }}

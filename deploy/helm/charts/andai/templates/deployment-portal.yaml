@@ -1,0 +1,53 @@
+{{- /* The portal (Next.js): the only workload exposed outside the cluster (ingress-portal.yaml).
+It proxies /api/* to andai-core:8000. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andai-portal
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-portal
+spec:
+  replicas: {{ .Values.andai.portal.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: andai-portal
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-portal
+      {{- with .Values.global.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "andai.podSecurity" (list . 1000) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: andai-portal
+          image: {{ include "andai.image" (list . "andai-portal") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: ANDAI_VERSION
+              value: {{ include "andai.imageTag" . | quote }}
+            - name: ANDAI_CORE_URL
+              value: "http://andai-core:8000"
+            - name: ANDAI_PORTAL_TRUSTED_PROXIES
+              value: {{ .Values.andai.portal.trustedProxies | quote }}
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.andai.portal.resources | nindent 12 }}

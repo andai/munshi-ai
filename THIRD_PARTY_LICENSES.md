@@ -146,3 +146,16 @@ Foundation); the licence text and the file list are in the README there.
 `andai_intake/invite/links.py` decodes Proofpoint URL Defense v3 links with a port of
 https://github.com/cardi/proofpoint-url-decoder, which is dedicated to the public domain under
 CC0-1.0. Proofpoint's own decoder script is GPL-3.0 and is not used.
+
+## andai Helm chart: subchart dependencies
+
+`deploy/helm/charts/andai` depends on three third-party Helm charts, pinned in `Chart.yaml` and
+`Chart.lock` and vendored by `helm dependency build` into `charts/` (git-ignored; not committed and
+not part of any image). Each archive's SHA-256 matched its repository index when it was fetched. The
+container images they run are declared in `image-licenses.json` and `andai/images.json`.
+
+| Chart | Version | License | Repository | Archive SHA-256 |
+| --- | --- | --- | --- | --- |
+| `seaweedfs` | `4.53.0` | Apache-2.0 | https://seaweedfs.github.io/seaweedfs/helm | `778f079cfbdf026a1a523569d385816d00df51ac049b1383db0cfaf6a094656c` |
+| `prometheus` (prometheus-community; bundles `alertmanager` 2.3.1, `kube-state-metrics` 9.0.0, `prometheus-node-exporter` 5.0.0, `prometheus-pushgateway` 3.11.2, all Apache-2.0) | `29.45.1` | Apache-2.0 | https://prometheus-community.github.io/helm-charts | `33e4585307a61f464993ae9aac0d4430865e0fcba16a9e13ba199beb63eeb1fb` |
+| `perses` | `0.24.0` | Apache-2.0 | https://perses.github.io/helm-charts | `ba020ca552e5ef1b0d574bdd090a688cb541c938bf9c8b909002fcc87b8d0319` |
