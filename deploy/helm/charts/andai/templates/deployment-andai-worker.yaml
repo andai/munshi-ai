@@ -1,0 +1,78 @@
+{{- /* andai-worker: canaries, metrics, alert mail, scheduled dispatch, ingest, minutes, recaps,
+erasure and exports, running andai-core's code with andai-core's settings. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andai-worker
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-worker
+spec:
+  replicas: {{ .Values.andai.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: andai-worker
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-andai.yaml") . | sha256sum }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "andai.podSecurity" (list . 10001) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: andai-worker
+          image: {{ include "andai.image" (list . "andai-worker") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: andai-config
+          env:
+            {{- include "andai.coreEnv" . | nindent 12 }}
+            {{- if .Values.andai.canary.existingSecret }}
+            {{- range $platform := list "meet" "teams" "zoom" }}
+            - name: ANDAI_CANARY_{{ upper $platform }}_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.andai.canary.existingSecret }}
+                  key: {{ $platform }}-url
+                  optional: true
+            {{- end }}
+            {{- end }}
+            # With monitoring on, the worker's alert mail stands down while Alertmanager has a
+            # receiver (the state file below; andai_worker.alerts.AlertMailGate).
+            - name: ANDAI_MONITORING
+              value: {{ ternary "1" "0" (.Values.monitoring.enabled | default false) | quote }}
+            - name: ANDAI_ALERTING_STATE_FILE
+              value: /run/munshi-alerting/state.json
+          volumeMounts:
+            {{- include "andai.kekVolumeMount" . | nindent 12 }}
+            - name: alerting-state
+              mountPath: /run/munshi-alerting
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.andai.worker.resources | nindent 12 }}
+      volumes:
+        {{- include "andai.kekVolume" . | nindent 8 }}
+        - name: alerting-state
+          configMap:
+            name: andai-alerting-state

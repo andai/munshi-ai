@@ -5,7 +5,7 @@
  * Usage: node scripts/gates.mjs [readme|isolation|isolation-py|exports|graph|graph-py|schema|
  *                                contract-version|config-contract|python|stack|node|health|access|
  *                                tracing|replay|telemetry|eval|licenses|compose|execution-env|env-example|
- *                                lite-makefile|all]
+ *                                lite-makefile|image-licenses|helm|all]
  */
 import { readdirSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -479,15 +479,17 @@ function gateImageLicenses() {
   //     • every `FROM ref` in the Lite Dockerfile (including builder stages whose bytes feed final);
   //     • non-recipe `*_IMAGE` variable assignments in the Lite Makefile.
   //     Skip our own ghcr.io/andai/* / munshi/* images — those are built here, not third-party inputs.
-  const chartDir = join(ROOT, "deploy", "helm", "charts", "munshi");
-  const tplDir = join(chartDir, "templates");
-  const helmValueFiles = existsSync(chartDir)
-    ? readdirSync(chartDir).filter((f) => /^values.*\.yaml$/.test(f)).map((f) => join(chartDir, f))
-    : [];
+  //     Both charts: the munshi platform chart and the andai umbrella over it (whose values pin the
+  //     SeaweedFS, Prometheus, Alertmanager, exporter and Perses images its subcharts run).
+  const chartDirs = ["munshi", "andai"].map((c) => join(ROOT, "deploy", "helm", "charts", c)).filter(existsSync);
+  const helmValueFiles = chartDirs.flatMap((chartDir) =>
+    readdirSync(chartDir).filter((f) => /^values.*\.yaml$/.test(f)).map((f) => join(chartDir, f)));
+  const helmTemplateFiles = chartDirs.map((chartDir) => join(chartDir, "templates")).filter(existsSync)
+    .flatMap((tplDir) => readdirSync(tplDir).filter((f) => /\.ya?ml$/.test(f)).map((f) => join(tplDir, f)));
   const deployFiles = [
     join(ROOT, "deploy", "compose", "docker-compose.yml"),
     ...helmValueFiles,
-    ...(existsSync(tplDir) ? readdirSync(tplDir).filter((f) => /\.ya?ml$/.test(f)).map((f) => join(tplDir, f)) : []),
+    ...helmTemplateFiles,
   ].filter(existsSync);
   const foundImages = new Map();   // name → { ref, source } (first sighting)
   const recordImage = (rawRef, source) => {
@@ -511,27 +513,32 @@ function gateImageLicenses() {
 
   // Helm's established structured values shape:
   //   image:
+  //     registry: <registry>          (optional; docker.io is the default and is dropped)
   //     repository: <registry>/<image>
   //     tag: <tag>
-  // Use indentation to bind repository+tag to the same image block.
+  // Use indentation to bind registry+repository+tag to the same image block.
   for (const f of helmValueFiles) {
     const lines = readFileSync(f, "utf8").split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const image = lines[i].match(/^([ \t]*)image:[ \t]*(?:#.*)?$/);
       if (!image) continue;
       const baseIndent = image[1].length;
+      let registry;
       let repository;
       let tag;
       for (let j = i + 1; j < lines.length; j++) {
         if (!lines[j].trim() || lines[j].trimStart().startsWith("#")) continue;
         const indent = (lines[j].match(/^[ \t]*/) || [""])[0].length;
         if (indent <= baseIndent) break;
+        const registryMatch = lines[j].match(/^[ \t]*registry:[ \t]*["']?([^\s"']+)/);
         const repoMatch = lines[j].match(/^[ \t]*repository:[ \t]*["']?([^\s"']+)/);
         const tagMatch = lines[j].match(/^[ \t]*tag:[ \t]*["']?([^\s"']+)/);
+        if (registryMatch) registry = registryMatch[1];
         if (repoMatch) repository = repoMatch[1];
         if (tagMatch) tag = tagMatch[1];
       }
-      if (repository && tag) recordImage(`${repository}:${tag}`, rel(f));
+      const prefix = registry && registry !== "docker.io" ? `${registry}/` : "";
+      if (repository && tag) recordImage(`${prefix}${repository}:${tag}`, rel(f));
     }
   }
 
@@ -584,6 +591,22 @@ function gateImageLicenses() {
 
   if (bad.length) return fail(bad);
   console.log(`  ✓ gate:image-licenses — ${foundImages.size} pinned image(s) + ${(man.bundled || []).length} bundled component(s) declared & audited${flagged.length ? ` (${flagged.length} non-A by logged reason: ${flagged.join("; ")})` : ""}`);
+  return true;
+}
+
+// gate:helm — the static Helm proofs, no cluster: the munshi chart (`make -C deploy/helm test`:
+// structure, lint, render assertions) and the andai umbrella chart (`andai-test`: monitoring files in
+// sync with andai/deploy/monitoring, lint, render assertions and refusals). GREEN-OR-SKIP: without a
+// helm CLI it prints a skip line and stays green. `andai-test` vendors the pinned subcharts with
+// `helm dependency build` the first time (network); afterwards it only repackages the local chart.
+function gateHelm() {
+  const helmDir = join(ROOT, "deploy", "helm");
+  if (!existsSync(join(helmDir, "Makefile"))) { console.log("  ✓ gate:helm — no Helm charts yet (green-on-empty)"); return true; }
+  try { execSync("helm version --short", { stdio: "pipe" }); }
+  catch { console.log("  ✓ gate:helm — helm not available → skip (green-or-skip)"); return true; }
+  try { execFileSync("make", ["-s", "--no-print-directory", "-C", helmDir, "test", "andai-test"], { stdio: "pipe" }); }
+  catch (e) { return fail([`gate:helm (make -C deploy/helm test andai-test):\n${errText(e).slice(-3000)}`]); }
+  console.log("  ✓ gate:helm — munshi and andai charts lint and render as asserted (no cluster)");
   return true;
 }
 
@@ -1441,7 +1464,7 @@ function gateLiteMakefile() {
   return true;
 }
 
-const GATES = { readme: gateReadme, "lite-makefile": gateLiteMakefile, "docs-version": gateDocsVersion, dataflow: gateDataflow, isolation: gateIsolation, "isolation-py": gateIsolationPy, exports: gateExports, graph: gateGraph, "graph-py": gateGraphPy, schema: gateSchema, "contract-version": gateContractVersion, "config-contract": gateConfigContract, "db-schema": gateDbSchema, "db-budget": gateDbBudget, python: gatePython, stack: gateStack, node: gateNode, health: gateHealth, access: gateAccess, tracing: gateTracing, replay: gateReplay, telemetry: gateTelemetry, eval: gateEval, licenses: gateLicenses, "image-licenses": gateImageLicenses, "runtime-parity": gateRuntimeParity, compose: gateCompose, "execution-env": gateExecutionEnv, "env-example": gateEnvExample, "test-isolation": gateTestIsolation, "arch-report": gateArchReport, parity: gateParity, "compose-stress": gateComposeStress, "compose-chaos": gateComposeChaos, "eval-baseline": gateEvalBaseline, "contract-conformance": gateContractConformance };
+const GATES = { readme: gateReadme, "lite-makefile": gateLiteMakefile, "docs-version": gateDocsVersion, dataflow: gateDataflow, isolation: gateIsolation, "isolation-py": gateIsolationPy, exports: gateExports, graph: gateGraph, "graph-py": gateGraphPy, schema: gateSchema, "contract-version": gateContractVersion, "config-contract": gateConfigContract, "db-schema": gateDbSchema, "db-budget": gateDbBudget, python: gatePython, stack: gateStack, node: gateNode, health: gateHealth, access: gateAccess, tracing: gateTracing, replay: gateReplay, telemetry: gateTelemetry, eval: gateEval, licenses: gateLicenses, "image-licenses": gateImageLicenses, helm: gateHelm, "runtime-parity": gateRuntimeParity, compose: gateCompose, "execution-env": gateExecutionEnv, "env-example": gateEnvExample, "test-isolation": gateTestIsolation, "arch-report": gateArchReport, parity: gateParity, "compose-stress": gateComposeStress, "compose-chaos": gateComposeChaos, "eval-baseline": gateEvalBaseline, "contract-conformance": gateContractConformance };
 const which = process.argv[2] || "all";
 
 // `seal` (not a gate) — (re)freeze the current published contracts into contracts.seal.json.

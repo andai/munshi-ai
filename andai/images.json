@@ -8,7 +8,10 @@
     "prom/prometheus:v3.13.5@sha256:aafa9d694e6a883c02db516d9f6e5b84e14195f49a2a6456a4cca815edda72b9",
     "prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b",
     "prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
-    "persesdev/perses:v0.55.1@sha256:292605f009770f07aa17217e70f877fabbc74858d0af9054d395064e1c411c06"
+    "persesdev/perses:v0.55.1@sha256:292605f009770f07aa17217e70f877fabbc74858d0af9054d395064e1c411c06",
+    "chrislusf/seaweedfs:4.53",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.95.1",
+    "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0"
   ],
   "images": [
     {

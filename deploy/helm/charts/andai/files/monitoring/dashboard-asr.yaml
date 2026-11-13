@@ -1,0 +1,98 @@
+# Perses dashboard (OPS-05), provisioned into project `munshi` from
+# /etc/perses/provisioning; edit here, not in the UI. ASR latency (andai-worker).
+# Series and labels: andai/docs/metrics.md. Checked by
+# andai/services/worker/tests/test_monitoring_dashboards.py and `make -C andai monitoring-check`.
+kind: Dashboard
+metadata:
+  name: asr
+  project: munshi
+spec:
+  display:
+    name: Speech-to-text latency
+  duration: 24h
+  refreshInterval: 1m
+  variables: []
+  panels:
+    note:
+      kind: Panel
+      spec:
+        display:
+          name: About this data
+        plugin:
+          kind: Markdown
+          spec:
+            text: |-
+              The lag is the platform's segment write time minus the segment's spoken end, for each transcript segment andai copies. Today the platform's stored segments carry no write time, so segments count as missing and the histogram stays empty: read a rising missing count with no lag data as "no data", never as zero lag.
+    lagQuantiles:
+      kind: Panel
+      spec:
+        display:
+          name: Segment lag p50 / p95 (1 h window)
+          description: Quantiles of munshi_asr_segment_lag_seconds over the last hour.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: seconds
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: histogram_quantile(0.50, sum by (le) (rate(munshi_asr_segment_lag_seconds_bucket[1h])))
+                seriesNameFormat: p50
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: histogram_quantile(0.95, sum by (le) (rate(munshi_asr_segment_lag_seconds_bucket[1h])))
+                seriesNameFormat: p95
+    lagMissing:
+      kind: Panel
+      spec:
+        display:
+          name: Segments copied without a lag (per hour)
+          description: Segments copied without both times, so no lag was observed.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum(increase(munshi_asr_segment_lag_missing_total[1h]))
+                seriesNameFormat: missing
+  layouts:
+  - kind: Grid
+    spec:
+      items:
+      - x: 0
+        y: 0
+        width: 24
+        height: 4
+        content:
+          $ref: '#/spec/panels/note'
+      - x: 0
+        y: 4
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/lagQuantiles'
+      - x: 12
+        y: 4
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/lagMissing'

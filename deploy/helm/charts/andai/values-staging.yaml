@@ -1,0 +1,83 @@
+# Staging overlay: one k3s node in a Linux VM (the 10-09 witness). Install with this file plus an
+# untracked local file for what is machine- or secret-specific (image tag, portal origin, SMTP relay,
+# munshi.database.password via --set-file); every Secret named here is created in the namespace
+# first (andai/docs/kubernetes.md).
+#
+# Bot pool: bot Pods select munshi.ai/pool=bots and tolerate that taint. On this single node the
+# node is only LABELLED (kubectl label node <n> munshi.ai/pool=bots): a NoSchedule taint on the only
+# node would leave every platform Pod without a matching toleration Pending. On a multi-node
+# cluster, label AND taint the bot nodes (andai/docs/kubernetes.md).
+
+global:
+  imagePullPolicy: IfNotPresent
+
+andai:
+  kek:
+    existingSecret: andai-kek
+  portal:
+    origin: https://munshi.staging.test
+    ingress:
+      enabled: true
+      className: traefik
+      host: munshi.staging.test
+
+munshi:
+  runtime:
+    # One VM node (6 vCPU, 12 GiB suggested): 3 real bots of 2560 MiB beside the platform. The load
+    # test measures what the node holds and sets the cap at install (values-loadtest.yaml).
+    maxActiveBots: 3
+    nodeSelector:
+      munshi.ai/pool: bots
+    tolerations:
+      - key: munshi.ai/pool
+        operator: Equal
+        value: bots
+        effect: NoSchedule
+  gateway:
+    replicaCount: 1
+  adminApi:
+    replicaCount: 1
+  meetingApi:
+    replicaCount: 1
+  terminal:
+    replicaCount: 1
+  postgres:
+    persistence:
+      size: 10Gi
+  podDisruptionBudgets:
+    gateway:
+      enabled: false
+    adminApi:
+      enabled: false
+    meetingApi:
+      enabled: false
+    terminal:
+      enabled: false
+    runtime:
+      enabled: false
+    agentApi:
+      enabled: false
+
+seaweedfs:
+  enabled: true
+  volume:
+    dataDirs:
+      - name: data1
+        type: persistentVolumeClaim
+        size: 20Gi
+        storageClass: ""
+        maxVolumes: 0
+
+gpuPools:
+  asr:
+    enabled: false
+  llm:
+    enabled: false
+
+monitoring:
+  enabled: true
+
+prometheus:
+  server:
+    persistentVolume:
+      size: 4Gi
