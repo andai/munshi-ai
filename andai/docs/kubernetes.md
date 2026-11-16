@@ -18,13 +18,47 @@ andai-test`). Installs on a cluster are proved separately (staging witness, scal
   dm-crypt (k3s `local-path` writes plain host directories). See `encryption-at-rest.md`.
 - Secrets encrypted in the cluster datastore: start k3s with `--secrets-encryption` (off by
   default), or use your platform's equivalent.
-- An ingress controller for the portal (k3s ships Traefik) and DNS for its host name.
+- An ingress controller for the portal (k3s ships Traefik) and DNS for its host name. On k3s,
+  turn off the bundled Traefik's version check first (below): it is on by default and calls out.
 - An SMTP relay you run or trust for outgoing mail.
 - The images `ghcr.io/andai/munshi-*:<VERSION>` (`global.imageTag`, the chart's appVersion) in a
   registry the nodes can pull from, or imported into the nodes' containerd.
 - The chart's dependencies: `make -C deploy/helm andai-deps` runs `helm dependency build`, which
   fetches seaweedfs 4.53.0, prometheus-community/prometheus 29.45.1 and perses 0.24.0 as pinned in
   `Chart.lock` (network needed once).
+
+### k3s: stop the bundled Traefik calling out
+
+k3s installs Traefik with its version check on. Ten minutes after each start, and then every
+24 hours, Traefik calls `update.traefik.io` and `api.github.com`, and its log says it collects usage
+data during the check. munshi.ai makes no such calls, so turn the check off on every k3s server
+before you install the chart. Put this file in the server's auto-deploy directory
+(`/var/lib/rancher/k3s/server/manifests/traefik-config.yaml`):
+
+```yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    global:
+      checkNewVersion: false
+      sendAnonymousUsage: false
+```
+
+k3s upgrades its Traefik with these values and restarts it. Check that the args carry
+`--global.checkNewVersion=false` and that the log says "Version check is disabled" and "Stats
+collection is disabled":
+
+```bash
+kubectl -n kube-system get deploy traefik -o jsonpath='{.spec.template.spec.containers[0].args}'
+kubectl -n kube-system logs deploy/traefik | grep -E 'Version check|Stats collection'
+```
+
+If you run another ingress controller instead (k3s `--disable=traefik`), check its defaults for
+the same kind of call.
 
 ## 1. Create the namespace and its Secrets
 
