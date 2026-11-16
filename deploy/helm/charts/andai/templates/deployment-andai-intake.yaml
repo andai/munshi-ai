@@ -1,0 +1,63 @@
+{{- /* andai-intake: the notetaker mailbox (SMTP on 2525, behind the andai-intake-smtp Service)
+and the invite processor. It holds no KEK and no platform token. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andai-intake
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-intake
+spec:
+  replicas: {{ .Values.andai.intake.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: andai-intake
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-intake
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-andai.yaml") . | sha256sum }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "andai.podSecurity" (list . 10001) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: andai-intake
+          image: {{ include "andai.image" (list . "andai-intake") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: smtp
+              containerPort: 2525
+          envFrom:
+            - configMapRef:
+                name: andai-config
+          env:
+            - name: ANDAI_VERSION
+              value: {{ include "andai.imageTag" . | quote }}
+            - name: ANDAI_DB_PASSWORD_APP
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.andai.database.existingSecret }}
+                  key: {{ .Values.andai.database.appPasswordKey }}
+            - name: ANDAI_DB_URL_APP
+              value: {{ include "andai.dbUrl" (list . "andai_app" "ANDAI_DB_PASSWORD_APP") | quote }}
+            {{- with include "andai.smtpPasswordEnv" . }}{{ . | nindent 12 }}{{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.andai.intake.resources | nindent 12 }}

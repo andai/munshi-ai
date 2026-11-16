@@ -9,12 +9,18 @@ operator check their part.
 - **Secrets in the andai database.** TOTP secrets and each org's platform API key are
   envelope-encrypted with AES-256-GCM under a key-encryption key (KEK) the operator provides
   (`ANDAI_KEK` / `ANDAI_KEK_FILE`). The KEK never reaches the database. It can be rotated without
-  downtime: `runbooks/key-rotation.md`.
+  downtime: `runbooks/key-rotation.md`. On Kubernetes the KEK is a Secret the operator creates,
+  mounted read-only into andai-core and andai-worker as files (`ANDAI_KEK_FILE`,
+  `ANDAI_KEK_RETIRED_FILE`); it is never an environment value.
+- **Recordings on Kubernetes with the chart's SeaweedFS.** The andai Helm chart sets the recordings
+  bucket's default encryption to SSE-S3 (AES256), keyed by a SeaweedFS KEK from an operator Secret
+  (`WEED_S3_SSE_KEK`), so every object meeting-api writes is encrypted by the object store
+  (`kubernetes.md`). With your own bucket (`seaweedfs.enabled=false`) its own encryption applies.
+
 Nothing else is encrypted by munshi: the rest of the Postgres database (meetings, transcripts,
-minutes, users), the object store (on Compose, versitygw writes plain files), Valkey and the
-backups are as safe as the disks and media they sit on. Postgres has no built-in encryption at
-rest. Server-side encryption of objects (SSE-S3) on Kubernetes comes with the Helm chart and is
-documented there.
+minutes, users), the object store on Compose (versitygw writes plain files), SeaweedFS's filer
+metadata and indexes, Valkey and the backups are as safe as the disks and media they sit on.
+Postgres has no built-in encryption at rest.
 
 ## What the operator must provide
 
@@ -26,8 +32,9 @@ documented there.
   FileVault on the disk holding that image. Use it for development only.
 - **Custody of the KEK.** Keep it outside the database and its backups, readable only by the
   andai-core and andai-worker containers (uid 10001). On Kubernetes, start k3s with
-  `--secrets-encryption` (or use your platform's equivalent), so the KEK Secret is not stored in the
-  cluster datastore in clear.
+  `--secrets-encryption` (or use your platform's equivalent), so the KEK Secrets (andai's and
+  SeaweedFS's SSE-S3 key) are not stored in the cluster datastore in clear. SeaweedFS documents no
+  rotation for its SSE-S3 key: keep it, backed up apart from the data, for as long as the data.
 - **Encrypted backups.** A database dump holds every meeting in clear (only the sealed secrets stay
   sealed). Encrypt backups and keep their keys apart from the backups. Keep a retired KEK until
   every backup sealed under it has expired (`runbooks/key-rotation.md`, step 9).

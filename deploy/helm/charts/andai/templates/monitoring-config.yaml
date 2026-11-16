@@ -1,0 +1,112 @@
+{{- /*
+Monitoring configuration (monitoring.enabled), from the same files as the Compose `monitoring`
+profile (files/monitoring, copies of andai/deploy/monitoring checked by
+test_andai_monitoring_sync.sh):
+  * Prometheus' config (prometheus.server.configMapOverrideName): the Compose prometheus.yml, whose
+    targets resolve here too (Services andai-core/-worker/-intake:8000, alertmanager:9093, the
+    headless node-exporter), plus kube-state-metrics and, with gpuMetrics, dcgm-exporter;
+  * the alert rules, mounted at /etc/prometheus/rules (prometheus.server.extraConfigmapMounts);
+  * Alertmanager's config as a Secret (its URLs and passwords are only file paths): the receivers
+    andai_worker.alerting_config renders for Compose, every one off by default, Teams only as
+    msteamsv2, text only from munshi.tmpl;
+  * Perses provisioning: the munshi project, the Prometheus datasource and six dashboards.
+*/ -}}
+{{- if .Values.monitoring.enabled }}
+{{- $files := "files/monitoring" -}}
+{{- $prom := .Files.Get (printf "%s/prometheus.yml" $files) | fromYaml -}}
+{{- $jobs := $prom.scrape_configs | default list -}}
+{{- $jobs = append $jobs (dict "job_name" "kube-state-metrics" "static_configs" (list (dict "targets" (list "kube-state-metrics:8080")))) -}}
+{{- if .Values.gpuMetrics.enabled -}}
+{{- $jobs = append $jobs (dict "job_name" "dcgm-exporter" "dns_sd_configs" (list (dict "names" (list "dcgm-exporter") "type" "A" "port" (int .Values.gpuMetrics.port) "refresh_interval" "30s"))) -}}
+{{- end -}}
+{{- $_ := set $prom "scrape_configs" $jobs -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-%s" .Release.Name .Values.prometheus.server.configMapOverrideName }}
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+data:
+  prometheus.yml: |
+    # files/monitoring/prometheus.yml (andai/deploy/monitoring/prometheus/prometheus.yml) with the
+    # Kubernetes-only jobs added by the andai chart.
+    {{- toYaml $prom | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: andai-prometheus-rules
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+data:
+  munshi-alerts.yml: |
+    {{- .Files.Get (printf "%s/munshi-alerts.yml" $files) | nindent 4 }}
+---
+{{- $a := .Values.andai -}}
+{{- $al := .Values.monitoring.alerting -}}
+{{- $title := `{{ template "munshi.title" . }}` -}}
+{{- $text := `{{ template "munshi.text" . }}` -}}
+{{- $receiver := dict -}}
+{{- $names := list -}}
+{{- if and $al.email.enabled (include "andai.alertEmailTo" .) -}}
+{{- $email := dict "to" (include "andai.alertEmailTo" .) "from" $a.smtp.from "smarthost" (printf "%s:%v" $a.smtp.host $a.smtp.port) "require_tls" $a.smtp.starttls "send_resolved" true "headers" (dict "Subject" $title) "html" "" "text" $text -}}
+{{- if $a.smtp.user -}}{{- $_ := set $email "auth_username" $a.smtp.user -}}{{- end -}}
+{{- if $a.smtp.existingSecret -}}
+{{- $m := include "andai.alertmanagerMount" (list . "smtp") | fromYaml -}}
+{{- $_ := set $email "auth_password_file" (printf "%s/%s" $m.mountPath $a.smtp.passwordKey) -}}
+{{- end -}}
+{{- $_ := set $receiver "email_configs" (list $email) -}}
+{{- $names = append $names "email" -}}
+{{- end -}}
+{{- if or $al.slack.enabled $al.teams.enabled -}}
+{{- $m := include "andai.alertmanagerMount" (list . "alerting-secrets") | fromYaml -}}
+{{- if $al.slack.enabled -}}
+{{- $_ := set $receiver "slack_configs" (list (dict "api_url_file" (printf "%s/slack_webhook_url" $m.mountPath) "send_resolved" true "username" "munshi.ai" "title" $title "title_link" "" "text" $text "fallback" $title "pretext" "" "footer" "" "callback_id" "" "icon_emoji" "" "icon_url" "")) -}}
+{{- $names = append $names "slack" -}}
+{{- end -}}
+{{- if $al.teams.enabled -}}
+{{- $_ := set $receiver "msteamsv2_configs" (list (dict "webhook_url_file" (printf "%s/teams_webhook_url" $m.mountPath) "send_resolved" true "title" $title "text" $text)) -}}
+{{- $names = append $names "teams" -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $receiver "name" (ternary "munshi" "none" (gt (len $names) 0)) -}}
+{{- $configMount := include "andai.alertmanagerMount" (list . "alertmanager-config") | fromYaml -}}
+{{- $route := dict "receiver" $receiver.name "group_by" (list "alertname" "service") "group_wait" "30s" "group_interval" "5m" "repeat_interval" "4h" -}}
+{{- $config := dict "route" $route "receivers" (list $receiver) "templates" (list (printf "%s/*.tmpl" $configMount.mountPath)) -}}
+# Alertmanager's config: what andai_worker.alerting_config renders for Compose, from these values.
+# Receivers in use: {{ len $names }} ({{ join ", " $names | default "none" }}). Webhook URLs and the
+# SMTP password stay in their Secrets (mounted files); nothing secret is in this Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $configMount.secretName | default "andai-alertmanager-config" }}
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+type: Opaque
+stringData:
+  alertmanager.yml: |
+    # Rendered by the andai chart (templates/monitoring-config.yaml); do not edit. JSON is YAML.
+    {{- toPrettyJson $config | nindent 4 }}
+  munshi.tmpl: |
+    {{- .Files.Get (printf "%s/munshi.tmpl" $files) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: andai-perses-provisioning
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+data:
+  project.yaml: |
+    {{- .Files.Get (printf "%s/perses-project.yaml" $files) | nindent 4 }}
+  datasource.yaml: |
+    {{- .Files.Get (printf "%s/perses-datasource.yaml" $files) | nindent 4 }}
+  {{- range $d := list "joins" "asr" "gpu" "pipeline" "intake" "email" }}
+  dashboard-{{ $d }}.yaml: |
+    {{- $.Files.Get (printf "%s/dashboard-%s.yaml" $files $d) | nindent 4 }}
+  {{- end }}
+{{- end }}

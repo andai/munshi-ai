@@ -1,0 +1,100 @@
+{{- /*
+The recordings bucket on the chart's SeaweedFS (post-install, post-upgrade): created when missing,
+then its default encryption set to SSE-S3 (AES256, keyed by WEED_S3_SSE_KEK), and read back. Every
+object meeting-api writes is then encrypted without it sending an encryption header. Runs the
+munshi meeting-api image (boto3; already part of the release), with the S3 keys meeting-api uses.
+Not rendered for a bring-your-own bucket (seaweedfs.enabled=false), whose encryption is the
+operator's.
+*/ -}}
+{{- if .Values.seaweedfs.enabled }}
+{{- $s3 := .Values.munshi.storage.s3 -}}
+{{- $job := .Values.objectStorage.bucketJob -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: andai-seaweedfs-bucket
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-seaweedfs-bucket
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ $job.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-seaweedfs-bucket
+    spec:
+      restartPolicy: Never
+      {{- include "andai.podSecurity" (list . 65534) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: bucket
+          image: {{ printf "%s:%s" .Values.munshi.meetingApi.image.repository (.Values.global.imageTag | default .Values.munshi.meetingApi.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          env:
+            - name: S3_ENDPOINT
+              value: {{ include "andai.s3Endpoint" . | quote }}
+            - name: S3_BUCKET
+              value: {{ required "munshi.storage.s3.bucket is required" $s3.bucket | quote }}
+            - name: S3_REGION
+              value: {{ $s3.region | default "us-east-1" | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: {{ $s3.existingSecret | quote }}, key: {{ $s3.accessKeyIdKey | default "AWS_ACCESS_KEY_ID" | quote }} }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ $s3.existingSecret | quote }}, key: {{ $s3.secretAccessKeyKey | default "AWS_SECRET_ACCESS_KEY" | quote }} }
+            - name: HOME
+              value: /tmp
+          command:
+            - python
+            - -c
+            - |
+              import os, sys, time
+              import boto3
+              from botocore.config import Config
+              from botocore.exceptions import BotoCoreError, ClientError
+
+              bucket = os.environ["S3_BUCKET"]
+              s3 = boto3.client(
+                  "s3",
+                  endpoint_url=os.environ["S3_ENDPOINT"],
+                  region_name=os.environ["S3_REGION"],
+                  config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 3}),
+              )
+              deadline = time.monotonic() + 600
+              while True:
+                  try:
+                      s3.list_buckets()
+                      break
+                  except (BotoCoreError, ClientError) as exc:
+                      if time.monotonic() > deadline:
+                          sys.exit(f"bucket: S3 not reachable after 10 minutes ({type(exc).__name__})")
+                      time.sleep(5)
+              try:
+                  s3.head_bucket(Bucket=bucket)
+                  print(f"bucket: {bucket} exists")
+              except ClientError as exc:
+                  if exc.response.get("Error", {}).get("Code") not in ("404", "NoSuchBucket", "NotFound"):
+                      raise
+                  s3.create_bucket(Bucket=bucket)
+                  print(f"bucket: {bucket} created")
+              s3.put_bucket_encryption(
+                  Bucket=bucket,
+                  ServerSideEncryptionConfiguration={
+                      "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+                  },
+              )
+              rules = s3.get_bucket_encryption(Bucket=bucket)["ServerSideEncryptionConfiguration"]["Rules"]
+              algorithm = rules[0]["ApplyServerSideEncryptionByDefault"]["SSEAlgorithm"]
+              if algorithm != "AES256":
+                  sys.exit(f"bucket: default encryption reads back as {algorithm}, not AES256")
+              print("bucket: default encryption SSE-S3 (AES256)")
+          resources:
+            {{- toYaml $job.resources | nindent 12 }}
+{{- end }}

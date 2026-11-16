@@ -1,7 +1,8 @@
 # andai/docs
 
-Operator docs: `dev-vm.md` (single-VM bring-up), `live-test.md` (live test meetings from a Mac
-with the real bot), `stt-self-hosted.md` (self-hosted speech-to-text for production),
+Operator docs: `dev-vm.md` (single-VM bring-up), `kubernetes.md` (the Helm chart: Secrets,
+install, node pools, bot cap, object storage, monitoring), `live-test.md` (live test meetings
+from a Mac with the real bot), `stt-self-hosted.md` (self-hosted speech-to-text for production),
 `audit-actions.md` (every audited action, generated from the registry), `encryption-at-rest.md`
 (what munshi encrypts, what the operator must, and `make -C andai encryption-check`),
 `load-test.md` (concurrent mock meetings and the bot cap, `make -C andai load-test`),

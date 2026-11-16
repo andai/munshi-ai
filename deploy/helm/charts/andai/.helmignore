@@ -1,0 +1,5 @@
+# Keep the gate:readme docs out of the chart's templates, subcharts and files.
+templates/README.md
+charts/README.md
+files/README.md
+files/monitoring/README.md

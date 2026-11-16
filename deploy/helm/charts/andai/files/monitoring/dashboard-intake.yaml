@@ -1,0 +1,133 @@
+# Perses dashboard (OPS-05), provisioned into project `munshi` from
+# /etc/perses/provisioning; edit here, not in the UI. Invite mail intake (andai-intake, andai-worker).
+# Series and labels: andai/docs/metrics.md. Checked by
+# andai/services/worker/tests/test_monitoring_dashboards.py and `make -C andai monitoring-check`.
+kind: Dashboard
+metadata:
+  name: intake
+  project: munshi
+spec:
+  display:
+    name: Invite intake
+  duration: 24h
+  refreshInterval: 1m
+  variables: []
+  panels:
+    smtp:
+      kind: Panel
+      spec:
+        display:
+          name: SMTP verdicts per minute
+          description: 'The notetaker mailbox''s answers: accepted, unknown recipient, too many recipients,
+            too large, not stored.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (result) (rate(munshi_intake_smtp_total[15m])) * 60
+                seriesNameFormat: '{{result}}'
+    status:
+      kind: Panel
+      spec:
+        display:
+          name: Messages in the last 24 h by status
+          description: Received, processing, done, quarantined, ignored.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (status) (munshi_intake_messages_24h)
+                seriesNameFormat: '{{status}}'
+    outcome:
+      kind: Panel
+      spec:
+        display:
+          name: Messages in the last 24 h by outcome
+          description: 'What processing did: scheduled, updated, cancelled, joined now, quarantined, ignored.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (outcome) (munshi_intake_messages_24h)
+                seriesNameFormat: '{{outcome}}'
+    quarantine:
+      kind: Panel
+      spec:
+        display:
+          name: Quarantined in the last 24 h by reason
+          description: 'Why mail was quarantined: unverified sender, unknown user, no meeting link, parse
+            error, rate limited.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (reason) (munshi_intake_messages_24h{status="quarantined"})
+                seriesNameFormat: '{{reason}}'
+  layouts:
+  - kind: Grid
+    spec:
+      items:
+      - x: 0
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/smtp'
+      - x: 12
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/status'
+      - x: 0
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/outcome'
+      - x: 12
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/quarantine'

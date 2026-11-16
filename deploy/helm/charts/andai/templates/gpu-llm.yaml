@@ -1,0 +1,86 @@
+{{- /*
+The language-model GPU pool: an OpenAI-compatible server the operator names (no default image), on
+nodes labelled munshi.ai/gpu-pool=llm, one or more GPUs per replica, tolerating the GPU taint.
+Point andai.llm.baseUrl at http://andai-llm:<port> to write minutes with it.
+*/ -}}
+{{- $p := .Values.gpuPools.llm -}}
+{{- if $p.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andai-llm
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-llm
+spec:
+  replicas: {{ $p.replicas }}
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gpu-llm
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gpu-llm
+    spec:
+      nodeSelector:
+        {{- toYaml $p.nodeSelector | nindent 8 }}
+      {{- with $p.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: llm
+          image: {{ $p.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          {{- with $p.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $p.port }}
+          {{- with $p.env }}
+          env:
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          startupProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+            failureThreshold: 180
+          resources:
+            requests:
+              {{- toYaml $p.resources.requests | nindent 14 }}
+            limits:
+              {{- toYaml $p.resources.limits | nindent 14 }}
+              nvidia.com/gpu: {{ $p.gpus }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: andai-llm
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-llm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $p.port }}
+      targetPort: http
+  selector:
+    {{- include "andai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-llm
+{{- end }}

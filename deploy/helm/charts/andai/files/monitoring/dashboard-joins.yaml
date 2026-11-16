@@ -1,0 +1,191 @@
+# Perses dashboard (OPS-05), provisioned into project `munshi` from
+# /etc/perses/provisioning; edit here, not in the UI. Bot joins and canaries (andai-worker).
+# Series and labels: andai/docs/metrics.md. Checked by
+# andai/services/worker/tests/test_monitoring_dashboards.py and `make -C andai monitoring-check`.
+kind: Dashboard
+metadata:
+  name: joins
+  project: munshi
+spec:
+  display:
+    name: Bot joins
+  duration: 24h
+  refreshInterval: 1m
+  variables: []
+  panels:
+    successRatio:
+      kind: Panel
+      spec:
+        display:
+          name: Join success, 24 h, all sources
+          description: Successes / (successes + failures) over the last 24 hours per platform (D-39);
+            the join-rate alert fires below 95% with at least 5 counted joins.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: percent-decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: munshi_join_success_ratio_24h{source="all"}
+                seriesNameFormat: '{{platform}}'
+    joinsByOutcome:
+      kind: Panel
+      spec:
+        display:
+          name: Joins in the last 24 h by outcome
+          description: 'Bot joins started in the last 24 hours: success, failure, excluded (human decisions)
+            and pending.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (platform, outcome) (munshi_bot_joins_total)
+                seriesNameFormat: '{{platform}} {{outcome}}'
+    failuresByReason:
+      kind: Panel
+      spec:
+        display:
+          name: Failed joins in the last 24 h by reason
+          description: The JoinFailureReason of each failed join.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (platform, reason) (munshi_bot_joins_total{outcome="failure"})
+                seriesNameFormat: '{{platform}} {{reason}}'
+    joinsBySource:
+      kind: Panel
+      spec:
+        display:
+          name: Joins in the last 24 h by source
+          description: 'Where each join came from: pasted link, invite mail, canary.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (source) (munshi_bot_joins_total)
+                seriesNameFormat: '{{source}}'
+    canaryStreak:
+      kind: Panel
+      spec:
+        display:
+          name: Canary failures in a row
+          description: Canary failures in a row up to the latest run per platform; the canary alert fires
+            at 2.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max by (platform) (munshi_canary_consecutive_failures)
+                seriesNameFormat: '{{platform}}'
+    canaryAge:
+      kind: Panel
+      spec:
+        display:
+          name: Time since the last successful canary
+          description: A value above the canary interval plus a few minutes means canaries stopped or
+            keep failing.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: seconds
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: time() - max by (platform) (munshi_canary_last_run_timestamp_seconds{outcome="success"})
+                seriesNameFormat: '{{platform}}'
+  layouts:
+  - kind: Grid
+    spec:
+      items:
+      - x: 0
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/successRatio'
+      - x: 12
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/joinsByOutcome'
+      - x: 0
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/failuresByReason'
+      - x: 12
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/joinsBySource'
+      - x: 0
+        y: 16
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/canaryStreak'
+      - x: 12
+        y: 16
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/canaryAge'

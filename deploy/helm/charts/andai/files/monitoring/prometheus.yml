@@ -1,0 +1,43 @@
+# Prometheus for munshi.ai (OPS-05). Compose mounts this file at /etc/prometheus/prometheus.yml under
+# the `monitoring` profile (andai/deploy/compose/docker-compose.andai.yml); andai/docs/monitoring.md
+# explains it. Retention (15 days) is a command-line flag on the service, not a setting here.
+#
+# Every job scrapes a service on the stack network; nothing is relabelled, so the only labels on a
+# series are the ones the services export (andai/docs/metrics.md: never identity or content) plus
+# `job` and `instance`.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: andai-core
+    static_configs:
+      - targets: ["andai-core:8000"]
+
+  - job_name: andai-worker
+    static_configs:
+      - targets: ["andai-worker:8000"]
+
+  - job_name: andai-intake
+    static_configs:
+      - targets: ["andai-intake:8000"]
+
+  # Found by DNS so the `monitoring-test` profile's second node exporter (which shares the
+  # `node-exporter` network alias and reports only the test fill mount) is scraped too when it runs,
+  # and nothing errors when it does not. Without the test profile the name resolves to one address.
+  - job_name: node-exporter
+    dns_sd_configs:
+      - names: ["node-exporter"]
+        type: A
+        port: 9100
+        refresh_interval: 30s

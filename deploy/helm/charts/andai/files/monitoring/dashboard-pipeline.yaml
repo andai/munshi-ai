@@ -1,0 +1,302 @@
+# Perses dashboard (OPS-05), provisioned into project `munshi` from
+# /etc/perses/provisioning; edit here, not in the UI. Pipeline stages, minutes, deletion and erasure backlogs (andai-worker).
+# Series and labels: andai/docs/metrics.md. Checked by
+# andai/services/worker/tests/test_monitoring_dashboards.py and `make -C andai monitoring-check`.
+kind: Dashboard
+metadata:
+  name: pipeline
+  project: munshi
+spec:
+  display:
+    name: Pipeline
+  duration: 24h
+  refreshInterval: 1m
+  variables: []
+  panels:
+    pending:
+      kind: Panel
+      spec:
+        display:
+          name: Pending per stage
+          description: Work each stage still owes (dispatch, ingest, minutes, recap, deletion, intake).
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max by (stage) (munshi_pipeline_pending)
+                seriesNameFormat: '{{stage}}'
+    oldest:
+      kind: Panel
+      spec:
+        display:
+          name: Oldest pending item per stage
+          description: Seconds since the oldest owed item became due; the backlog alert fires above 900
+            s.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: seconds
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max by (stage) (munshi_pipeline_oldest_pending_seconds)
+                seriesNameFormat: '{{stage}}'
+    failed:
+      kind: Panel
+      spec:
+        display:
+          name: Failed for good in the last 24 h per stage
+          description: Items a stage gave up on.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max by (stage) (munshi_pipeline_failed_24h)
+                seriesNameFormat: '{{stage}}'
+    stageP95:
+      kind: Panel
+      spec:
+        display:
+          name: Stage duration p50 / p95 (items finished in 24 h)
+          description: 'dispatch: due to recording; ingest: end to transcript; minutes: transcript to
+            first minutes; recap: minutes to mail.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: seconds
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: histogram_quantile(0.50, max by (stage, le) (munshi_pipeline_stage_seconds_bucket))
+                seriesNameFormat: '{{stage}} p50'
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: histogram_quantile(0.95, max by (stage, le) (munshi_pipeline_stage_seconds_bucket))
+                seriesNameFormat: '{{stage}} p95'
+    minutes:
+      kind: Panel
+      spec:
+        display:
+          name: Minutes pending and failed
+          description: Finished meetings whose minutes are owed, and those that failed after every attempt.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_mom_pending)
+                seriesNameFormat: pending
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_mom_failed_total)
+                seriesNameFormat: failed
+    deletion:
+      kind: Panel
+      spec:
+        display:
+          name: Meeting deletion backlog
+          description: 'Deleted meetings not yet purged, and the age of the oldest (PORT-04: 900 s).'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_deletions_pending)
+                seriesNameFormat: pending
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_deletion_oldest_pending_seconds)
+                seriesNameFormat: oldest (s)
+    erasure:
+      kind: Panel
+      spec:
+        display:
+          name: User erasure backlog
+          description: Open erasure requests, the oldest one's age (alert above 64800 s, SLA 86400 s)
+            and failed requests.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_erasures_pending)
+                seriesNameFormat: pending
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_erasures_failed)
+                seriesNameFormat: failed
+    erasureAge:
+      kind: Panel
+      spec:
+        display:
+          name: Oldest open erasure request
+          description: Seconds since the oldest open erasure request was made.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: seconds
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_erasure_oldest_pending_seconds)
+                seriesNameFormat: oldest
+    dbSize:
+      kind: Panel
+      spec:
+        display:
+          name: andai database size
+          description: pg_database_size of the andai database.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: bytes
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(munshi_db_size_bytes)
+                seriesNameFormat: andai
+  layouts:
+  - kind: Grid
+    spec:
+      items:
+      - x: 0
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/pending'
+      - x: 12
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/oldest'
+      - x: 0
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/failed'
+      - x: 12
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/stageP95'
+      - x: 0
+        y: 16
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/minutes'
+      - x: 12
+        y: 16
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/deletion'
+      - x: 0
+        y: 24
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/erasure'
+      - x: 12
+        y: 24
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/erasureAge'
+      - x: 0
+        y: 32
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/dbSize'

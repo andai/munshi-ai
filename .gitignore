@@ -44,3 +44,5 @@ deploy/compose/secrets/
 
 # GSDD planning state is local-only (D-26); never commit it to the public repo.
 .work/
+# andai umbrella chart: subchart archives vendored by `helm dependency build` (Chart.lock is committed)
+deploy/helm/charts/andai/charts/*.tgz

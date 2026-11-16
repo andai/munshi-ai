@@ -1,0 +1,97 @@
+{{- /*
+The speech-to-text GPU pool: the munshi transcription unit (deploy/transcription) on nodes labelled
+munshi.ai/gpu-pool=asr, one GPU per replica (nvidia.com/gpu is a limit), tolerating the GPU taint.
+The Service replaces the unit's nginx load balancer; munshi's meeting-api hands bots
+http://andai-asr:8000 (validate.yaml) and the unit checks the same TRANSCRIPTION_SERVICE_TOKEN.
+*/ -}}
+{{- $p := .Values.gpuPools.asr -}}
+{{- if $p.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andai-asr
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-asr
+spec:
+  replicas: {{ $p.replicas }}
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gpu-asr
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gpu-asr
+    spec:
+      nodeSelector:
+        {{- toYaml $p.nodeSelector | nindent 8 }}
+      {{- with $p.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: transcription
+          image: {{ $p.image | default (include "andai.image" (list . "transcription")) | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DEVICE
+              value: cuda
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "andai.munshiSecretName" . }}
+                  key: TRANSCRIPTION_SERVICE_TOKEN
+            {{- range $k, $v := $p.env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: models
+              mountPath: /app/models
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 10
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 90
+            timeoutSeconds: 10
+          resources:
+            requests:
+              {{- toYaml $p.resources.requests | nindent 14 }}
+            limits:
+              {{- toYaml $p.resources.limits | nindent 14 }}
+              nvidia.com/gpu: {{ $p.gpus }}
+      volumes:
+        - name: models
+          emptyDir:
+            sizeLimit: {{ $p.modelCacheSizeLimit }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: andai-asr
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-asr
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $p.port }}
+      targetPort: http
+  selector:
+    {{- include "andai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-asr
+{{- end }}

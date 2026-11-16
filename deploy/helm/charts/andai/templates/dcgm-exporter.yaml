@@ -1,0 +1,79 @@
+{{- /*
+NVIDIA dcgm-exporter (gpuMetrics.enabled; off by default): GPU utilisation for the GPU dashboard,
+one Pod per GPU-pool node (any node labelled munshi.ai/gpu-pool), tolerating the GPU taint.
+Its image is under NVIDIA's own terms and the chart names none: the operator sets gpuMetrics.image
+(validate.yaml). The headless Service lets Prometheus find every node's exporter by DNS (job
+dcgm-exporter in monitoring-config.yaml). Needs the NVIDIA driver and container toolkit on the node.
+*/ -}}
+{{- $g := .Values.gpuMetrics -}}
+{{- if $g.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dcgm-exporter
+spec:
+  selector:
+    matchLabels:
+      {{- include "andai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dcgm-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dcgm-exporter
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: munshi.ai/gpu-pool
+                    operator: Exists
+      {{- with $g.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      containers:
+        - name: dcgm-exporter
+          image: {{ $g.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ $g.port }}
+          env:
+            - name: DCGM_EXPORTER_LISTEN
+              value: {{ printf ":%v" $g.port | quote }}
+          # The dashboard's series (DCGM_FI_DEV_*) need no SYS_ADMIN (profiling metrics would).
+          securityContext:
+            allowPrivilegeEscalation: false
+          readinessProbe:
+            httpGet: { path: /health, port: metrics }
+            periodSeconds: 10
+          resources:
+            {{- toYaml $g.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-exporter
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dcgm-exporter
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: {{ $g.port }}
+      targetPort: metrics
+  selector:
+    {{- include "andai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dcgm-exporter
+{{- end }}

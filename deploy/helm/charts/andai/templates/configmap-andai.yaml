@@ -1,0 +1,61 @@
+{{- /*
+Non-secret settings of andai-core, andai-worker and andai-intake (envFrom), with the Compose
+overlay's defaults. Secrets reach the containers as secretKeyRef env or mounted files
+(_helpers.tpl andai.coreEnv); andai.env adds or overrides non-secret keys (secret ones are refused
+by validate.yaml).
+*/ -}}
+{{- $a := .Values.andai -}}
+{{- $data := dict
+  "ANDAI_ENV" $a.andaiEnv
+  "PLATFORM_ADMIN_URL" (include "andai.platformAdminUrl" .)
+  "PLATFORM_GATEWAY_URL" (include "andai.platformGatewayUrl" .)
+  "REDIS_URL" (include "andai.redisUrl" .)
+  "ANDAI_ORG_MAX_CONCURRENT_BOTS" $a.orgMaxConcurrentBots
+  "ANDAI_BOT_NAME" $a.botName
+  "ANDAI_DEFAULT_LANGUAGE" $a.defaultLanguage
+  "ANDAI_DEFAULT_TIMEZONE" $a.defaultTimezone
+  "ANDAI_DISCLOSURE_TEXT" $a.disclosureText
+  "ANDAI_PRIVACY_NOTICE_URL" $a.privacyNoticeUrl
+  "ANDAI_PORTAL_ORIGIN" $a.portal.origin
+  "ANDAI_TRUSTED_PROXIES" "andai-portal-pods"
+  "ANDAI_LLM_BASE_URL" $a.llm.baseUrl
+  "ANDAI_LLM_MODEL" $a.llm.model
+  "SMTP_HOST" $a.smtp.host
+  "SMTP_PORT" $a.smtp.port
+  "SMTP_USER" $a.smtp.user
+  "SMTP_FROM" $a.smtp.from
+  "SMTP_STARTTLS" $a.smtp.starttls
+  "ANDAI_CANARY_INTERVAL_S" $a.canary.intervalSeconds
+  "ANDAI_ALERT_EMAIL" $a.alertEmail
+  "ANDAI_INTAKE_ADDRESSES" $a.intake.addresses
+  "ANDAI_INTAKE_SMTP_BIND" "0.0.0.0:2525"
+  "ANDAI_INTAKE_DNS_RESOLVER" $a.intake.dnsResolver
+  "ANDAI_INTAKE_ARC_SEALERS" $a.intake.arcSealers
+-}}
+{{- range $k, $v := $a.env -}}
+{{- $_ := set $data $k $v -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: andai-config
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+# ANDAI_TRUSTED_PROXIES: andai-core believes X-Forwarded-For only from the portal's Pods (the
+# headless Service andai-portal-pods, resolved by DNS and compared with the TCP peer).
+data:
+  {{- range $k := keys $data | sortAlpha }}
+  {{ $k }}: {{ get $data $k | toString | quote }}
+  {{- end }}
+---
+# The alert receivers Alertmanager has turned on (templates/monitoring-config.yaml), for
+# andai-worker (ANDAI_ALERTING_STATE_FILE): with monitoring on and at least one receiver, the
+# worker's own alert mail stands down. Always rendered; receivers is 0 while monitoring is off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: andai-alerting-state
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+data:
+  state.json: {{ include "andai.alertReceivers" . | quote }}

@@ -1,0 +1,56 @@
+{{- /*
+Key rotation (andai/docs/runbooks/key-rotation.md): with andai.kekRewrap.run=true, every install
+and upgrade runs `python -m andai_core kek-rewrap` once the services have rolled, moving each sealed
+value onto the active KEK (batched, crash-safe, idempotent). Set it back to false afterwards.
+*/ -}}
+{{- if .Values.andai.kekRewrap.run }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: andai-kek-rewrap
+  labels:
+    {{- include "andai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: andai-kek-rewrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "andai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: andai-kek-rewrap
+    spec:
+      restartPolicy: Never
+      {{- include "andai.podSecurity" (list . 10001) | nindent 6 }}
+      {{- with (include "andai.placement" .) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: kek-rewrap
+          image: {{ include "andai.image" (list . "andai-core") | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- include "andai.containerSecurity" . | nindent 10 }}
+          command:
+            - python
+            - -m
+            - andai_core
+            - kek-rewrap
+            {{- with .Values.andai.kekRewrap.batch }}
+            - --batch
+            - {{ . | toString | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: andai-config
+          env:
+            {{- include "andai.coreEnv" . | nindent 12 }}
+            - name: ANDAI_RECONCILER
+              value: "off"
+          volumeMounts:
+            {{- include "andai.kekVolumeMount" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.andai.migrations.resources | nindent 12 }}
+      volumes:
+        {{- include "andai.kekVolume" . | nindent 8 }}
+{{- end }}

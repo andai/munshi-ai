@@ -1,0 +1,101 @@
+# Perses dashboard (OPS-05), provisioned into project `munshi` from
+# /etc/perses/provisioning; edit here, not in the UI. Email delivery (every service's mail counters).
+# Series and labels: andai/docs/metrics.md. Checked by
+# andai/services/worker/tests/test_monitoring_dashboards.py and `make -C andai monitoring-check`.
+kind: Dashboard
+metadata:
+  name: email
+  project: munshi
+spec:
+  display:
+    name: Email delivery
+  duration: 24h
+  refreshInterval: 1m
+  variables: []
+  panels:
+    sent:
+      kind: Panel
+      spec:
+        display:
+          name: Mail sent per hour by kind
+          description: 'Mail the relay accepted: invites, password resets, recaps, alerts, confirmations.'
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (kind) (increase(munshi_mail_sent_total{outcome="sent"}[1h]))
+                seriesNameFormat: '{{kind}}'
+    failed:
+      kind: Panel
+      spec:
+        display:
+          name: Mail failed per hour by kind
+          description: Mail the relay refused or could not take.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum by (kind) (increase(munshi_mail_sent_total{outcome="failed"}[1h]))
+                seriesNameFormat: '{{kind}}'
+    failureShare:
+      kind: Panel
+      spec:
+        display:
+          name: Failed share, last 24 h
+          description: Failed / all mail handed to the relay over 24 hours, every service together.
+        plugin:
+          kind: StatChart
+          spec:
+            calculation: last-number
+            format:
+              unit: percent-decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum(increase(munshi_mail_sent_total{outcome="failed"}[24h])) / clamp_min(sum(increase(munshi_mail_sent_total[24h])),
+                  1)
+  layouts:
+  - kind: Grid
+    spec:
+      items:
+      - x: 0
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/sent'
+      - x: 12
+        y: 0
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/failed'
+      - x: 0
+        y: 8
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/failureShare'

@@ -1,0 +1,16 @@
+# The stack's Prometheus as Perses' default datasource (OPS-05). Perses proxies every query to it
+# on the stack network; the browser never talks to Prometheus directly.
+kind: GlobalDatasource
+metadata:
+  name: prometheus
+spec:
+  default: true
+  display:
+    name: Prometheus (munshi.ai)
+  plugin:
+    kind: PrometheusDatasource
+    spec:
+      proxy:
+        kind: HTTPProxy
+        spec:
+          url: http://prometheus:9090

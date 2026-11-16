@@ -1,0 +1,15 @@
+# Load-test overlay, on top of values-staging.yaml: the mock bot (no browser, no meeting) sized
+# small, so the node's capacity in bots is what the run measures. Set the cluster cap at install to
+# the capacity measured on the node, e.g.
+#   helm upgrade andai deploy/helm/charts/andai -n munshi -f values-staging.yaml \
+#     -f values-loadtest.yaml -f <local values> --set munshi.runtime.maxActiveBots=<C>
+# `make -C andai load-test` refuses a stack whose bot image is not the mock or whose cap differs
+# (andai/docs/load-test.md). Never use this overlay for real meetings.
+
+munshi:
+  runtime:
+    browserImage: ghcr.io/andai/munshi-mock-bot:0.1.0
+    workloadResources:
+      meetingBot:
+        cpu: 0.25
+        memoryMb: 256

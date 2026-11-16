@@ -1,0 +1,68 @@
+# Render fixture for the static chart tests (deploy/helm/tests/test_andai_*.sh): a small single-node
+# install with SeaweedFS on, GPU pools and monitoring off (the tests turn them on with --set). Every
+# Secret named here is one an installer creates in the namespace first (andai/docs/kubernetes.md);
+# nothing secret is in this file. munshi.database.password is a render-only value.
+
+global:
+  imagePullPolicy: IfNotPresent
+
+andai:
+  andaiEnv: production
+  kek:
+    existingSecret: andai-kek
+  smtp:
+    host: smtp.example.test
+    port: 587
+    user: munshi
+    existingSecret: andai-smtp
+  alertEmail: ops@example.test
+  intake:
+    addresses: notetaker@example.test
+  portal:
+    origin: https://munshi.example.test
+    ingress:
+      enabled: true
+      className: traefik
+      host: munshi.example.test
+
+munshi:
+  database:
+    password: helm-render-test-only
+  runtime:
+    maxActiveBots: 4
+  gateway:
+    replicaCount: 1
+  adminApi:
+    replicaCount: 1
+  meetingApi:
+    replicaCount: 1
+  terminal:
+    replicaCount: 1
+  postgres:
+    persistence:
+      size: 2Gi
+  redis:
+    persistence:
+      size: 1Gi
+  podDisruptionBudgets:
+    gateway:
+      enabled: false
+    adminApi:
+      enabled: false
+    meetingApi:
+      enabled: false
+    terminal:
+      enabled: false
+    runtime:
+      enabled: false
+    agentApi:
+      enabled: false
+
+seaweedfs:
+  volume:
+    dataDirs:
+      - name: data1
+        type: persistentVolumeClaim
+        size: 5Gi
+        storageClass: ""
+        maxVolumes: 0

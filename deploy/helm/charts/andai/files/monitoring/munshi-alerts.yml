@@ -1,0 +1,113 @@
+# munshi.ai alert rules (OPS-05, D-62). Prometheus loads every *.yml in this directory.
+# What each alert means and what to check first: andai/docs/runbooks/alerts.md.
+#
+# Every rule carries exactly two labels, both from closed sets, and one fixed `summary`:
+#   service:  bot-joins | pipeline | storage | erasure | andai-core | andai-worker | andai-intake | node-exporter
+#   severity: critical | warning
+# Alertmanager's munshi templates print only the alert name, service, severity and summary, so
+# nothing a series carries (platform, stage, mount point, instance) reaches a notification. Rules
+# aggregate or match only by the metric label allowlist (andai/docs/metrics.md).
+# `andai/services/worker/tests/test_monitoring_rules.py` enforces all of this, and
+# `tests/munshi-alerts.test.yml` (promtool test rules) proves each threshold.
+#
+# Storage mounts (operator-editable): MunshiStorageHigh watches the filesystems whose mount point,
+# as the node exporter reports it, matches
+#   ^/$|^/host(/.*)?$
+# In Compose the node exporter sees the host's root read-only at /host, so this is every host
+# filesystem holding Docker's data, the Postgres and object-storage volumes included. Change the
+# regex in both selectors of the rule (and its unit test) to watch other mounts.
+
+groups:
+  - name: munshi
+    interval: 30s
+    rules:
+      # Bot joins (BOT-04, D-34, D-39) — the same conditions as the worker's alert mail.
+      - alert: MunshiCanaryFailing
+        expr: max by (platform) (munshi_canary_consecutive_failures) >= 2
+        labels:
+          service: bot-joins
+          severity: critical
+        annotations:
+          summary: Two or more canary joins in a row failed on one platform
+
+      - alert: MunshiJoinSuccessLow
+        expr: |
+          (max by (platform) (munshi_join_success_ratio_24h{source="all"}) < 0.95)
+          and on (platform)
+          (sum by (platform) (munshi_bot_joins_total{outcome=~"success|failure"}) >= 5)
+        labels:
+          service: bot-joins
+          severity: warning
+        annotations:
+          summary: Bot join success over 24 hours is below 95 percent on one platform
+
+      # Pipelines (andai_pipeline_stats): the oldest item a stage still owes, per stage.
+      - alert: MunshiPipelineBacklog
+        expr: max by (stage) (munshi_pipeline_oldest_pending_seconds) > 900
+        for: 1m
+        labels:
+          service: pipeline
+          severity: warning
+        annotations:
+          summary: Pipeline backlog older than 15 minutes
+
+      # Storage: filesystem use on the watched mounts (node exporter).
+      - alert: MunshiStorageHigh
+        expr: |
+          max(
+            1 - node_filesystem_avail_bytes{mountpoint=~"^/$|^/host(/.*)?$"}
+              / node_filesystem_size_bytes{mountpoint=~"^/$|^/host(/.*)?$"}
+          ) > 0.80
+        for: 10m
+        labels:
+          service: storage
+          severity: critical
+        annotations:
+          summary: A storage filesystem is more than 80 percent full
+
+      # User erasure (OPS-02, D-61): 18 of the 24 hours used, or a request needs the operator.
+      - alert: MunshiErasureSlaAtRisk
+        expr: max(munshi_erasure_oldest_pending_seconds) > 64800 or max(munshi_erasures_failed) > 0
+        labels:
+          service: erasure
+          severity: critical
+        annotations:
+          summary: A user erasure request may miss its 24 hour deadline
+
+      # A metrics endpoint that cannot be scraped would hide every alert above.
+      - alert: MunshiTargetDown
+        expr: up{job="andai-core"} == 0
+        for: 5m
+        labels:
+          service: andai-core
+          severity: critical
+        annotations:
+          summary: A munshi metrics endpoint cannot be scraped
+
+      - alert: MunshiTargetDown
+        expr: up{job="andai-worker"} == 0
+        for: 5m
+        labels:
+          service: andai-worker
+          severity: critical
+        annotations:
+          summary: A munshi metrics endpoint cannot be scraped
+
+      - alert: MunshiTargetDown
+        expr: up{job="andai-intake"} == 0
+        for: 5m
+        labels:
+          service: andai-intake
+          severity: critical
+        annotations:
+          summary: A munshi metrics endpoint cannot be scraped
+
+      # Found by DNS (prometheus.yml): a stopped exporter can leave no target at all, hence absent().
+      - alert: MunshiTargetDown
+        expr: up{job="node-exporter"} == 0 or absent(up{job="node-exporter"})
+        for: 5m
+        labels:
+          service: node-exporter
+          severity: critical
+        annotations:
+          summary: A munshi metrics endpoint cannot be scraped

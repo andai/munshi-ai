@@ -1,0 +1,160 @@
+# Perses dashboard (OPS-05), provisioned into project `munshi` from
+# /etc/perses/provisioning; edit here, not in the UI. GPU utilisation (dcgm-exporter; no data without GPU nodes).
+# Series and labels: andai/docs/metrics.md. Checked by
+# andai/services/worker/tests/test_monitoring_dashboards.py and `make -C andai monitoring-check`.
+kind: Dashboard
+metadata:
+  name: gpu
+  project: munshi
+spec:
+  display:
+    name: GPU
+  duration: 6h
+  refreshInterval: 1m
+  variables: []
+  panels:
+    note:
+      kind: Panel
+      spec:
+        display:
+          name: No GPU nodes means no data
+        plugin:
+          kind: Markdown
+          spec:
+            text: |-
+              GPU metrics come from NVIDIA dcgm-exporter (4.9 metric names) on the GPU nodes of a Kubernetes cluster. **No GPU nodes: this dashboard shows no data.** That is the expected state on Compose, which runs no dcgm-exporter, and on CPU-only clusters; every panel falls back to 0.
+    gpuCount:
+      kind: Panel
+      spec:
+        display:
+          name: GPUs reporting
+          description: GPUs dcgm-exporter reports; 0 without GPU nodes.
+        plugin:
+          kind: StatChart
+          spec:
+            calculation: last-number
+            format:
+              unit: decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: count(DCGM_FI_DEV_GPU_UTIL_RATIO) or vector(0)
+                seriesNameFormat: GPUs
+    gpuUtil:
+      kind: Panel
+      spec:
+        display:
+          name: GPU utilisation (average, maximum)
+          description: DCGM_FI_DEV_GPU_UTIL_RATIO across every GPU; 0 without GPU nodes.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: percent-decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: avg(DCGM_FI_DEV_GPU_UTIL_RATIO) or vector(0)
+                seriesNameFormat: average
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: max(DCGM_FI_DEV_GPU_UTIL_RATIO) or vector(0)
+                seriesNameFormat: maximum
+    gpuMemory:
+      kind: Panel
+      spec:
+        display:
+          name: GPU memory used and capacity
+          description: DCGM_FI_DEV_FB_USED_BYTES and DCGM_FI_DEV_FB_CAPACITY_BYTES summed over every GPU;
+            0 without GPU nodes.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: bytes
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum(DCGM_FI_DEV_FB_USED_BYTES) or vector(0)
+                seriesNameFormat: used
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: sum(DCGM_FI_DEV_FB_CAPACITY_BYTES) or vector(0)
+                seriesNameFormat: capacity
+    gpuMemoryUtil:
+      kind: Panel
+      spec:
+        display:
+          name: GPU memory utilisation (average)
+          description: DCGM_FI_DEV_MEMORY_UTIL_RATIO across every GPU; 0 without GPU nodes.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: bottom
+            yAxis:
+              format:
+                unit: percent-decimal
+        queries:
+        - kind: TimeSeriesQuery
+          spec:
+            plugin:
+              kind: PrometheusTimeSeriesQuery
+              spec:
+                query: avg(DCGM_FI_DEV_MEMORY_UTIL_RATIO) or vector(0)
+                seriesNameFormat: average
+  layouts:
+  - kind: Grid
+    spec:
+      items:
+      - x: 0
+        y: 0
+        width: 24
+        height: 4
+        content:
+          $ref: '#/spec/panels/note'
+      - x: 0
+        y: 4
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/gpuCount'
+      - x: 12
+        y: 4
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/gpuUtil'
+      - x: 0
+        y: 12
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/gpuMemory'
+      - x: 12
+        y: 12
+        width: 12
+        height: 8
+        content:
+          $ref: '#/spec/panels/gpuMemoryUtil'

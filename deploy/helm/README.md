@@ -9,7 +9,18 @@ is the **spawn substrate**: on k8s the `runtime` launches the bot and agent-work
 `kubectl`, under a chart-provided ServiceAccount/RBAC), selected by `RUNTIME_BACKEND=k8s` — not the
 host Docker socket.
 
-## Chart
+## Charts
+
+[`charts/andai`](charts/andai/) — **munshi.ai on Kubernetes**: the umbrella chart over `charts/munshi`
+(a `file://` dependency) with the andai services, SeaweedFS (SSE-S3, telemetry off) or your own S3,
+GPU pools, the bot pool and opt-in monitoring (Prometheus 3.13 LTS, Alertmanager, Perses; no
+Grafana). Install it with [`andai/docs/kubernetes.md`](../../andai/docs/kubernetes.md):
+
+```bash
+make -C deploy/helm andai-deps       # vendor the pinned subcharts (network once) + package charts/munshi
+make -C deploy/helm andai-test       # monitoring files in sync, lint, render assertions (no cluster)
+make -C deploy/helm andai-sync-monitoring   # after editing andai/deploy/monitoring
+```
 
 [`charts/munshi`](charts/munshi/) — the full multi-service deployment. Production-hardened scaffolding
 carried from the 0.10.6.3 baseline: zero-downtime `RollingUpdate` (maxSurge 1 / maxUnavailable 0),
@@ -41,6 +52,7 @@ curl -sf localhost:8000/health
 
 ```bash
 make -C deploy/helm test     # static gate:helm — lint + render assertions, no cluster
+make -C deploy/helm andai-test   # the same for the andai umbrella chart (node scripts/gates.mjs helm runs both)
 make -C deploy/helm smoke    # build 5 images → import into k3s containerd → S3 fixture → install → status
 make -C deploy/helm down     # uninstall + drop namespace
 ```
