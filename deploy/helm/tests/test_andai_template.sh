@@ -467,7 +467,7 @@ lock = yaml.safe_load((root / "deploy/helm/charts/andai/Chart.lock").read_text()
 munshi = yaml.safe_load((root / "deploy/helm/charts/munshi/Chart.yaml").read_text())["version"]
 pinned = {d["name"]: d["version"] for d in chart["dependencies"]}["munshi"]
 locked = {d["name"]: d["version"] for d in lock["dependencies"]}["munshi"]
-check(munshi == pinned == locked == "0.12.4", f"munshi chart 0.12.4, pinned and locked ({munshi}/{pinned}/{locked})")
+check(munshi == pinned == locked == "0.12.5", f"munshi chart 0.12.5, pinned and locked ({munshi}/{pinned}/{locked})")
 
 sys.exit(1 if failures else 0)
 PY

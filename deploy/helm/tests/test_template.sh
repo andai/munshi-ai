@@ -84,14 +84,14 @@ expect_env "$RENDER_DEFAULT_CAP" RUNTIME_MAX_ACTIVE_BOTS '""' "no cap when unset
 
 # Fast refusals at the cap, bounded kubectl, finished bot Pods deleted, transcript streams expiring:
 # defaults from values.yaml, and a 0 that reaches the service as "0" (off), not as the default.
-expect_env "$RENDER" RUNTIME_CAP_RECHECK_S '"2"' "cap re-check interval default"
+expect_env "$RENDER" RUNTIME_CAP_RECHECK_S '"2"' "cap reconcile interval default"
 expect_env "$RENDER" RUNTIME_KUBECTL_TIMEOUT_S '"20"' "kubectl timeout default"
 expect_env "$RENDER" RUNTIME_FINISHED_POD_TTL_S '"300"' "finished bot Pods kept 300 s"
 expect_env "$RENDER" TC_STREAM_TTL_S '"86400"' "transcript streams expire a day after the session"
 RENDER_OFF="$(helm template munshi "$CHART" -n munshi -f "$CHART/values-test.yaml" \
-  --set runtime.capRecheckS=0 --set runtime.finishedPodTtlS=0 --set runtime.kubectlTimeoutS=45 \
+  --set runtime.capRecheckS=0.5 --set runtime.finishedPodTtlS=0 --set runtime.kubectlTimeoutS=45 \
   --set meetingApi.tcStreamTtlS=0)"
-expect_env "$RENDER_OFF" RUNTIME_CAP_RECHECK_S '"0"' "re-check on every create at the cap"
+expect_env "$RENDER_OFF" RUNTIME_CAP_RECHECK_S '"0.5"' "cap reconcile interval override"
 expect_env "$RENDER_OFF" RUNTIME_FINISHED_POD_TTL_S '"0"' "finished-Pod sweep off"
 expect_env "$RENDER_OFF" RUNTIME_KUBECTL_TIMEOUT_S '"45"' "kubectl timeout override"
 expect_env "$RENDER_OFF" TC_STREAM_TTL_S '"0"' "transcript stream expiry off"
@@ -590,6 +590,11 @@ for k in AWS_DEFAULT_REGION AWS_CA_BUNDLE AWS_PROFILE AWS_SHARED_CREDENTIALS_FIL
   refuse "extraEnv setting $k" \
     "meetingApi\\.extraEnv sets $k, which the chart now sets from storage\\.s3\\. Put the value in storage\\.s3 and remove it from meetingApi\\.extraEnv\\." \
     -f "$CHART/values-test.yaml" --set "meetingApi.extraEnv[0].name=$k" --set 'meetingApi.extraEnv[0].value=override'
+done
+
+for v in 0 -1; do
+  refuse "capRecheckS=$v" 'runtime\.capRecheckS must be a number of seconds above 0' \
+    -f "$CHART/values-test.yaml" --set "runtime.capRecheckS=$v"
 done
 
 [ "$fail" -eq 0 ] && { echo "gate:helm PASS"; exit 0; } || { echo "gate:helm FAIL"; exit 1; }
