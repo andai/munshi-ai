@@ -440,3 +440,8 @@ class RedisBus(Protocol):
         ``payload`` field). The collector is the SINGLE writer of the per-meeting native transcript
         feed ``tc:meeting:{native}`` (P23) — the copilot worker + terminal SSE read it."""
         ...
+
+    async def expire(self, key: str, seconds: int) -> Any:
+        """Set ``key`` to expire in ``seconds`` (EXPIRE) — the backstop that bounds a per-meeting
+        transcript stream's life after its session ended."""
+        ...

@@ -92,6 +92,12 @@ spec:
                   key: ADMIN_API_TOKEN
             - name: DEFAULT_BOT_NAME
               value: {{ .Values.meetingApi.defaultBotName | default "" | quote }}
+            # Seconds a meeting's tc:meeting:{id} transcript stream lives after its session ended
+            # (deleting the meeting deletes it at once); 0 = no expiry.
+            - name: TC_STREAM_TTL_S
+              value: {{ .Values.meetingApi.tcStreamTtlS | toString | quote }}
+            # Empty ⇒ a bot dispatch that asks for transcription (the default) is refused with 503
+            # transcription_not_configured unless the user set a backend in Settings.
             - name: TRANSCRIPTION_SERVICE_URL
               value: {{ .Values.meetingApi.transcriptionServiceUrl | default "" | quote }}
             - name: TRANSCRIPTION_SERVICE_TOKEN

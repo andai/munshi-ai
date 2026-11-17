@@ -39,8 +39,16 @@ uv run pytest -q
 - ✅ delivered — cluster-wide concurrent-bot cap (`RUNTIME_MAX_ACTIVE_BOTS`; unset or 0 = none): a
   meeting-bot create over it is refused at once with 429 `capacity_exhausted` before any container or
   Pod exists. Count and `starting` record are written under one lock, so the cap is exact for one
-  runtime process (the chart runs one replica); at the cap, running records are checked against the
-  substrate first, so a bot that exited on its own frees its slot. Agent workers are not counted.
+  runtime process (the chart runs one replica). The lock covers the store only: at the cap, one
+  create at a time checks the substrate (listing, exit reads, the callbacks of bots found exited)
+  outside the lock, at most once per `RUNTIME_CAP_RECHECK_S` (default 2 s), then counts again before
+  writing; every other create at the cap is refused at once, so refusals never queue behind a slow
+  listing. A bot that exited on its own frees its slot at the next check. Agent workers are not counted.
+- ✅ delivered — k8s: every kubectl call is bounded by `RUNTIME_KUBECTL_TIMEOUT_S` (default 20 s; a
+  timed-out exit read leaves the workload running). Finished bot Pods are deleted: at once when the
+  runtime sees the exit (after the record is marked stopped), and by a sweep every 60 s of
+  `runtime.managed=true` Pods finished longer than `RUNTIME_FINISHED_POD_TTL_S` (default 300; 0 = off).
+  Pending and Running Pods are never deleted.
 - ✅ delivered — k8s bot Pods get a memory-backed `/dev/shm` emptyDir (`RUNTIME_K8S_SHM_SIZE`, default
   `2Gi`, empty = off; an invalid quantity is fatal at boot). It counts against the memory limit, so the
   chart's bot default is 2560Mi.

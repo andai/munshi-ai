@@ -278,6 +278,21 @@ refused **at once**, before any Pod is created: the runtime answers 429 `capacit
 meeting-api fails that meeting, and munshi.ai shows it as failed with `capacity_exhausted`. Agent
 workers are not counted. Empty or `0` means no cap.
 
+Refusals do not wait for the cluster. The runtime counts from its own records; at the cap, one
+create at a time asks the cluster (`kubectl get pods`) whether a bot it still counts has exited, at
+most every `runtime.capRecheckS` seconds (`RUNTIME_CAP_RECHECK_S`, default **2**), and every other
+create at the cap is refused straight away. A slot freed by a bot that exited on its own is reused
+by the first create after the next check. Each kubectl call is killed after
+`runtime.kubectlTimeoutS` seconds (`RUNTIME_KUBECTL_TIMEOUT_S`, default **20**), so a slow API server
+fails a call instead of stalling the runtime.
+
+**Finished bot Pods are deleted.** A bot Pod has `restartPolicy: Never`, so after the bot exits it
+stays `Succeeded` or `Failed` until something deletes it. The runtime deletes it as soon as it sees
+the exit (after recording the exit code), and a sweep every 60 s deletes the runtime's Pods
+(`runtime.managed=true`) that finished more than `runtime.finishedPodTtlS` seconds ago
+(`RUNTIME_FINISHED_POD_TTL_S`, default **300**; `0` turns the sweep off). `Pending` and `Running`
+Pods are never deleted. The runtime's Role already allows Pod deletion.
+
 Size the cap from the bot nodes, not from the namespace:
 
 ```text
@@ -527,6 +542,12 @@ Everything the chart deploys pulls from images you build and host in your own re
 with the [self-hosted transcription unit](/deployment#transcription-the-separate-gpu-unit) — bundled
 GPU or CPU — and your own LLM endpoint ([Configuration](/configuration)) so the audio path never
 calls out. See [Security & compliance](/security-compliance).
+
+**Speech-to-text is required for bots.** With `meetingApi.transcriptionServiceUrl` empty,
+meeting-api refuses every bot dispatch that asks for transcription (the default) with **503
+`transcription_not_configured`**, unless the user has set a backend in Settings; it does not fall
+back to capture-only. A capture-only bot is an explicit choice: `transcribe_enabled: false` on
+`POST /bots`.
 
 **One gap on this path, and it is this chart's:** `TRANSCRIPTION_MODEL` is **not values-plumbed**
 — set it on the meeting-api and terminal Deployments via `extraEnv` until it lands, which the

@@ -14,10 +14,18 @@ Cluster cap: with ``cluster_cap`` set, create() refuses a meeting bot at once (C
 HTTP 429 ``capacity_exhausted``) when that many bots are already starting or running, before any
 container or Pod exists — overflow is a defined refusal, never a Pod left Pending. The count and the
 ``starting`` record are written under one lock, so concurrent creates cannot both take the last
-slot; the lock is per process, so the cap is exact only with a single runtime replica."""
+slot; the lock is per process, so the cap is exact only with a single runtime replica. The lock
+covers the store only: the substrate re-check at the cap (a listing, exit reads and the lifecycle
+events of bots found exited) runs outside it, by one create at a time and at most once per
+``cap_recheck_s``; every other create at the cap is refused from the store's count at once.
+
+Finished workloads: on a backend that offers ``reclaim_finished`` (Kubernetes, where a bare Pod with
+restartPolicy Never stays Succeeded/Failed until deleted), a workload observed to have exited is
+reclaimed after its record is marked stopped, and ``sweep_finished`` deletes finished ones the
+runtime never observed."""
 from __future__ import annotations
 
-import contextlib
+import logging
 import threading
 import time
 from datetime import datetime, timezone
@@ -35,6 +43,12 @@ from .store import (
     WorkloadStore,
     default_owner,
 )
+
+
+logger = logging.getLogger("runtime_kernel.kernel")
+
+# How often, at most, a create at the cluster cap checks the substrate for bots that exited unseen.
+DEFAULT_CAP_RECHECK_S = 2.0
 
 
 class QuotaExceeded(Exception):
@@ -92,6 +106,7 @@ class Runtime:
         owner_resolver: OwnerResolver = default_owner,
         owner_quota: Optional[int] = None,
         cluster_cap: Optional[int] = None,
+        cap_recheck_s: float = DEFAULT_CAP_RECHECK_S,
     ) -> None:
         self.backend: Backend = backend or ProcessBackend()
         # `profiles` accepts a ProfileRegistry, a plain {name: Runnable|command} dict (legacy/tests),
@@ -105,7 +120,13 @@ class Runtime:
         self.owner_quota = owner_quota
         # Cluster-wide concurrent meeting bots; None (or 0) means no cap.
         self.cluster_cap = cluster_cap or None
+        self.cap_recheck_s = cap_recheck_s
+        # Guards the store's count and the `starting` write — never a substrate call or an event.
         self._admission_lock = threading.Lock()
+        # The substrate re-check at the cap: whether one is running, and when the last one ended
+        # (clock seconds; None = never). Both are read and written under the admission lock.
+        self._recheck_running = False
+        self._last_recheck: Optional[float] = None
         # Live, non-serializable backend handles. Empty on a fresh process (post-restart).
         self._handles: dict[str, WorkloadHandle] = {}
 
@@ -216,17 +237,11 @@ class Runtime:
             workloadId=spec.workloadId, profile=spec.profile,
             state=RuntimeState.starting, backend=self.backend.name,
         )
-        capped = self.cluster_cap is not None and spec.profile == CAPPED_PROFILE
-        with self._admission_lock if capped else contextlib.nullcontext():
-            if capped:
-                # A concurrent create of the same id may have won the race since the touch check
-                # above: it is a touch, never a refusal.
-                current = self.store.get(spec.workloadId)
-                if current is not None and current.status.state in (
-                    RuntimeState.starting, RuntimeState.running,
-                ):
-                    return current.status
-                self._refuse_over_cluster_cap()
+        if self.cluster_cap is not None and spec.profile == CAPPED_PROFILE:
+            touched = self._admit_under_cluster_cap(spec, status)
+            if touched is not None:
+                return touched
+        else:
             self._persist(spec, status)
         self._emit(spec.workloadId, RuntimeState.starting)
         try:
@@ -261,16 +276,65 @@ class Runtime:
         self._emit(spec.workloadId, RuntimeState.running, ports={})
         return status
 
-    def _refuse_over_cluster_cap(self) -> None:
-        """Raise ClusterCapExceeded when the cap's slots are all held. Caller holds the lock.
+    def _admit_under_cluster_cap(
+        self, spec: WorkloadSpec, status: WorkloadStatus,
+    ) -> Optional[WorkloadStatus]:
+        """Write the ``starting`` record if a cluster-cap slot is free; return the live status for a
+        touch of a bot that is already starting or running; raise ClusterCapExceeded otherwise.
 
         The store's states are last-known: a bot that exited on its own stays ``running`` until
-        something reads it. So at the cap, the running records are checked against the substrate
-        (one listing where the backend has one, then a per-workload read of those not found live)
-        and counted again before refusing."""
+        something reads it. So at the cap one create re-checks the substrate — outside the lock, at
+        most once per ``cap_recheck_s`` — and then counts again under the lock before it writes, so
+        two creates never take one freed slot. Creates arriving while a re-check runs, or within the
+        interval after one, are refused from the store's count at once instead of queueing."""
         cap = self.cluster_cap
-        if cap is None or self.store.count_active(_CAP_COUNTED) < cap:
-            return
+        with self._admission_lock:
+            admitted, touched = self._try_admit_locked(spec, status)
+            if admitted:
+                return touched
+            if self._recheck_running or not self._recheck_due():
+                raise ClusterCapExceeded(cap)
+            self._recheck_running = True
+        try:
+            self._reconcile_capped_with_substrate()
+        finally:
+            with self._admission_lock:
+                self._recheck_running = False
+                self._last_recheck = self.clock.now()
+        with self._admission_lock:
+            admitted, touched = self._try_admit_locked(spec, status)
+            if admitted:
+                return touched
+        raise ClusterCapExceeded(cap)
+
+    def _try_admit_locked(
+        self, spec: WorkloadSpec, status: WorkloadStatus,
+    ) -> tuple[bool, Optional[WorkloadStatus]]:
+        """Caller holds the admission lock. (True, live status) for a touch — a concurrent create of
+        the same id may have won since create()'s touch check, and a touch is never a refusal;
+        (True, None) after writing the ``starting`` record into a free slot; (False, None) at the
+        cap. Store reads and one write only."""
+        current = self.store.get(spec.workloadId)
+        if current is not None and current.status.state in (
+            RuntimeState.starting, RuntimeState.running,
+        ):
+            return True, current.status
+        if self.store.count_active(_CAP_COUNTED) < self.cluster_cap:
+            self._persist(spec, status)
+            return True, None
+        return False, None
+
+    def _recheck_due(self) -> bool:
+        return (
+            self._last_recheck is None
+            or self.clock.now() - self._last_recheck >= self.cap_recheck_s
+        )
+
+    def _reconcile_capped_with_substrate(self) -> None:
+        """Reflect capped bots that exited on their own: one listing where the backend has one, then
+        a per-workload read of the ``running`` records not found live. Runs without the admission
+        lock; each read that finds an exit persists ``stopped`` and emits its event (the callback)
+        from this thread. A failed read leaves that record as it was."""
         running = [
             r.spec.workloadId for r in self.store.list()
             if r.spec.profile in _CAP_COUNTED and r.status.state == RuntimeState.running
@@ -283,11 +347,53 @@ class Runtime:
             except Exception:  # noqa: BLE001 — a failed listing only means "check each one"
                 live = set()
         for workload_id in running:
-            if workload_id not in live:
-                with contextlib.suppress(KeyError):
-                    self.get(workload_id)                   # reflects an exit to `stopped`
-        if self.store.count_active(_CAP_COUNTED) >= cap:
-            raise ClusterCapExceeded(cap)
+            if workload_id in live:
+                continue
+            try:
+                self.get(workload_id)                       # reflects an exit to `stopped`
+            except KeyError:
+                pass
+            except Exception as exc:  # noqa: BLE001 — a failed read never turns a refusal into a 500
+                logger.warning("cap re-check: reading %s failed: %s", workload_id, exc)
+
+    def _reclaim_exited(self, workload_id: str, handle: WorkloadHandle) -> None:
+        """Delete a workload the substrate keeps after it exited (a finished Pod). Called only after
+        its record is persisted ``stopped``; the backend deletes it only if it has finished. Never
+        raises: the periodic sweep is the backstop."""
+        reclaim = getattr(self.backend, "reclaim_finished", None)
+        if reclaim is None:
+            return
+        try:
+            reclaim(handle)
+        except Exception as exc:  # noqa: BLE001 — a failed delete is retried by the sweep
+            logger.warning("reclaiming exited workload %s failed: %s", workload_id, exc)
+            return
+        self._handles.pop(workload_id, None)
+
+    def sweep_finished(self, ttl_s: float) -> int:
+        """Delete the finished workloads the backend reports as done for at least ``ttl_s`` seconds
+        (``finished_workloads``; Kubernetes only). A record still ``running`` is marked ``stopped``
+        with the reported exit code first, so the exit is not lost with the Pod. ``ttl_s`` 0 or
+        less ⇒ off. Returns how many were deleted."""
+        finder = getattr(self.backend, "finished_workloads", None)
+        if ttl_s <= 0 or finder is None:
+            return 0
+        swept = 0
+        for info in finder(older_than_s=ttl_s, now=self.clock.now()):
+            workload_id = info["workload_id"]
+            record = self.store.get(workload_id)
+            if record is not None and record.status.state == RuntimeState.running:
+                self._record_exit(record, info["exit_code"])
+            try:
+                self.backend.cleanup(WorkloadHandle(id=workload_id, impl=info["name"]))
+            except Exception as exc:  # noqa: BLE001 — the next sweep tries again
+                logger.warning("sweep: deleting %s failed: %s", info["name"], exc)
+                continue
+            self._handles.pop(workload_id, None)
+            swept += 1
+        if swept:
+            logger.info("swept %d finished workload(s) older than %ss", swept, ttl_s)
+        return swept
 
     def get(self, workload_id: str) -> WorkloadStatus:
         record = self._record(workload_id)
@@ -303,13 +409,20 @@ class Runtime:
         if status.state == RuntimeState.running and handle is not None:
             code = self.backend.exit_code(handle)
             if code is not None:
-                status.state = RuntimeState.stopped
-                status.exitCode = code
-                status.stoppedAt = _now()
-                status.stopReason = StopReason.completed if code == 0 else StopReason.failed
-                self._persist(record.spec, status)
-                self._emit(workload_id, RuntimeState.stopped, exitCode=code, stopReason=status.stopReason)
+                self._record_exit(record, code)
+                self._reclaim_exited(workload_id, handle)
         return status
+
+    def _record_exit(self, record: WorkloadRecord, code: int) -> None:
+        """Persist and emit the ``stopped`` state of a workload that exited on its own."""
+        status = record.status
+        status.state = RuntimeState.stopped
+        status.exitCode = code
+        status.stoppedAt = _now()
+        status.stopReason = StopReason.completed if code == 0 else StopReason.failed
+        self._persist(record.spec, status)
+        self._emit(record.spec.workloadId, RuntimeState.stopped, exitCode=code,
+                   stopReason=status.stopReason)
 
     def list(self) -> list[WorkloadStatus]:
         return [self.get(r.spec.workloadId) for r in self.store.list()]

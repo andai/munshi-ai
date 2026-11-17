@@ -1,6 +1,8 @@
 """#116 — completed meeting transcript + recording-object erasure."""
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from meeting_api import create_app
@@ -167,3 +169,64 @@ def test_meeting_delete_removes_the_prefixed_objects_and_only_those():
     assert response.status_code == 204
     assert set(storage.blobs) == survivors
     assert "recordings" not in store._meetings[MEETING_ID]["data"]
+
+
+# ── the live Redis state of a deleted meeting ────────────────────────────────────────────────────
+
+
+async def _redis_fixture():
+    import fakeredis.aioredis
+
+    redis = fakeredis.aioredis.FakeRedis()
+    store = InMemoryTranscriptStore(redis_client=redis)
+    store.seed_meeting(
+        meeting_id=MEETING_ID, user_id=OWNER, platform="google_meet",
+        native_meeting_id="private-room", status="completed",
+    )
+    # What a finished meeting leaves in Valkey: the per-meeting transcript stream the copilot worker
+    # and the terminal read, the live segment hash and the processed-notes stream.
+    await redis.xadd(f"tc:meeting:{MEETING_ID}", {"payload": json.dumps({"text": "confidential"})})
+    await redis.xadd(f"tc:meeting:{MEETING_ID}", {"type": "session_end", "uid": "private-room"})
+    await redis.hset(f"meeting:{MEETING_ID}:segments", "s1", json.dumps({"text": "confidential"}))
+    await redis.xadd(f"proc:meeting:{MEETING_ID}", {"payload": "{}"})
+    await redis.xadd("tc:meeting:42", {"payload": json.dumps({"text": "another meeting"})})
+    return redis, store
+
+
+async def test_finalize_deletes_the_meetings_transcript_stream():
+    redis, store = await _redis_fixture()
+
+    assert await store.finalize_completed_artifact_deletion(OWNER, MEETING_ID) is True
+
+    assert await redis.exists(f"tc:meeting:{MEETING_ID}") == 0
+    assert await redis.exists(f"meeting:{MEETING_ID}:segments", f"proc:meeting:{MEETING_ID}") == 0
+    assert await redis.exists("tc:meeting:42") == 1                  # other meetings untouched
+    await redis.aclose()
+
+
+async def test_the_live_state_purge_names_every_per_meeting_key():
+    """Both stores (SQL adapter and fake) purge through this one helper."""
+    from meeting_api.collector.db_writer import purge_meeting_live_state
+
+    redis, _ = await _redis_fixture()
+    await redis.sadd("active_meetings", str(MEETING_ID), "42")
+
+    await purge_meeting_live_state(redis, MEETING_ID)
+
+    for key in (f"tc:meeting:{MEETING_ID}", f"meeting:{MEETING_ID}:segments",
+                f"proc:meeting:{MEETING_ID}"):
+        assert await redis.exists(key) == 0, key
+    assert await redis.smembers("active_meetings") == {b"42"}
+    assert await redis.exists("tc:meeting:42") == 1
+    await redis.aclose()
+
+
+def test_the_sql_store_purges_through_the_shared_helper():
+    """The SQL adapter cannot run here (no SQLAlchemy in this venv); its finalize must call the
+    helper the fake's test exercises, not a key list of its own."""
+    import inspect
+
+    from meeting_api.collector.adapters import SqlAlchemyTranscriptStore
+
+    source = inspect.getsource(SqlAlchemyTranscriptStore.finalize_completed_artifact_deletion)
+    assert "purge_meeting_live_state(self._redis, meeting_id)" in source

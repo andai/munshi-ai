@@ -12,6 +12,7 @@ Asserts:
 """
 from __future__ import annotations
 
+import importlib
 import json
 
 import fakeredis.aioredis
@@ -172,3 +173,102 @@ async def test_consume_segments_drains_a_fakeredis_batch(store, bus):
     assert {s["text"] for s in doc["segments"]} == {"one", "two"}
     # acked: a second drain reads nothing new
     assert await consume_segments(store, bus) == 0
+
+
+# ── the per-meeting transcript stream expires after the session ends ───────────────────────────────
+
+
+def _session_end(meeting_id: int) -> dict:
+    return {"payload": json.dumps({"type": "session_end", "meeting_id": str(meeting_id),
+                                   "native_meeting_id": "abc-defg-hij"})}
+
+
+async def test_session_end_sets_the_stream_expiry(store, bus):
+    ingest_mod = importlib.import_module("meeting_api.collector.ingest")
+
+    await ingest(store, bus, _message(1, [
+        {"segment_id": "a", "start": 0.0, "end": 1.0, "text": "one", "completed": True},
+    ]))
+    assert await bus._client.ttl("tc:meeting:1") == -1              # no expiry while it runs
+
+    await ingest(store, bus, _session_end(1))
+
+    ttl = await bus._client.ttl("tc:meeting:1")
+    assert ingest_mod.TC_STREAM_TTL_S == 86400
+    assert 86400 - 5 <= ttl <= 86400
+
+
+async def test_the_stream_expiry_comes_from_tc_stream_ttl_s(store, bus, monkeypatch):
+    ingest_mod = importlib.import_module("meeting_api.collector.ingest")
+
+    monkeypatch.setattr(ingest_mod, "TC_STREAM_TTL_S", 600)
+    await ingest(store, bus, _session_end(1))
+    assert 595 <= await bus._client.ttl("tc:meeting:1") <= 600
+
+
+async def test_a_zero_ttl_sets_no_expiry(store, bus, monkeypatch):
+    ingest_mod = importlib.import_module("meeting_api.collector.ingest")
+
+    monkeypatch.setattr(ingest_mod, "TC_STREAM_TTL_S", 0)
+    await ingest(store, bus, _session_end(1))
+    assert await bus._client.exists("tc:meeting:1") == 1
+    assert await bus._client.ttl("tc:meeting:1") == -1
+
+
+@pytest.mark.parametrize("raw,ttl", [(None, 86400), ("", 86400), ("0", 0), ("3600", 3600)])
+def test_the_ttl_env_value(monkeypatch, raw, ttl):
+    from meeting_api.collector.ingest import _tc_stream_ttl_s
+
+    if raw is None:
+        monkeypatch.delenv("TC_STREAM_TTL_S", raising=False)
+    else:
+        monkeypatch.setenv("TC_STREAM_TTL_S", raw)
+    assert _tc_stream_ttl_s() == ttl
+
+
+@pytest.mark.parametrize("raw", ["-1", "1d", "1.5"])
+def test_an_invalid_ttl_is_fatal(monkeypatch, raw):
+    from meeting_api.collector.ingest import _tc_stream_ttl_s
+
+    monkeypatch.setenv("TC_STREAM_TTL_S", raw)
+    with pytest.raises(ValueError, match="TC_STREAM_TTL_S"):
+        _tc_stream_ttl_s()
+
+
+# ── first_seen_at: when a segment first reached the collector ───────────────────────────────────
+
+
+def _clock(monkeypatch) -> dict:
+    """Ingest's clock, set by the test: ``clock["now"] = "<iso>"``."""
+    ingest_mod = importlib.import_module("meeting_api.collector.ingest")
+
+    clock = {"now": ""}
+    monkeypatch.setattr(ingest_mod, "_now_iso", lambda: clock["now"])
+    return clock
+
+
+@pytest.mark.parametrize("live_hash", [False, True])
+async def test_a_new_segment_gets_first_seen_at_and_an_update_keeps_it(monkeypatch, live_hash):
+    redis = fakeredis.aioredis.FakeRedis()
+    s = InMemoryTranscriptStore(redis_client=redis if live_hash else None)
+    s.seed_meeting(user_id=7, platform="google_meet", native_meeting_id="abc-defg-hij", meeting_id=1)
+    b = FakeRedisBus(redis)
+    clock = _clock(monkeypatch)
+
+    clock["now"] = "2026-11-17T10:00:00Z"
+    await ingest(s, b, _message(1, [
+        {"segment_id": "a", "start": 0.0, "end": 1.0, "text": "draft", "completed": False},
+    ]))
+    clock["now"] = "2026-11-17T10:00:07Z"
+    await ingest(s, b, _message(1, [
+        {"segment_id": "a", "start": 0.0, "end": 2.0, "text": "draft, corrected", "completed": True},
+    ]))
+
+    if live_hash:
+        stored = json.loads(await redis.hget("meeting:1:segments", "a"))
+    else:
+        stored = s._meetings[1]["segments"]["a"]
+    assert stored["text"] == "draft, corrected" and stored["end"] == 2.0
+    assert stored["first_seen_at"] == "2026-11-17T10:00:00Z"
+    assert stored["updated_at"] == "2026-11-17T10:00:07Z"            # updated_at as before
+    await redis.aclose()

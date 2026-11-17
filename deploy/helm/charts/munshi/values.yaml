@@ -223,7 +223,15 @@ meetingApi:
     port: 8080
   defaultBotName: "Munshi"    # the bot's display name; the terminal omits bot_name so this is what
                             # participants see. Blank it to get the service's MunshiBot-{random}.
-  transcriptionServiceUrl: ""   # STT endpoint the spawned bot transcribes against (empty ⇒ capture only)
+  # STT endpoint the spawned bot transcribes against. While it is empty, meeting-api refuses every
+  # bot dispatch that asks for transcription (the default) with 503 `transcription_not_configured`,
+  # unless the user has a backend set in Settings: bots never silently capture without speech-to-text.
+  # Only a dispatch with transcribe_enabled=false spawns a capture-only bot.
+  transcriptionServiceUrl: ""
+  # Seconds a meeting's transcript stream tc:meeting:{id} (copilot worker, terminal live view) lives
+  # in Valkey after its session ended (TC_STREAM_TTL_S). Deleting the meeting deletes it at once; this
+  # is the backstop for meetings never deleted. 0 = no expiry.
+  tcStreamTtlS: 86400
   # Optional service-authority.v1 adapter JSON. Empty preserves stock OSS allow-all. A configured
   # authority must use failure_policy=closed and mode=enforce|observe; the secret lives under
   # secrets.serviceAuthoritySecret or the existing Secret key MUNSHI_SERVICE_AUTHORITY_SECRET.
@@ -288,6 +296,17 @@ runtime:
   # nodes hold: (allocatable memory of the bot nodes) / workloadResources.meetingBot.memoryMb, minus
   # headroom. Empty or 0 = no cap. See docs/docs/deployment-kubernetes.mdx.
   maxActiveBots: ""
+  # At the cap, one create at a time checks the substrate for bots that exited without anyone
+  # reading them, at most this often (RUNTIME_CAP_RECHECK_S, seconds); every other create at the cap
+  # is refused at once from the runtime's own count, so refusals never queue behind a slow
+  # `kubectl get pods`. A slot freed that way is reused after the next check. 0 = check every time.
+  capRecheckS: 2
+  # Seconds any one kubectl call may take before it is killed (RUNTIME_KUBECTL_TIMEOUT_S).
+  kubectlTimeoutS: 20
+  # A spawned Pod that finished (Succeeded/Failed) is deleted once it has been finished this many
+  # seconds (RUNTIME_FINISHED_POD_TTL_S; a sweep every 60 s; the runtime also deletes a Pod as soon
+  # as it sees the exit). Pending and Running Pods are never deleted. 0 = no sweep.
+  finishedPodTtlS: 300
   # /dev/shm of every spawned Pod (RUNTIME_K8S_SHM_SIZE): a memory-backed emptyDir. Chromium needs a
   # real one; it counts against the Pod's memory limit, which is why meetingBot.memoryMb is 2560.
   # Empty = no shm volume (the kubelet's small default).

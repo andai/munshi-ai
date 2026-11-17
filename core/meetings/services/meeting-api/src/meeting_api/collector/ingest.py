@@ -26,6 +26,7 @@ import socket
 from datetime import datetime, timezone
 from typing import Optional
 
+from .db_writer import transcript_stream_key
 from .ports import RedisBus, TranscriptStore
 
 # Stream / consumer-group defaults (parent ``collector/config.py``).
@@ -48,6 +49,26 @@ RECLAIM_MIN_IDLE_MS = int(os.environ.get("COLLECTOR_RECLAIM_MIN_IDLE_MS", "60000
 # which re-registers on its very next XREADGROUP — is never mistaken for a ghost. The ``pending == 0``
 # guard is the load-bearing safety: a consumer still holding an in-flight batch is NEVER pruned.
 CONSUMER_TTL_MS = int(os.environ.get("COLLECTOR_CONSUMER_TTL_MS", str(30 * 60 * 1000)))
+
+
+def _tc_stream_ttl_s() -> int:
+    """``TC_STREAM_TTL_S``: seconds a meeting's transcript stream ``tc:meeting:{id}`` lives after its
+    session ended (default 86400; 0 = no expiry). Not whole seconds ≥ 0 ⇒ fatal at start-up."""
+    raw = (os.environ.get("TC_STREAM_TTL_S") or "").strip()
+    if not raw:
+        return 86400
+    try:
+        ttl = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"TC_STREAM_TTL_S must be whole seconds, got {raw!r}") from exc
+    if ttl < 0:
+        raise ValueError(f"TC_STREAM_TTL_S must be 0 (no expiry) or more, got {raw!r}")
+    return ttl
+
+
+# Read once at start-up. Deleting the meeting deletes the stream at once; this expiry is the
+# backstop for every stream whose meeting is never deleted.
+TC_STREAM_TTL_S = _tc_stream_ttl_s()
 
 
 def _mutable_channel(meeting_id: int) -> str:
@@ -87,6 +108,7 @@ def _coerce_segment(raw: dict) -> Optional[dict]:
     segment_id = raw.get("segment_id")
     if not segment_id:
         return None
+    now = _now_iso()
     return {
         "segment_id": segment_id,
         "start": start,
@@ -102,7 +124,10 @@ def _coerce_segment(raw: dict) -> Optional[dict]:
         "source": source,
         "absolute_start_time": raw.get("absolute_start_time"),
         "absolute_end_time": raw.get("absolute_end_time"),
-        "updated_at": _now_iso(),
+        "updated_at": now,
+        # When this segment id first reached the collector: the store keeps the hash's existing
+        # value for an id it already holds, and the db-writer persists it as created_at.
+        "first_seen_at": now,
     }
 
 
@@ -115,7 +140,7 @@ def _transcript_stream(meeting_id: int) -> str:
     leaked one user's transcript to another) AND across ONE user's repeated meeting rows. The row id is
     unique per (user, platform, native, run), so ``tc:meeting:{meeting_id}`` isolates every meeting. The
     native id still rides in the wire payload for display (``_to_native_wire``)."""
-    return f"tc:meeting:{meeting_id}"
+    return transcript_stream_key(meeting_id)
 
 
 def _to_native_wire(native: str, seg: dict) -> dict:
@@ -189,8 +214,13 @@ async def ingest(store: TranscriptStore, redis: RedisBus, message: dict) -> int:
             meeting_id = None
         if meeting_id is not None:
             uid = data.get("native_meeting_id") or data.get("uid") or data.get("session_uid") or str(meeting_id)
+            stream = _transcript_stream(meeting_id)
             try:
-                await redis.xadd(_transcript_stream(meeting_id), {"type": "session_end", "uid": uid})
+                await redis.xadd(stream, {"type": "session_end", "uid": uid})
+                # The session is over: bound the stream's life. Deleting the meeting deletes it at
+                # once; this expiry covers the streams of meetings that are never deleted.
+                if TC_STREAM_TTL_S > 0:
+                    await redis.expire(stream, TC_STREAM_TTL_S)
             except Exception as e:  # noqa: BLE001 — best-effort; never abort the batch
                 _log_publish_failure(meeting_id, e)
         return 0

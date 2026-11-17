@@ -65,7 +65,7 @@ need 1 'name: RUNTIME_K8S_NODE_SELECTOR' "runtime carries spawn-Pod nodeSelector
 # Scale: bot Pods get a 2Gi /dev/shm, the bot limit covers it (2560Mi), and the cluster bot cap
 # reaches the runtime from values (values-test sets 4; an override wins; empty = no cap).
 env_value() {  # env_value <render> <env name> → the quoted value on the line after the name
-  grep -A1 "name: $2\$" <<< "$1" | grep 'value:' | head -1 | sed -E 's/^ *value: *//'
+  { grep -A1 "name: $2\$" <<< "$1" || true; } | grep 'value:' | head -1 | sed -E 's/^ *value: *//' || true
 }
 expect_env() {  # expect_env <render> <env name> <expected quoted value> <label>
   local got; got="$(env_value "$1" "$2")"
@@ -81,6 +81,26 @@ expect_env "$RENDER_CAP" RUNTIME_K8S_SHM_SIZE '""' "shm turned off by an empty v
 RENDER_DEFAULT_CAP="$(helm template munshi "$CHART" -n munshi -f "$CHART/values-test.yaml" \
   --set runtime.maxActiveBots=)"
 expect_env "$RENDER_DEFAULT_CAP" RUNTIME_MAX_ACTIVE_BOTS '""' "no cap when unset"
+
+# Fast refusals at the cap, bounded kubectl, finished bot Pods deleted, transcript streams expiring:
+# defaults from values.yaml, and a 0 that reaches the service as "0" (off), not as the default.
+expect_env "$RENDER" RUNTIME_CAP_RECHECK_S '"2"' "cap re-check interval default"
+expect_env "$RENDER" RUNTIME_KUBECTL_TIMEOUT_S '"20"' "kubectl timeout default"
+expect_env "$RENDER" RUNTIME_FINISHED_POD_TTL_S '"300"' "finished bot Pods kept 300 s"
+expect_env "$RENDER" TC_STREAM_TTL_S '"86400"' "transcript streams expire a day after the session"
+RENDER_OFF="$(helm template munshi "$CHART" -n munshi -f "$CHART/values-test.yaml" \
+  --set runtime.capRecheckS=0 --set runtime.finishedPodTtlS=0 --set runtime.kubectlTimeoutS=45 \
+  --set meetingApi.tcStreamTtlS=0)"
+expect_env "$RENDER_OFF" RUNTIME_CAP_RECHECK_S '"0"' "re-check on every create at the cap"
+expect_env "$RENDER_OFF" RUNTIME_FINISHED_POD_TTL_S '"0"' "finished-Pod sweep off"
+expect_env "$RENDER_OFF" RUNTIME_KUBECTL_TIMEOUT_S '"45"' "kubectl timeout override"
+expect_env "$RENDER_OFF" TC_STREAM_TTL_S '"0"' "transcript stream expiry off"
+# An empty transcription URL makes meeting-api refuse bot dispatches; the values must say so.
+if grep -q 'transcription_not_configured' "$CHART/values.yaml" && ! grep -q 'capture only' "$CHART/values.yaml"; then
+  echo "  OK: values.yaml describes an empty transcriptionServiceUrl as refused dispatches"
+else
+  echo "  FAIL: values.yaml does not describe an empty transcriptionServiceUrl as 503 transcription_not_configured"; fail=1
+fi
 
 # auth unset (values-test) → the chart Secret must NOT carry the key; auth set → it must.
 if grep -qE '^  CLAUDE_CODE_OAUTH_TOKEN:' <<< "$RENDER"; then

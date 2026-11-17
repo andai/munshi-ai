@@ -214,6 +214,36 @@ PROC_VIEW_ID = "copilot-notes"
 PROC_VIEW_KIND = "cleaned_transcript"
 
 
+def transcript_stream_key(meeting_id) -> str:
+    """The per-meeting transcript stream ``tc:meeting:{id}`` (``ingest`` is its single writer)."""
+    return f"tc:meeting:{meeting_id}"
+
+
+async def purge_meeting_live_state(redis_c, meeting_id) -> None:
+    """Delete everything Redis holds for ONE meeting row: the live segment hash, the processed-notes
+    stream and the transcript stream, and drop the row from the db-writer's sweep set. Both
+    transcript stores call this when a completed meeting's artifacts are deleted."""
+    await redis_c.delete(
+        segments_hash_key(meeting_id), proc_stream_key(meeting_id),
+        transcript_stream_key(meeting_id),
+    )
+    await redis_c.srem(ACTIVE_MEETINGS_KEY, str(meeting_id))
+
+
+def keep_first_seen(segment: dict, prior_raw) -> dict:
+    """``segment`` as it goes into the live hash: when the hash already holds this segment id, its
+    ``first_seen_at`` (when the segment first reached the collector) is kept; a new id keeps the
+    one ingest stamped. Every other field is the update's."""
+    if prior_raw is None:
+        return segment
+    try:
+        prior = json.loads(_s(prior_raw))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return segment
+    first = prior.get("first_seen_at") if isinstance(prior, dict) else None
+    return {**segment, "first_seen_at": first} if first else segment
+
+
 def segments_hash_key(meeting_id) -> str:
     """The live Redis hash of in-flight segments (``ingest`` writes it; the read path merges it)."""
     return f"meeting:{meeting_id}:segments"

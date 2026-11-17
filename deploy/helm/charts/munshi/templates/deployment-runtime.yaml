@@ -78,6 +78,10 @@ spec:
             # instead of a bot Pod left Pending. Empty = no cap.
             - name: RUNTIME_MAX_ACTIVE_BOTS
               value: {{ .Values.runtime.maxActiveBots | default "" | toString | quote }}
+            # At the cap, one create at a time re-checks the substrate for bots that exited unseen, at
+            # most this often (seconds); every other create at the cap is refused at once.
+            - name: RUNTIME_CAP_RECHECK_S
+              value: {{ .Values.runtime.capRecheckS | toString | quote }}
             - name: INTERNAL_API_SECRET
               valueFrom:
                 secretKeyRef:
@@ -141,6 +145,14 @@ spec:
             # the Pod's memory limit (hence the bot's 2560Mi). Empty = no shm volume.
             - name: RUNTIME_K8S_SHM_SIZE
               value: {{ .Values.runtime.k8sShmSize | quote }}
+            # Every kubectl call is killed after this many seconds (a hung API server fails a call
+            # instead of hanging the runtime).
+            - name: RUNTIME_KUBECTL_TIMEOUT_S
+              value: {{ .Values.runtime.kubectlTimeoutS | toString | quote }}
+            # Finished bot Pods (Succeeded/Failed) are deleted this many seconds after they finished,
+            # by a sweep every 60 s; 0 = no sweep. Running Pods are never deleted.
+            - name: RUNTIME_FINISHED_POD_TTL_S
+              value: {{ .Values.runtime.finishedPodTtlS | toString | quote }}
             {{- end }}
             {{- with .Values.runtime.extraEnv }}
             {{- toYaml . | nindent 12 }}

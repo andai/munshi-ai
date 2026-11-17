@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime
 from typing import Optional
 
 from .backend import WorkloadHandle
@@ -95,11 +96,77 @@ def _runtime_scheduling_env() -> dict[str, str]:
     return env
 
 
+# Every kubectl call is bounded: a hung API server must fail a call, not hang the runtime.
+KUBECTL_TIMEOUT_ENV = "RUNTIME_KUBECTL_TIMEOUT_S"
+DEFAULT_KUBECTL_TIMEOUT_S = 20.0
+
+
+class KubectlTimeout(RuntimeError):
+    """A kubectl call ran past ``RUNTIME_KUBECTL_TIMEOUT_S`` and was killed."""
+
+
+def kubectl_timeout_s(env: dict[str, str]) -> float:
+    """``RUNTIME_KUBECTL_TIMEOUT_S`` from ``env``: unset or empty ⇒ 20. Anything that is not a
+    positive number of seconds is FATAL (the K8sBackend checks it at boot)."""
+    raw = (env.get(KUBECTL_TIMEOUT_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_KUBECTL_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not value > 0 or value == float("inf"):
+        raise ValueError(f"{KUBECTL_TIMEOUT_ENV} must be a positive number of seconds, got {raw!r}")
+    return value
+
+
 def _kubectl(*args: str, check: bool = True, stdin: Optional[str] = None) -> subprocess.CompletedProcess:
-    r = subprocess.run(["kubectl", *args], capture_output=True, text=True, input=stdin)
+    """Run kubectl with the configured timeout. A timeout raises KubectlTimeout whatever ``check``
+    says — a call that never answered has no return code to inspect."""
+    timeout = kubectl_timeout_s(dict(os.environ))
+    try:
+        r = subprocess.run(
+            ["kubectl", *args], capture_output=True, text=True, input=stdin, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise KubectlTimeout(f"kubectl {' '.join(args)} timed out after {timeout:g}s") from exc
     if check and r.returncode != 0:
         raise RuntimeError(f"kubectl {' '.join(args)} failed: {r.stderr.strip()}")
     return r
+
+
+def _parse_k8s_time(value: Optional[str]) -> Optional[float]:
+    """An RFC 3339 timestamp as the API server writes it (``2026-11-17T10:00:00Z``) → epoch s."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _pod_exit_code(pod: dict) -> int:
+    """A finished Pod's exit code: its container's ``terminated.exitCode``, else 0 for Succeeded
+    and 1 for Failed."""
+    status = pod.get("status") or {}
+    for cs in status.get("containerStatuses") or []:
+        term = (cs.get("state") or {}).get("terminated")
+        if term and "exitCode" in term:
+            return int(term["exitCode"])
+    return 0 if status.get("phase") == "Succeeded" else 1
+
+
+def _finished_at(pod: dict) -> Optional[float]:
+    """When a finished Pod's container ended (the latest ``terminated.finishedAt``), else when the
+    Pod was created: the age the finished-Pod sweep measures."""
+    ends = [
+        _parse_k8s_time(((cs.get("state") or {}).get("terminated") or {}).get("finishedAt"))
+        for cs in (pod.get("status") or {}).get("containerStatuses") or []
+    ]
+    ends = [t for t in ends if t is not None]
+    if ends:
+        return max(ends)
+    return _parse_k8s_time((pod.get("metadata") or {}).get("creationTimestamp"))
 
 
 def _stop_grace_sec() -> int:
@@ -269,6 +336,7 @@ class K8sBackend:
         self._prefix = name_prefix
         self._ns = namespace
         shm_size(dict(os.environ))       # an invalid RUNTIME_K8S_SHM_SIZE is fatal at boot
+        kubectl_timeout_s(dict(os.environ))  # so is an invalid RUNTIME_KUBECTL_TIMEOUT_S
 
     def _pname(self, workload_id: str) -> str:
         return f"{self._prefix}{workload_id}"            # must be DNS-1123 (lowercase alnum + '-')
@@ -353,7 +421,10 @@ class K8sBackend:
             return []
 
     def exit_code(self, h: WorkloadHandle) -> Optional[int]:
-        r = _kubectl("get", "pod", h._impl, "-o", "json", *self._ns_args(), check=False)  # type: ignore[attr-defined]
+        try:
+            r = _kubectl("get", "pod", h._impl, "-o", "json", *self._ns_args(), check=False)  # type: ignore[attr-defined]
+        except KubectlTimeout:
+            return None                                  # unknown is not exited: keep it running
         if r.returncode != 0:
             return 0                                     # gone (deleted/never-found) → no longer running
         status = json.loads(r.stdout).get("status", {})
@@ -381,3 +452,40 @@ class K8sBackend:
     def cleanup(self, h: WorkloadHandle) -> None:
         _kubectl("delete", "pod", h._impl, "--ignore-not-found", "--grace-period=0", "--force",
                  "--wait=false", *self._ns_args(), check=False)  # type: ignore[attr-defined]
+
+    def reclaim_finished(self, h: WorkloadHandle) -> None:
+        """Delete the workload's Pod if it has finished (Succeeded/Failed). A bare Pod with
+        restartPolicy Never stays in that phase until deleted; a finished Pod never runs again, so
+        checking the phase first means a running Pod is never deleted here. Gone ⇒ nothing to do."""
+        r = _kubectl("get", "pod", h._impl, "-o", "json", *self._ns_args(), check=False)  # type: ignore[attr-defined]
+        if r.returncode != 0:
+            return
+        phase = (json.loads(r.stdout).get("status") or {}).get("phase")
+        if phase in ("Succeeded", "Failed"):
+            self.cleanup(h)
+
+    def finished_workloads(self, older_than_s: float, now: float) -> list[dict]:
+        """The ``runtime.managed=true`` Pods in phase Succeeded/Failed that finished at least
+        ``older_than_s`` seconds before ``now`` (epoch s): ``[{workload_id, name, exit_code}]``.
+        Pending and Running Pods are never returned. A failed listing is an empty one."""
+        r = _kubectl(
+            "get", "pods", "-l", f"{MANAGED_LABEL}=true", "-o", "json",
+            *self._ns_args(), check=False,
+        )
+        if r.returncode != 0:
+            return []
+        out = []
+        for pod in json.loads(r.stdout).get("items", []):
+            meta = pod.get("metadata") or {}
+            wid = (meta.get("labels") or {}).get(WORKLOAD_ID_LABEL)
+            if not wid or (pod.get("status") or {}).get("phase") not in ("Succeeded", "Failed"):
+                continue
+            ended = _finished_at(pod)
+            if ended is None or now - ended < older_than_s:
+                continue
+            out.append({
+                "workload_id": wid,
+                "name": meta.get("name", self._pname(wid)),
+                "exit_code": _pod_exit_code(pod),
+            })
+        return out

@@ -1,9 +1,12 @@
 """The k8s backend. Offline: the spawned Pod's `/dev/shm` (a memory-backed emptyDir from
 RUNTIME_K8S_SHM_SIZE, default 2Gi) is on every Pod, alone or merged with the other overlay seams,
 and an invalid size is fatal at boot. Live: create a Pod via the kernel against a REAL cluster,
-drive it through the runtime.v1 lifecycle, and assert it genuinely scheduled, ran, and was removed —
-skipped where no cluster is reachable (e.g. laptop/CI without a KUBECONFIG)."""
+drive it through the runtime.v1 lifecycle, and assert it genuinely scheduled, ran, and was removed.
+The live test runs only on the cluster named by RUNTIME_K8S_TEST_CONTEXT (a kubeconfig context) and
+is skipped without it; the ambient kubectl context is never used, so a developer's shared cluster is
+never touched by accident."""
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -19,10 +22,7 @@ SHM_VOLUME = {"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "2Gi
 SHM_MOUNT = {"name": "dshm", "mountPath": "/dev/shm"}
 
 
-def _k8s_ok() -> bool:
-    if not shutil.which("kubectl"):
-        return False
-    return subprocess.run(["kubectl", "get", "nodes"], capture_output=True).returncode == 0
+TEST_CONTEXT_ENV = "RUNTIME_K8S_TEST_CONTEXT"
 
 
 # ── offline: /dev/shm on every spawned Pod ────────────────────────────────────────────────────────
@@ -116,14 +116,53 @@ def _phase(name: str) -> str:
     ).stdout.strip()
 
 
-@pytest.mark.skipif(not _k8s_ok(), reason="no reachable kubernetes cluster")
-def test_k8s_backend_real_pod_lifecycle():
+def _pin_test_context(tmp_path, monkeypatch) -> str:
+    """Pin every kubectl call in this process (the test's and the backend's) to the opted-in
+    context: a kubeconfig holding only that context, through KUBECONFIG."""
+    context = os.environ.get(TEST_CONTEXT_ENV, "").strip()
+    if not context:
+        pytest.skip(f"set {TEST_CONTEXT_ENV} to a kubeconfig context for a test cluster")
+    if not shutil.which("kubectl"):
+        pytest.fail("kubectl is not installed")
+    pinned = subprocess.run(
+        ["kubectl", "config", "view", "--minify", "--flatten", "--context", context],
+        capture_output=True, text=True,
+    )
+    if pinned.returncode != 0:
+        pytest.fail(f"{TEST_CONTEXT_ENV}={context} is not a kubeconfig context")
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(pinned.stdout)
+    kubeconfig.chmod(0o600)
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+    if subprocess.run(["kubectl", "get", "nodes"], capture_output=True).returncode != 0:
+        pytest.fail(f"the cluster of context {context} is not reachable")
+    return context
+
+
+@pytest.fixture
+def opted_in_cluster(tmp_path, monkeypatch):
+    return _pin_test_context(tmp_path, monkeypatch)
+
+
+def test_without_an_opted_in_context_the_live_test_skips_without_calling_kubectl(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv(TEST_CONTEXT_ENV, raising=False)
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
+    with pytest.raises(pytest.skip.Exception):
+        _pin_test_context(tmp_path, monkeypatch)
+    assert calls == []
+
+
+def test_k8s_backend_real_pod_lifecycle(opted_in_cluster):
     name = "munshi-rt-k8stest"
     subprocess.run(["kubectl", "delete", "pod", name, "--ignore-not-found",
                     "--grace-period=0", "--force"], capture_output=True)  # clean slate
     rt = Runtime(
         backend=K8sBackend(),
-        profiles={"test": Runnable(image="alpine", command=["sleep", "30"])},
+        # long enough to outlive a slow image pull; the test stops and destroys it
+        profiles={"test": Runnable(image="alpine", command=["sleep", "600"])},
         grace_sec=30.0,
     )
     spec = WorkloadSpec(workloadId="rt-k8stest", profile="test", env={"MUNSHI_X": "y"})
@@ -146,3 +185,66 @@ def test_k8s_backend_real_pod_lifecycle():
     finally:
         subprocess.run(["kubectl", "delete", "pod", name, "--ignore-not-found",
                         "--grace-period=0", "--force"], capture_output=True)
+
+
+# ── offline: every kubectl call is bounded (RUNTIME_KUBECTL_TIMEOUT_S, default 20) ──────────────────
+
+
+def _record_runs(monkeypatch, outcome=None):
+    """Replace subprocess.run inside the backend; return the kwargs of every call."""
+    from runtime_kernel import k8s_backend
+
+    calls: list[dict] = []
+
+    def fake_run(argv, **kw):
+        calls.append({"argv": argv, **kw})
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return subprocess.CompletedProcess(argv, 0, stdout='{"status": {"phase": "Running"}}',
+                                           stderr="")
+
+    monkeypatch.setattr(k8s_backend.subprocess, "run", fake_run)
+    return calls
+
+
+def test_kubectl_runs_with_the_default_timeout(monkeypatch):
+    from runtime_kernel.k8s_backend import _kubectl
+
+    monkeypatch.delenv("RUNTIME_KUBECTL_TIMEOUT_S", raising=False)
+    calls = _record_runs(monkeypatch)
+    _kubectl("get", "pods")
+    assert calls[0]["timeout"] == 20.0
+
+
+def test_kubectl_timeout_comes_from_the_env(monkeypatch):
+    from runtime_kernel.k8s_backend import _kubectl
+
+    monkeypatch.setenv("RUNTIME_KUBECTL_TIMEOUT_S", "7.5")
+    calls = _record_runs(monkeypatch)
+    _kubectl("get", "pods", check=False)
+    assert calls[0]["timeout"] == 7.5
+
+
+@pytest.mark.parametrize("check", [True, False])
+def test_a_kubectl_timeout_raises_a_backend_error_instead_of_hanging(monkeypatch, check):
+    from runtime_kernel.k8s_backend import KubectlTimeout, _kubectl
+
+    _record_runs(monkeypatch, subprocess.TimeoutExpired(["kubectl"], 20))
+    with pytest.raises(KubectlTimeout, match="timed out") as err:
+        _kubectl("get", "pods", check=check)
+    assert isinstance(err.value, RuntimeError)
+
+
+def test_an_exit_read_that_times_out_is_unknown_not_exited(monkeypatch):
+    """A timed-out read must not mark a live bot stopped (and so free its slot or reclaim it)."""
+    from runtime_kernel.backend import WorkloadHandle
+
+    _record_runs(monkeypatch, subprocess.TimeoutExpired(["kubectl"], 20))
+    assert K8sBackend().exit_code(WorkloadHandle(id="w", impl="munshi-w")) is None
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "soon", "nan"])
+def test_an_invalid_kubectl_timeout_is_fatal_at_boot(monkeypatch, bad):
+    monkeypatch.setenv("RUNTIME_KUBECTL_TIMEOUT_S", bad)
+    with pytest.raises(ValueError, match="RUNTIME_KUBECTL_TIMEOUT_S"):
+        K8sBackend()

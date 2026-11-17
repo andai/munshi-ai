@@ -17,6 +17,7 @@ the redis-wired in-memory store mirroring the prod topology — no docker):
 """
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -609,3 +610,46 @@ def test_the_grace_period_is_declared_config(monkeypatch):
     entry = next((k for k in decl["keys"] if k["key"] == "PROC_PENDING_GRACE_SEC"), None)
     assert entry is not None, "PROC_PENDING_GRACE_SEC is read by db_writer.py and declared nowhere"
     assert entry["class"] == "defaulted" and entry["default"] == "120"
+
+
+# ── created_at: the time a segment first reached the collector, kept across re-flushes ──────────
+
+
+async def test_created_at_is_the_first_seen_time_across_updates_and_reflushes(store, bus, redis_c,
+                                                                            monkeypatch):
+    """A segment updated in the hash before its first flush, then flushed, rewritten and flushed
+    again, keeps created_at = its first_seen_at, while its text and end time follow the rewrite."""
+    ingest_mod = importlib.import_module("meeting_api.collector.ingest")
+
+    clock = {"now": ""}
+    monkeypatch.setattr(ingest_mod, "_now_iso", lambda: clock["now"])
+
+    async def arrive(at: str, text: str, end: float) -> None:
+        clock["now"] = at
+        await bus.xadd("transcription_segments", json.loads(_message(1, [
+            {**_seg("s1", 1.0, text), "end": end}])["payload"]))
+        await consume_segments(store, bus)
+
+    await arrive("2026-11-17T10:00:00Z", "first words", 2.0)
+    await arrive("2026-11-17T10:00:04Z", "first words, corrected", 2.5)   # updated before a flush
+    await db_writer_tick(redis_c, store, now=LATER)
+    await arrive("2026-11-17T10:05:00Z", "first words, final", 3.0)       # rewritten after it
+    await db_writer_tick(redis_c, store, now=LATER + timedelta(minutes=10))
+
+    row = store._meetings[1]["segments"]["s1"]
+    assert row["text"] == "first words, final" and row["end"] == 3.0
+    assert row["created_at"] == "2026-11-17T10:00:00Z"
+
+    doc = await store.get_transcript(USER, "google_meet", NATIVE)
+    assert doc["segments"][0]["created_at"] == "2026-11-17T10:00:00Z"
+
+
+async def test_an_unflushed_segment_reads_its_first_seen_time_as_created_at(store, bus, monkeypatch):
+    ingest_mod = importlib.import_module("meeting_api.collector.ingest")
+
+    monkeypatch.setattr(ingest_mod, "_now_iso", lambda: "2026-11-17T10:00:00Z")
+    await bus.xadd("transcription_segments", json.loads(_message(1, [_seg("s1", 1.0, "live")])["payload"]))
+    await consume_segments(store, bus)
+
+    doc = await store.get_transcript(USER, "google_meet", NATIVE)
+    assert doc["segments"][0]["created_at"] == "2026-11-17T10:00:00Z"

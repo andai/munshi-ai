@@ -15,7 +15,15 @@ backend therefore sees prod-identical lifecycle.v1 emission, and the mock **cann
 - `scenarios.ts` — the scenario registry + the two fake ports. Scenario via env `MOCK_SCENARIO`.
 - `main.ts` — the mock composition root (real adapters + the fakes); the worker entrypoint baked into
   `mock-bot:dev` (swapped in via `BROWSER_IMAGE` for the `MOCK_BOT=1` `gate:compose` run).
-- `mock.test.ts` — the L2 fidelity test (offline; `npx tsx mock/mock.test.ts`).
+- `mock.test.ts` — the L2 fidelity test (offline; `node --import tsx mock/mock.test.ts`).
+
+**The image** (`../Dockerfile.mock`) starts with no network. Its dependencies are installed at build
+time at the exact versions the root `pnpm-lock.yaml` records (the four direct ones, and their own
+dependencies through `overrides`), and the entrypoint is `node --import tsx …/mock/main.ts`: no npm
+or npx at start, because npx runs npm's update check, a call to the npm registry from every bot.
+`deploy/compose/tests/mock_image_start_test.sh` builds the image and checks the entrypoint, the
+versions against the lockfile, and a start with `--network none`. When the lockfile moves, update the
+versions in the Dockerfile with it.
 
 **Scenarios:** `normal · join-timeout · reject · crash · immediate-stop · continue · speak-ack ·
 emit-n-segments · slow-join · recording · silence-left-alone · left-alone · evicted · paced ·
