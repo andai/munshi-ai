@@ -45,6 +45,7 @@ RECORDING = "recording"
 CAPACITY = "capacity_exhausted"
 HOLD_MIN_S, HOLD_MAX_S = 60, 7200
 PLATFORMS = ("zoom",)
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class SetupError(Exception):
@@ -207,6 +208,17 @@ class Driver:
         stage = r.json().get("stage")
         if stage != "full":
             raise SetupError(f"sign-in stage is {stage!r}; the load org needs 2FA off")
+        self._keep_session_on_loopback()
+
+    def _keep_session_on_loopback(self) -> None:
+        """andai-core marks its session cookie `Secure` outside development, and httpx sends a
+        Secure cookie over HTTPS only. Through `kubectl port-forward` the driver reaches andai-core
+        over plain HTTP on the loopback address, where browsers also send Secure cookies; there
+        the session is kept for the next requests. Any other plain-HTTP host gets nothing."""
+        url = self.client.base_url
+        if url.scheme == "http" and url.host in LOOPBACK_HOSTS:
+            for cookie in self.client.cookies.jar:
+                cookie.secure = False
 
     def preflight(self) -> None:
         cfg = self.cfg
