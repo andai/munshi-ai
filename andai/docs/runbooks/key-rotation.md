@@ -95,10 +95,16 @@ deployment names are the chart's.)
 
 **Check every replica** of andai-core and andai-worker before going on: each must report the new
 key as active and the old one as retired. A replica still on the old configuration cannot open
-values once they move to the new key.
+values once they move to the new key. The chart labels each Pod with its service in
+`app.kubernetes.io/component` and the release in `app.kubernetes.io/instance` (`<release>` is the
+Helm release name, `andai` in the install guide); the loop stops if it finds no Pod, so a wrong
+selector cannot pass for a clean check.
 
     for app in andai-core andai-worker; do
-      for pod in $(kubectl -n <ns> get pods -l app.kubernetes.io/name=$app -o name); do
+      pods=$(kubectl -n <ns> get pods -o name \
+        -l app.kubernetes.io/component=$app,app.kubernetes.io/instance=<release>)
+      [ -n "$pods" ] || { echo "no $app Pods found: check the namespace and release" >&2; exit 1; }
+      for pod in $pods; do
         kubectl -n <ns> exec "$pod" -- python -m andai_core kek-status | head -n 1
       done
     done

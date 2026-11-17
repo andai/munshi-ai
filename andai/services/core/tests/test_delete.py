@@ -2,8 +2,9 @@
 that the meeting is gone from every read path at once, the `meeting.delete` audit event in the same
 transaction, the live-meeting refusal, a second delete, and the link afterwards: free again, except
 for a meeting participants removed the bot from, which keeps refusing the link for 12 hours (D-38)
-after the meeting is deleted and purged. The purge itself is `services/worker/tests/
-test_worker_deletion.py`.
+after the meeting is deleted and purged; and the copies of a person's data that hold a purged
+meeting (`export_requests.meeting_ids`): a ready copy is expired, an open request is failed
+`meeting_deleted`. The purge itself is `services/worker/tests/test_worker_deletion.py`.
 """
 
 from __future__ import annotations
@@ -17,16 +18,22 @@ from sqlalchemy import Engine, text
 
 from andai_core.db.models import ConsentRecord
 from andai_core.db.session import transaction
+from andai_core.dpdp import builder
 from andai_core.meetings import deletion, mom
 from conftest import (
     CALLERS,
     DELETERS,
     READERS,
     AccessOrg,
+    ExportWorld,
     access_org,
+    export_request,
+    export_world,
     give_principal,
+    make_settings,
     mom_body,
     seed_segments,
+    sign_in,
     zoom_link,
 )
 
@@ -356,3 +363,137 @@ def test_an_old_removal_leaves_no_marker(world: AccessOrg, superuser_engine: Eng
 
     assert len(_removals(superuser_engine, world.org_id)) == before
     assert _send(world, link).status_code == 201
+
+
+# ─── copies of the person's data that hold the meeting ────────────────────────────────────────────
+
+
+@pytest.fixture
+def exports(app_engine: Engine) -> ExportWorld:
+    return export_world(app_engine)
+
+
+def _export(superuser_engine: Engine, export_id: uuid.UUID | str) -> dict:
+    with superuser_engine.connect() as conn:
+        return dict(
+            conn.execute(
+                text(
+                    "SELECT state, error, bundle_ciphertext, key_id, expires_at, meeting_ids"
+                    " FROM export_requests WHERE id = :r"
+                ),
+                {"r": export_id},
+            ).mappings().one()
+        )
+
+
+def _built(world: ExportWorld, superuser_engine: Engine, client, path: str) -> str:
+    export_id = client.post(path).json()["id"]
+    with superuser_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE export_requests SET state = 'running' WHERE id = :r"), {"r": export_id}
+        )
+    s = world.harness.services
+    state = asyncio.run(
+        builder.run(world.engine, s.keyring, s.gateway, world.org_id, uuid.UUID(export_id),
+                    settings=make_settings(), clock=s.clock)
+    )
+    assert state == "ready"
+    return export_id
+
+
+def _delete_and_purge(world: ExportWorld, meeting_id: uuid.UUID) -> None:
+    client = sign_in(world.harness, world.subject)
+    assert client.delete(_path(meeting_id)).status_code == 202
+    s = world.harness.services
+    result = asyncio.run(
+        deletion.purge(world.engine, s.keyring, s.gateway, world.org_id, meeting_id,
+                       clock=world.harness.clock)
+    )
+    assert result is not None and result.state == "purged"
+
+
+def test_deleting_a_meeting_invalidates_the_copies_that_hold_it(
+    exports: ExportWorld, superuser_engine: Engine
+) -> None:
+    subject = sign_in(exports.harness, exports.subject)
+    holding = _built(exports, superuser_engine, subject, "/api/v1/me/exports")
+    other = sign_in(exports.harness, exports.other)
+    untouched = _built(exports, superuser_engine, other, "/api/v1/me/exports")
+    assert exports.failed in _export(superuser_engine, holding)["meeting_ids"]
+    assert exports.failed not in _export(superuser_engine, untouched)["meeting_ids"]
+
+    _delete_and_purge(exports, exports.failed)
+
+    gone = _export(superuser_engine, holding)
+    assert (gone["state"], gone["bundle_ciphertext"], gone["key_id"]) == ("expired", None, None)
+    assert gone["expires_at"] <= exports.harness.clock()
+    answer = subject.get(f"/api/v1/exports/{holding}/download")
+    assert (answer.status_code, answer.json()["code"]) == (410, "export_expired")
+    kept = _export(superuser_engine, untouched)
+    assert kept["state"] == "ready" and kept["bundle_ciphertext"] is not None
+    assert other.get(f"/api/v1/exports/{untouched}/download").status_code == 200
+    # the purge's own audit is unchanged
+    assert _audit(superuser_engine, exports.failed) == [
+        ("meeting.delete", exports.subject.user_id), ("meeting.purge", None)
+    ]
+
+
+def test_an_open_request_holding_the_meeting_fails_meeting_deleted(
+    exports: ExportWorld, superuser_engine: Engine
+) -> None:
+    running = export_request(exports.engine, exports.org_id, exports.subject.user_id)
+    with superuser_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE export_requests SET meeting_ids = :ids WHERE id = :r"),
+            {"ids": [exports.failed, exports.recorded], "r": running},
+        )
+
+    _delete_and_purge(exports, exports.failed)
+
+    row = _export(superuser_engine, running)
+    assert (row["state"], row["error"]) == ("failed", "meeting_deleted")
+    # the person may ask again at once
+    again = sign_in(exports.harness, exports.subject).post("/api/v1/me/exports")
+    assert again.status_code == 202, again.text
+
+
+def _insert_ready(
+    superuser_engine: Engine, world: ExportWorld, subject: uuid.UUID, ready_at: datetime
+) -> uuid.UUID:
+    """A ready copy stored before `meeting_ids` existed (an empty list)."""
+    export_id = uuid.uuid4()
+    with superuser_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO export_requests (id, org_id, subject_user_id, requested_by, source,"
+                " state, bundle_ciphertext, key_id, created_at, ready_at, expires_at)"
+                " VALUES (:id, :o, :s, :s, 'self', 'ready', 'ct', 'kek-x', :at, :at,"
+                " :at + interval '7 days')"
+            ),
+            {"id": export_id, "o": world.org_id, "s": subject, "at": ready_at},
+        )
+    return export_id
+
+
+def test_an_older_copy_without_meeting_ids_is_invalidated_when_it_may_hold_the_meeting(
+    exports: ExportWorld, superuser_engine: Engine
+) -> None:
+    with superuser_engine.connect() as conn:
+        created = conn.execute(
+            text("SELECT created_at FROM meetings WHERE id = :m"), {"m": exports.failed}
+        ).scalar_one()
+    after = _insert_ready(
+        superuser_engine, exports, exports.subject.user_id, created + timedelta(minutes=1)
+    )
+    before = _insert_ready(
+        superuser_engine, exports, exports.subject.user_id, created - timedelta(minutes=1)
+    )
+    someone_else = _insert_ready(
+        superuser_engine, exports, exports.other.user_id, created + timedelta(minutes=1)
+    )
+
+    _delete_and_purge(exports, exports.failed)
+
+    assert _export(superuser_engine, after)["state"] == "expired"
+    assert _export(superuser_engine, before)["state"] == "ready"
+    assert _export(superuser_engine, someone_else)["state"] == "ready"

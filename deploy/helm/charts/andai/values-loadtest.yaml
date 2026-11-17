@@ -9,7 +9,11 @@
 munshi:
   runtime:
     browserImage: ghcr.io/andai/munshi-mock-bot:0.1.0
+    # The mock bot has no browser, so no /dev/shm volume (the chart's 2Gi would count against its
+    # memory limit). 384Mi: the amd64 mock image runs under Rosetta on arm64 nodes, where 256Mi ran
+    # out of memory.
+    k8sShmSize: ""
     workloadResources:
       meetingBot:
         cpu: 0.25
-        memoryMb: 256
+        memoryMb: 384

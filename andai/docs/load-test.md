@@ -83,6 +83,14 @@ On a cluster, also check during the peak and after the stop (the staging run rec
 - After the stop, `kubectl get pods -l runtime.managed=true` lists no bot Pods: none orphaned.
 - `kubectl top nodes` at the peak, for the node's CPU and memory.
 
-Mock-bot Pods need far less than a real bot. A load run may set
-`runtime.workloadResources.meetingBot` smaller for the mock (and `runtime.k8sShmSize` to `""`), so
-the node fits the planned count; the production defaults stay 2560Mi with a 2Gi `/dev/shm`.
+Mock-bot Pods need far less than a real bot. The chart's load overlay (`values-loadtest.yaml`)
+gives each 384Mi and 0.25 CPU with no `/dev/shm` volume (`runtime.k8sShmSize: ""`), so the node
+fits the planned count; 256Mi ran out of memory with the amd64 mock image under Rosetta on an arm64
+node. The production defaults stay 2560Mi with a 2Gi `/dev/shm`.
+
+A dispatch over the cap is refused from the runtime's own count of the bots it started, without
+waiting on the cluster (one recount against the cluster at most every `RUNTIME_CAP_RECHECK_S`,
+2 s, outside the admission lock), so `refused_within_s_max` stays well under the 10 s bound however
+slowly the API server answers. Finished bot Pods are deleted when the runtime sees them exit and
+by a sweep every 60 s once they have been finished `RUNTIME_FINISHED_POD_TTL_S` (300 s); after the
+stop and one sweep, `kubectl get pods -l runtime.managed=true` lists none.

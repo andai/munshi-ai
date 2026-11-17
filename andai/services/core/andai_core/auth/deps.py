@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException, Request
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session as Tx
 
 from andai_core.auth import sessions
 from andai_core.auth.clientip import ClientIpResolver
-from andai_core.auth.ratelimit import Limiter
+from andai_core.auth.ratelimit import Limiter, MemorySlots, Slots
 from andai_core.crypto import Keyring
 from andai_core.db.session import transaction
 from andai_core.mail import Mailer
@@ -46,6 +46,8 @@ class Services:
     clock: Callable[[], datetime] = utcnow
     # The meeting platform's gateway (dispatch, status); None where meetings are not served.
     gateway: PlatformGateway | None = None
+    # Export downloads building at once, per person (`dpdp.routes`); Valkey in production.
+    export_download_slots: Slots = field(default_factory=MemorySlots)
 
     @property
     def lifetimes(self) -> sessions.Lifetimes:

@@ -146,7 +146,7 @@ andai:
     addresses: notetaker@example.com
 munshi:
   meetingApi:
-    transcriptionServiceUrl: http://stt.example.internal:8083   # or the ASR pool, below
+    transcriptionServiceUrl: http://stt.example.internal:8083   # required; or the ASR pool, below
   runtime:
     maxActiveBots: 22                                            # see "Sizing the bot cap"
 ```
@@ -156,6 +156,9 @@ make -C deploy/helm andai-deps
 helm upgrade --install andai deploy/helm/charts/andai -n $NS \
   -f my-values.yaml --set-file munshi.database.password=./pg-password --wait --timeout 15m
 ```
+
+`munshi.meetingApi.transcriptionServiceUrl` is required: the chart refuses to render without it,
+because meeting-api refuses every bot with an empty URL (503 `transcription_not_configured`).
 
 What happens:
 
@@ -281,8 +284,14 @@ monitoring:
 ```
 
 With at least one receiver on, andai-worker's own alert mail stands down (the state file
-`andai-alerting-state`). The storage alert watches the node's root filesystem as node-exporter
-reports it (`^/$`); edit the rule's mount regex if your volumes live elsewhere.
+`andai-alerting-state`). The storage alert (`MunshiStorageHigh`, a filesystem over 80 percent full
+for 10 minutes) watches the filesystems your persistent volumes live on, as node-exporter reports
+their host paths. Set `monitoring.storageMountRegex` to them; the default
+`^/$|^/var/lib/rancher(/.*)?$|^/var/lib/munshi-crypt(/.*)?$` covers the root filesystem, k3s'
+local-path storage (`/var/lib/rancher/k3s/storage`) and the staging VM's LUKS mount. The chart puts
+it into the rule in place of the Compose selector (`/` and `/host`); the rule file itself stays the
+same as Compose's. A double quote in the value is refused, and a backslash is written doubled
+(it sits in a PromQL string).
 
 GPU metrics (`gpuMetrics.enabled`) run NVIDIA dcgm-exporter on the GPU pool nodes. Its image is
 under NVIDIA's own terms and is not cleared: the chart names none and refuses to render it until

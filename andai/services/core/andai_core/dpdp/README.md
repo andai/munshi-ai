@@ -7,8 +7,8 @@ changes the code.
 | Module | What it does |
 |---|---|
 | `bundle.py` | The bundle format: pydantic models of `manifest.json`, `account.json` and `meetings/<id>.json`, with unknown fields forbidden. `schema()` is the published contract `andai/services/core/contracts/export-bundle.v1`; `tests/test_export_bundle.py` fails when the committed schema differs. |
-| `builder.py` | What andai-worker runs for a claimed request (`andai_worker/exports.py`): read the person's account and the meetings they own (the erasure registry's `purge_meeting` rule), stream each recording once for size and SHA-256, seal the gzip-compressed JSON part (AAD `export:<org>:<request>`) into `export_requests`, mark it `ready` and audit `user.export.ready`. `too_large` over `ANDAI_EXPORT_MAX_BYTES`, `not_a_member` when the person left; other errors retry and fail `internal_error` after 5 attempts. `open_part` reads a stored part back. |
-| `routes.py` | `POST/GET /api/v1/me/exports`, `POST /api/v1/org/users/{id}/exports`, `GET /api/v1/org/exports` and `GET /api/v1/exports/{id}/download`. The download writes the zip into a spooled temporary file, streaming each recording from the platform and comparing it with the manifest, then sends it. |
+| `builder.py` | What andai-worker runs for a claimed request (`andai_worker/exports.py`): read the person's account and the meetings they own (the erasure registry's `purge_meeting` rule), stream each recording once for size and SHA-256, seal the gzip-compressed JSON part (AAD `export:<org>:<request>`) into `export_requests`, mark it `ready` and audit `user.export.ready`. `too_large` over `ANDAI_EXPORT_MAX_BYTES`, `not_a_member` when the person left; other errors retry and fail `internal_error` after 5 attempts. `open_part` reads a stored part back. The ids of the meetings read go into `export_requests.meeting_ids` (when read and again when ready); a meeting hidden before the copy is stored fails it `meeting_deleted`. |
+| `routes.py` | `POST/GET /api/v1/me/exports`, `POST /api/v1/org/users/{id}/exports`, `GET /api/v1/org/exports` and `GET /api/v1/exports/{id}/download`. The download writes the zip into a spooled temporary file, streaming each recording from the platform and comparing it with the manifest, then sends it. One download building at a time per person (`ANDAI_EXPORT_DOWNLOADS_CONCURRENT`; a slot in `Services.export_download_slots`, Valkey in production, freed in `finally`, lapsing after 20 min); another is 429 `export_download_busy`. |
 
 Rules for changes:
 
@@ -20,4 +20,6 @@ Rules for changes:
 - Recordings are never copied into the andai database; the build and the download both stream them
   with the org's platform key, holding at most one chunk in memory.
 - `export_requests.bundle_ciphertext` is listed in `sealed.py`, so a key rotation re-wraps it.
+- A copy never outlives a meeting it holds: the meeting purge (`meetings/deletion.py`) expires the
+  ready copies whose `meeting_ids` hold it and fails the open requests that read it.
 - Logs carry request ids, sizes and error classes, never content, names or addresses.

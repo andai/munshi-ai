@@ -5,7 +5,9 @@ test_andai_monitoring_sync.sh):
   * Prometheus' config (prometheus.server.configMapOverrideName): the Compose prometheus.yml, whose
     targets resolve here too (Services andai-core/-worker/-intake:8000, alertmanager:9093, the
     headless node-exporter), plus kube-state-metrics and, with gpuMetrics, dcgm-exporter;
-  * the alert rules, mounted at /etc/prometheus/rules (prometheus.server.extraConfigmapMounts);
+  * the alert rules, mounted at /etc/prometheus/rules (prometheus.server.extraConfigmapMounts),
+    with the storage alert's Compose mount points (/ and /host) replaced by
+    monitoring.storageMountRegex, since node-exporter here reports host paths;
   * Alertmanager's config as a Secret (its URLs and passwords are only file paths): the receivers
     andai_worker.alerting_config renders for Compose, every one off by default, Teams only as
     msteamsv2, text only from munshi.tmpl;
@@ -41,8 +43,17 @@ metadata:
     {{- include "andai.labels" . | nindent 4 }}
     app.kubernetes.io/component: monitoring
 data:
+  {{- $composeMounts := `mountpoint=~"^/$|^/host(/.*)?$"` }}
+  {{- $rules := .Files.Get (printf "%s/munshi-alerts.yml" $files) }}
+  {{- if not (contains $composeMounts $rules) }}
+  {{- fail "files/monitoring/munshi-alerts.yml no longer has the Compose storage mount selector the chart replaces; update templates/monitoring-config.yaml" }}
+  {{- end }}
+  {{- $mounts := toString .Values.monitoring.storageMountRegex }}
+  {{- if or (not $mounts) (contains "\"" $mounts) }}
+  {{- fail "monitoring.storageMountRegex must be a non-empty regular expression without double quotes" }}
+  {{- end }}
   munshi-alerts.yml: |
-    {{- .Files.Get (printf "%s/munshi-alerts.yml" $files) | nindent 4 }}
+    {{- replace $composeMounts (printf "mountpoint=~%q" $mounts) $rules | nindent 4 }}
 ---
 {{- $a := .Values.andai -}}
 {{- $al := .Values.monitoring.alerting -}}

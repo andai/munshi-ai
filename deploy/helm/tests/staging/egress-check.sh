@@ -149,18 +149,18 @@ for ts, link, p in packets():
             src, dst, l4 = str(ipaddress.ip_address(p[8:24])), str(ipaddress.ip_address(p[24:40])), p[40:]
         else:
             continue
+        if proto not in (1, 6, 17, 58):
+            continue
+        if proto == 17 and struct.unpack(">H", l4[:2])[0] == 53:
+            dns(l4[8:], names)  # answers name addresses from the whole capture
+            continue
+        if ts < since_ts:
+            continue
         if proto == 1 or proto == 58:
             if src in me:
                 flows[("icmp", dst, "-")] += 1
             continue
-        if proto not in (6, 17):
-            continue
         sport, dport = struct.unpack(">HH", l4[:4])
-        if proto == 17 and sport == 53:
-            dns(l4[8:], names)
-            continue
-        if ts < since_ts:
-            continue
         if src not in me and not (et == 0x86DD and not ipaddress.ip_address(src).is_link_local):
             continue
         if proto == 6 and (l4[13] & 0x12) != 0x02:

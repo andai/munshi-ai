@@ -22,6 +22,12 @@ each deletion `andai_claim_deletions()` hands andai-worker:
    (org, link key, removed at) is kept in `meeting_removals`, so the no-rejoin rule (D-38) still
    holds. The `meeting.purge` audit event is written in that transaction. The audit events are all
    that is left of the meeting.
+3. In the same transaction, every copy of the owner's data that holds the meeting
+   (`export_requests.meeting_ids`) stops holding it: a ready copy is expired at once (its sealed
+   part dropped, `expires_at` now; its download answers 410), and an open request that had read
+   it fails `meeting_deleted`, so the person can ask again. A ready copy made before `meeting_ids`
+   existed (an empty list) is expired when it is the owner's and was made after the meeting was
+   created: it may hold the meeting, and nothing says it does not.
 
 The platform goes first so that a failed attempt can be retried with the ids andai still holds. A
 failed attempt (platform unreachable, 5xx, 409 because the platform's meeting is not terminal yet,
@@ -39,20 +45,23 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import anyio.to_thread
-from sqlalchemy import Engine, delete, select
+from sqlalchemy import Engine, and_, delete, or_, select, text, update
 from sqlalchemy.orm import Session as Tx
 
 from andai_core import audit
 from andai_core.crypto import Keyring
 from andai_core.db.models import (
+    EXPORT_OPEN_STATES,
     TERMINAL_STATUSES,
     ConsentRecord,
+    ExportRequest,
     Meeting,
     MeetingRemoval,
     MeetingShare,
     TranscriptSegment,
 )
 from andai_core.db.session import transaction
+from andai_core.dpdp.builder import owner_column
 from andai_core.meetings.access import Actor, accessible, can_delete
 from andai_core.meetings.service import NO_SUCH_MEETING, REMOVAL_WINDOW, MeetingError
 from andai_core.platform import principals
@@ -168,12 +177,57 @@ def _remove(engine: Engine, org_id: uuid.UUID, meeting_id: uuid.UUID, now: datet
                     removed_at=consent.removed_at,
                 )
             )
+        owner = getattr(meeting, owner_column().key)
+        created_at = meeting.created_at
         for table in (TranscriptSegment, MeetingShare, ConsentRecord):
             tx.execute(delete(table).where(table.org_id == org_id, table.meeting_id == meeting_id))
         # The minutes versions go with the row (the app role may not delete them itself).
         tx.execute(delete(Meeting).where(Meeting.id == meeting_id))
         audit.record(tx, org_id, None, "meeting.purge", f"meeting:{meeting_id}")
+        _invalidate_exports(tx, org_id, meeting_id, owner, created_at, now)
     return True
+
+
+def _invalidate_exports(
+    tx: Tx,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    owner: uuid.UUID | None,
+    created_at: datetime,
+    now: datetime,
+) -> None:
+    """Expire the ready copies that hold the meeting and fail the open requests that read it."""
+    holds = ExportRequest.meeting_ids.contains([meeting_id])
+    older_copy = and_(
+        ExportRequest.meeting_ids == text("'{}'::uuid[]"),
+        ExportRequest.subject_user_id == owner,
+        ExportRequest.ready_at > created_at,
+    )
+    tx.execute(
+        update(ExportRequest)
+        .where(
+            ExportRequest.org_id == org_id,
+            ExportRequest.state == "ready",
+            or_(holds, older_copy),
+        )
+        .values(state="expired", bundle_ciphertext=None, key_id=None, expires_at=now)
+    )
+    tx.execute(
+        update(ExportRequest)
+        .where(
+            ExportRequest.org_id == org_id,
+            ExportRequest.state.in_(EXPORT_OPEN_STATES),
+            holds,
+        )
+        .values(
+            state="failed",
+            error="meeting_deleted",
+            next_at=None,
+            lease_until=None,
+            bundle_ciphertext=None,
+            key_id=None,
+        )
+    )
 
 
 def _retry(engine: Engine, org_id: uuid.UUID, meeting_id: uuid.UUID, now: datetime) -> str:

@@ -38,6 +38,9 @@ spec:
                 name: andai-config
           env:
             {{- include "andai.coreEnv" . | nindent 12 }}
+            # Downloads of a copy of their data one person may have being prepared at once.
+            - name: ANDAI_EXPORT_DOWNLOADS_CONCURRENT
+              value: {{ .Values.andai.core.exportDownloadsConcurrent | quote }}
           volumeMounts:
             {{- include "andai.kekVolumeMount" . | nindent 12 }}
           readinessProbe:

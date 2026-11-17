@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from alembic import command
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, select, text
 
 from andai_core.db.models import (
     ERASURE_TABLES,
@@ -24,7 +24,7 @@ ALL_TABLES = (
     | set(INTAKE_TABLES)
     | set(ERASURE_TABLES)
 )
-HEAD = "0020"
+HEAD = "0021"
 
 
 def _tables(engine: Engine) -> set[str]:
@@ -1789,3 +1789,109 @@ def test_the_expiry_clears_only_due_ready_bundles_of_every_org(app_engine: Engin
                 assert (row.state, row.key_id) == ("ready", "kek-x")
             else:
                 assert row.state == "failed"
+
+
+def _export_meeting_ids(engine: Engine) -> tuple:
+    """(meeting_ids column type, nullability, default; its GIN index; the error CHECK)."""
+    with engine.connect() as conn:
+        column = conn.execute(
+            text(
+                "SELECT udt_name, is_nullable, column_default FROM information_schema.columns"
+                " WHERE table_name = 'export_requests' AND column_name = 'meeting_ids'"
+            )
+        ).first()
+        index = conn.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes WHERE tablename = 'export_requests'"
+                " AND indexname = 'ix_export_requests_meeting_ids'"
+            )
+        ).scalar()
+        error = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                " WHERE conrelid = 'export_requests'::regclass AND conname = 'ck_export_requests_error'"
+            )
+        ).scalar()
+    return (None if column is None else tuple(column)), index, error
+
+
+def test_export_meeting_ids_downgrade_to_0020_and_upgrade_again(
+    migrated: Postgres, app_engine: Engine
+) -> None:
+    from andai_core.db.models import ExportRequest
+    from andai_core.db.session import transaction
+    from conftest import new_member
+
+    member = new_member(app_engine)
+    with transaction(app_engine, org_id=member.org_id) as tx:
+        failed = ExportRequest(
+            org_id=member.org_id, subject_user_id=member.user_id, requested_by=member.user_id,
+            source="self", state="failed", error="meeting_deleted",
+        )
+        tx.add(failed)
+        tx.flush()
+        failed_id = failed.id
+
+    config = alembic_config(migrated.owner_url)
+    engine = create_engine(migrated.superuser_url)
+    try:
+        column, index, error = _export_meeting_ids(engine)
+        assert column == ("_uuid", "NO", "'{}'::uuid[]")
+        assert index is not None and "USING gin (meeting_ids)" in index
+        assert "meeting_deleted" in error
+        at_head = (column, index, error)
+
+        command.downgrade(config, "0020")
+        assert _revision(engine) == "0020"
+        column, index, error = _export_meeting_ids(engine)
+        assert (column, index) == (None, None)
+        assert "meeting_deleted" not in error
+        with engine.connect() as conn:  # a request that failed meeting_deleted is kept as internal_error
+            assert conn.execute(
+                text("SELECT error FROM export_requests WHERE id = :i"), {"i": failed_id}
+            ).scalar() == "internal_error"
+        assert _export_state(engine)[1] is True  # 0020's table stays
+
+        command.upgrade(config, "head")
+        assert _revision(engine) == HEAD
+        assert _export_meeting_ids(engine) == at_head
+    finally:
+        engine.dispose()
+
+
+def test_meeting_ids_keep_the_export_constraints(app_engine: Engine) -> None:
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    from andai_core.db.models import ExportRequest
+    from andai_core.db.session import transaction
+    from conftest import new_member
+
+    member = new_member(app_engine)
+    with transaction(app_engine, org_id=member.org_id) as tx:
+        tx.add(
+            ExportRequest(
+                org_id=member.org_id, subject_user_id=member.user_id,
+                requested_by=member.user_id, source="self", state="failed",
+                error="meeting_deleted",
+            )
+        )
+    for bad in (
+        {"state": "failed", "error": "no_such_error"},
+        {"state": "ready", "error": None},  # ready without a bundle
+        {"state": "expired", "bundle_ciphertext": "ct"},  # sealed without a key
+    ):
+        with pytest.raises(IntegrityError):
+            with transaction(app_engine, org_id=member.org_id) as tx:
+                tx.add(
+                    ExportRequest(
+                        org_id=member.org_id, subject_user_id=member.user_id,
+                        requested_by=member.user_id, source="self",
+                        meeting_ids=[uuid.uuid4()], **bad,
+                    )
+                )
+    with transaction(app_engine, org_id=member.org_id) as tx:
+        rows = tx.scalars(
+            select(ExportRequest.meeting_ids).where(ExportRequest.subject_user_id == member.user_id)
+        ).all()
+    assert rows == [[]]  # the default

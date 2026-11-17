@@ -36,6 +36,8 @@ munshi:
     replicaCount: 1
   meetingApi:
     replicaCount: 1
+    # Required (validate.yaml); a render-only endpoint.
+    transcriptionServiceUrl: http://stt.example.test:8000
   terminal:
     replicaCount: 1
   postgres:

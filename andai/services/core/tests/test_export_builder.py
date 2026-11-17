@@ -151,6 +151,52 @@ def test_the_bundle_holds_the_owned_meetings_and_nothing_else(
     ]
 
 
+def test_a_built_request_records_the_meetings_its_part_holds(
+    world: ExportWorld, superuser_engine: Engine
+) -> None:
+    """`meeting_ids` is what a later meeting delete looks up to invalidate this copy."""
+    request_id = export_request(world.engine, world.org_id, world.subject.user_id)
+
+    assert _build(world, request_id) == "ready"
+
+    files = _files(world, superuser_engine, request_id)
+    held = {
+        uuid.UUID(path.split("/")[1].removesuffix(".json"))
+        for path in files
+        if path.startswith("meetings/")
+    }
+    row = _row(superuser_engine, request_id)
+    assert set(row["meeting_ids"]) == held == world.owned
+    assert len(row["meeting_ids"]) == len(held)
+
+
+def test_a_build_whose_meeting_was_deleted_meanwhile_fails_meeting_deleted(
+    world: ExportWorld, superuser_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The meeting is hidden after the person's data was read but before the copy is stored: the
+    copy would hold a deleted meeting, so it is not stored and the person can ask again."""
+    request_id = export_request(world.engine, world.org_id, world.subject.user_id)
+    real = builder._ready
+
+    def hide_first(engine, org_id, *args, **kwargs):
+        with superuser_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE meetings SET deleted_at = now(), deletion_state = 'pending'"
+                     " WHERE id = :m"),
+                {"m": world.failed},
+            )
+        return real(engine, org_id, *args, **kwargs)
+
+    monkeypatch.setattr(builder, "_ready", hide_first)
+
+    assert _build(world, request_id) == "failed"
+
+    row = _row(superuser_engine, request_id)
+    assert (row["state"], row["error"], row["bundle_ciphertext"]) == (
+        "failed", "meeting_deleted", None
+    )
+
+
 def test_no_secret_or_other_persons_address_is_in_the_bundle(
     world: ExportWorld, superuser_engine: Engine
 ) -> None:

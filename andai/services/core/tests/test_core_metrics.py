@@ -235,3 +235,33 @@ def test_asr_lag_is_observed_from_segments_with_both_times() -> None:
     assert len(segments) == 5
     count, total, missing = (a - b for a, b in zip(_asr(registry), before, strict=True))
     assert (count, round(total, 3), missing) == (3, 2.5 + 2.0 + 0.0, 2)
+
+
+def test_asr_lag_is_observed_on_the_transcript_meeting_api_returns() -> None:
+    """The platform's transcript read: `created_at` is when a segment first reached the collector,
+    in ISO UTC with `Z`, beside `absolute_end_time` in the same form (with microseconds)."""
+    registry = metrics.service_registry(metrics.ASR_LAG, metrics.ASR_LAG_MISSING)
+    before = _asr(registry)
+    document = {
+        "id": 41, "platform": "google_meet", "native_meeting_id": "abc-defg-hij",
+        "status": "completed", "start_time": "2026-11-17T10:00:00Z",
+        "end_time": "2026-11-17T10:05:00Z",
+        "segments": [
+            {"start": 1.25, "end": 3.5, "text": "namaste sab log", "language": "hi",
+             "speaker": "Asha Verma", "completed": True, "segment_id": "s1",
+             "absolute_start_time": "2026-11-17T10:00:01.250000Z",
+             "absolute_end_time": "2026-11-17T10:00:03.500000Z",
+             "created_at": "2026-11-17T10:00:05.750000Z"},
+            {"start": 3.5, "end": 6.0, "text": "chalo shuru karte hain", "language": "hi",
+             "speaker": "Rohan Mehta", "completed": True, "segment_id": "s2",
+             "absolute_start_time": "2026-11-17T10:00:03.500000Z",
+             "absolute_end_time": "2026-11-17T10:00:06Z",
+             "created_at": "2026-11-17T10:00:07Z"},
+        ],
+    }
+
+    segments = ingest._segments(document, uuid.uuid4(), None)
+
+    assert len(segments) == 2
+    count, total, missing = (a - b for a, b in zip(_asr(registry), before, strict=True))
+    assert (count, round(total, 3), missing) == (2, 2.25 + 1.0, 0)

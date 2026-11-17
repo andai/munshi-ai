@@ -27,6 +27,10 @@ an andai value the agreement is checked here.
 {{- fail (printf "andai.env.%s is refused: it carries a secret or is set by the chart from a Secret. Use the andai.* Secret settings instead (andai/docs/kubernetes.md)." $k) -}}
 {{- end -}}
 {{- end -}}
+{{- $downloads := int ($a.core.exportDownloadsConcurrent | default 0) -}}
+{{- if or (lt $downloads 1) (gt $downloads 10) -}}
+{{- fail (printf "andai.core.exportDownloadsConcurrent must be 1-10 (got %v)" $a.core.exportDownloadsConcurrent) -}}
+{{- end -}}
 {{- if and .Values.munshi.postgres.enabled (or (not .Values.munshi.database.password) (eq (toString .Values.munshi.database.password) "postgres")) -}}
 {{- fail "munshi.database.password is required with the bundled Postgres (munshi.postgres.enabled=true): the munshi chart writes it into its postgres-credentials Secret as the superuser password, and its default `postgres` is refused. Pass it from a file or your secrets tooling (--set-file / -f), e.g. openssl rand -hex 24." -}}
 {{- end -}}
@@ -74,6 +78,9 @@ an andai value the agreement is checked here.
 {{- end -}}
 {{- if and $asr.enabled $llm.enabled (not $disjoint) -}}
 {{- fail "gpuPools.asr.nodeSelector and gpuPools.llm.nodeSelector must be disjoint: give them one label key with different values (munshi.ai/gpu-pool: asr / llm)" -}}
+{{- end -}}
+{{- if not .Values.munshi.meetingApi.transcriptionServiceUrl -}}
+{{- fail (printf "munshi.meetingApi.transcriptionServiceUrl is required: the speech-to-text endpoint the bots use (%s with gpuPools.asr.enabled, or another in-house endpoint); empty, meeting-api refuses every bot (503 transcription_not_configured)" (include "andai.asrUrl" .)) -}}
 {{- end -}}
 {{- if and $asr.enabled (ne (toString .Values.munshi.meetingApi.transcriptionServiceUrl) (include "andai.asrUrl" .)) -}}
 {{- fail (printf "munshi.meetingApi.transcriptionServiceUrl must be %s while gpuPools.asr.enabled=true, so bots transcribe on the ASR pool (got %q)" (include "andai.asrUrl" .) (toString .Values.munshi.meetingApi.transcriptionServiceUrl)) -}}

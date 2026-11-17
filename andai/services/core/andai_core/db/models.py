@@ -159,7 +159,7 @@ ERASED_NAME = "Erased user"
 EXPORT_SOURCES = ("self", "org_admin")
 EXPORT_STATES = ("pending", "running", "ready", "failed", "expired")
 EXPORT_OPEN_STATES = ("pending", "running")
-EXPORT_ERRORS = ("too_large", "not_a_member", "internal_error")
+EXPORT_ERRORS = ("too_large", "not_a_member", "internal_error", "meeting_deleted")
 
 # Tables protected by row-level security on org_id (migration 0002).
 ORG_SCOPED_TABLES = (
@@ -1118,10 +1118,11 @@ class ErasureRequest(Base):
 
 
 class ExportRequest(Base):
-    """One copy of a person's data in one org (`andai_core.dpdp`, migration 0020). A ready
-    request's JSON part is sealed (`bundle_ciphertext`, `key_id`; AAD `export:<org>:<request>`);
-    `recordings` lists the recordings the download streams from the platform, with the size and
-    SHA-256 the build measured."""
+    """One copy of a person's data in one org (`andai_core.dpdp`, migrations 0020 and 0021). A
+    ready request's JSON part is sealed (`bundle_ciphertext`, `key_id`; AAD
+    `export:<org>:<request>`); `recordings` lists the recordings the download streams from the
+    platform, with the size and SHA-256 the build measured; `meeting_ids` the meetings the part
+    holds, so that deleting one of them invalidates the copy."""
 
     __tablename__ = "export_requests"
     __table_args__ = (
@@ -1158,6 +1159,7 @@ class ExportRequest(Base):
         ),
         Index("ix_export_requests_org_id_requested_by", "org_id", "requested_by"),
         Index("ix_export_requests_org_id_created_at", "org_id", "created_at", "id"),
+        Index("ix_export_requests_meeting_ids", "meeting_ids", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -1181,6 +1183,10 @@ class ExportRequest(Base):
     bundle_bytes: Mapped[int | None] = mapped_column(BigInteger)
     recordings: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    # The meetings the JSON part holds (0021); empty on copies made before it.
+    meeting_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, server_default=text("'{}'::uuid[]")
     )
     created_at: Mapped[datetime] = _created_at()
     ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

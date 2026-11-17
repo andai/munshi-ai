@@ -148,8 +148,9 @@ class Settings(BaseSettings):
     )
 
     # Data exports (`andai_core.dpdp`): how many days a ready bundle can be downloaded, the most a
-    # bundle's JSON part may hold (bytes, before compression), and the operator's processing note
-    # for account.json (empty: `DEFAULT_PROCESSING_NOTE`).
+    # bundle's JSON part may hold (bytes, before compression), the operator's processing note
+    # for account.json (empty: `DEFAULT_PROCESSING_NOTE`), and how many downloads one person may
+    # have building at once.
     export_retention_days: int = Field(
         default=7, ge=1, le=30, validation_alias="ANDAI_EXPORT_RETENTION_DAYS"
     )
@@ -158,6 +159,9 @@ class Settings(BaseSettings):
     )
     export_processing_note_raw: str = Field(
         default="", max_length=4000, validation_alias="ANDAI_EXPORT_PROCESSING_NOTE"
+    )
+    export_downloads_concurrent: int = Field(
+        default=1, ge=1, le=10, validation_alias="ANDAI_EXPORT_DOWNLOADS_CONCURRENT"
     )
 
     @property
