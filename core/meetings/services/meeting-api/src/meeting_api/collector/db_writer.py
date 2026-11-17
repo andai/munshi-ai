@@ -30,7 +30,8 @@ Additions over the parent:
 
   * ``finalize_meeting(...)`` — the completion hook: flush EVERYTHING left (threshold 0, mutable
     tail included) the moment the lifecycle FSM lands on a terminal status, so a completed meeting's
-    transcript is durable immediately instead of eventually.
+    transcript is durable immediately instead of eventually; it also sets the transcript stream's
+    ``TC_STREAM_TTL_S`` expiry (``adapters.set_stream_expiry``).
   * ``flush_meeting_processed(...)`` — drain the copilot's cleaned-notes stream
     (``proc:meeting:{meeting_id}``, agent-worker the single writer, P23) into the meeting row's
     ``data['processed']`` JSONB (the documented meeting.data home; NO schema change), resuming
@@ -502,7 +503,8 @@ async def finalize_meeting(redis_c, sink, meeting_id: int) -> int:
     """The COMPLETION flush — called by the lifecycle callback the moment a meeting reaches a
     terminal status (completed/failed): flush EVERYTHING still in the hash (threshold 0 — the
     mutable tail and trailing drafts included; no more updates are coming) and drain the processed
-    notes, so the finished meeting's transcript + processed doc are durable IMMEDIATELY.
+    notes, so the finished meeting's transcript + processed doc are durable IMMEDIATELY, and bound
+    the transcript stream's life (``set_stream_expiry``; never extends an earlier expiry).
 
     The processed stream is NOT necessarily complete here — the copilot's final beat runs ~10s
     AFTER session_end (ADR 0027). Unless the ``view_end`` marker is already drained-through, the
@@ -510,6 +512,12 @@ async def finalize_meeting(redis_c, sink, meeting_id: int) -> int:
     marker (or the bounded deadline). Never processed ⇒ the deadline simply expires the parking."""
     stored = await flush_meeting_segments(redis_c, sink, meeting_id, immutability_threshold=0)
     await flush_meeting_processed(redis_c, sink, meeting_id)
+    try:
+        from .adapters import set_stream_expiry
+
+        await set_stream_expiry(redis_c, meeting_id)        # never extends an earlier expiry
+    except Exception:  # noqa: BLE001 — the lifecycle callback sets it too; never fail the finalize
+        log.exception("could not set the transcript stream expiry of meeting %s", meeting_id)
     if not await _processed_complete(redis_c, sink, meeting_id):
         try:
             deadline = datetime.now(timezone.utc).timestamp() + PROC_PENDING_GRACE_SEC

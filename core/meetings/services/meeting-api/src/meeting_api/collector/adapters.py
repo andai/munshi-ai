@@ -1817,6 +1817,36 @@ class RedisStreamBus:
     async def expire(self, key, seconds):
         return await self._client.expire(key, seconds)
 
+    async def ttl(self, key):
+        return await self._client.ttl(key)
+
+
+async def set_stream_expiry(redis, meeting_id, ttl_s: Optional[int] = None) -> bool:
+    """Bound a finished meeting's transcript stream ``tc:meeting:{id}``: set ``TC_STREAM_TTL_S``
+    (``ttl_s`` overrides it) as its expiry when the key has none (TTL -1) or a longer one. A key with a
+    shorter remaining life keeps it, so a later end event never extends an earlier one; a missing key
+    stays missing; ``TC_STREAM_TTL_S`` 0 sets nothing. ``redis`` is any client with async ``ttl`` and
+    ``expire`` (a redis-asyncio client or a ``RedisBus``). Every meeting end path calls this: the
+    bot's ``session_end``, the lifecycle callback's terminal (completion, user stop, failure, and the
+    terminals the reconcile sweeps and the runtime callback drive through it) and the db-writer's
+    finalize. Returns whether it set the expiry. Deleting the meeting deletes the stream at once;
+    this is the backstop for meetings that are never deleted."""
+    if ttl_s is None:
+        # The module, not the package attribute: the package re-exports the `ingest` function.
+        import importlib
+
+        ttl_s = importlib.import_module(f"{__package__}.ingest").TC_STREAM_TTL_S
+    if ttl_s <= 0:
+        return False
+    from .db_writer import transcript_stream_key
+
+    key = transcript_stream_key(meeting_id)
+    current = await redis.ttl(key)
+    if current == -1 or current > ttl_s:
+        await redis.expire(key, ttl_s)
+        return True
+    return False
+
 
 def build_production_app(
     *,

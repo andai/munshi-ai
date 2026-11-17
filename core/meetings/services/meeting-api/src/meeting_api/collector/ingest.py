@@ -26,6 +26,7 @@ import socket
 from datetime import datetime, timezone
 from typing import Optional
 
+from .adapters import set_stream_expiry
 from .db_writer import transcript_stream_key
 from .ports import RedisBus, TranscriptStore
 
@@ -53,7 +54,8 @@ CONSUMER_TTL_MS = int(os.environ.get("COLLECTOR_CONSUMER_TTL_MS", str(30 * 60 * 
 
 def _tc_stream_ttl_s() -> int:
     """``TC_STREAM_TTL_S``: seconds a meeting's transcript stream ``tc:meeting:{id}`` lives after its
-    session ended (default 86400; 0 = no expiry). Not whole seconds ≥ 0 ⇒ fatal at start-up."""
+    meeting ended (default 86400; 0 = no expiry); ``adapters.set_stream_expiry`` applies it on every
+    end path. Not whole seconds ≥ 0 ⇒ fatal at start-up."""
     raw = (os.environ.get("TC_STREAM_TTL_S") or "").strip()
     if not raw:
         return 86400
@@ -217,10 +219,8 @@ async def ingest(store: TranscriptStore, redis: RedisBus, message: dict) -> int:
             stream = _transcript_stream(meeting_id)
             try:
                 await redis.xadd(stream, {"type": "session_end", "uid": uid})
-                # The session is over: bound the stream's life. Deleting the meeting deletes it at
-                # once; this expiry covers the streams of meetings that are never deleted.
-                if TC_STREAM_TTL_S > 0:
-                    await redis.expire(stream, TC_STREAM_TTL_S)
+                # The session is over: bound the stream's life (never extending an earlier expiry).
+                await set_stream_expiry(redis, meeting_id)
             except Exception as e:  # noqa: BLE001 — best-effort; never abort the batch
                 _log_publish_failure(meeting_id, e)
         return 0

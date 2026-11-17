@@ -951,3 +951,6 @@ class FakeRedisBus:
 
     async def expire(self, key, seconds):
         return await self._client.expire(key, seconds)
+
+    async def ttl(self, key):
+        return await self._client.ttl(key)

@@ -443,5 +443,10 @@ class RedisBus(Protocol):
 
     async def expire(self, key: str, seconds: int) -> Any:
         """Set ``key`` to expire in ``seconds`` (EXPIRE) — the backstop that bounds a per-meeting
-        transcript stream's life after its session ended."""
+        transcript stream's life after its meeting ended."""
+        ...
+
+    async def ttl(self, key: str) -> int:
+        """``key``'s remaining life in seconds (TTL): -1 = no expiry, -2 = no such key. Read before
+        an expiry is set, so a later end event never extends an earlier one."""
         ...
