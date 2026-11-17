@@ -187,6 +187,9 @@ services:
       # Cluster-wide cap on meeting bots starting or running at once; a dispatch over it is refused
       # at once (429 capacity_exhausted). Empty or 0 = no cap.
       - RUNTIME_MAX_ACTIVE_BOTS=${RUNTIME_MAX_ACTIVE_BOTS:-}
+      # At the cap, one create at a time re-checks the containers for bots that exited unseen, at
+      # most this often (seconds; empty = 2); every other create at the cap is refused at once.
+      - RUNTIME_CAP_RECHECK_S=${RUNTIME_CAP_RECHECK_S:-}
       - MUNSHI_AGENT_SRC_MOUNT=${MUNSHI_AGENT_SRC_MOUNT:-}
       - REDIS_URL=redis://redis:6379/0
       # The Runtime brokers model credentials into spawned agents. Subscription credentials may be
@@ -344,6 +347,9 @@ services:
       # The bot's display name in the meeting. The terminal omits bot_name on join, so this is what
       # participants see; set DEFAULT_BOT_NAME in .env and restart meeting-api (no terminal rebuild).
       - DEFAULT_BOT_NAME=${DEFAULT_BOT_NAME:-Munshi}
+      # Seconds a meeting's tc:meeting:{id} transcript stream lives after its session ended
+      # (deleting the meeting deletes it at once). Empty = 86400; 0 = no expiry.
+      - TC_STREAM_TTL_S=${TC_STREAM_TTL_S:-}
       # The background sweeps' internal lookups: auto-join fetches per-user spawn context
       # (/internal/users/{id}/bot-context) and calendar sync discovers connected ICS feeds
       # (/internal/calendar-configs). Unset -> calendar sync no-ops, auto-join spawns uncapped.
@@ -357,7 +363,8 @@ services:
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
       # STT the spawned bot transcribes with — bot_spawn threads these into the invocation (registry
       # `stt` resource; a token that can actually transcribe — the boot probe + wizard Test verify
-      # it with real audio). Unset → bot joins+captures but no transcript.
+      # it with real audio). Unset → a spawn that asks for transcription (the default) is refused
+      # with 503 transcription_not_configured, unless the user set a backend in Settings.
       # MODEL is the id validating backends require (Groq/vLLM); unset → whisper-1.
       - TRANSCRIPTION_SERVICE_URL=${TRANSCRIPTION_SERVICE_URL:-}
       - TRANSCRIPTION_SERVICE_TOKEN=${TRANSCRIPTION_SERVICE_TOKEN:-}
