@@ -6,6 +6,10 @@ blocked until the oldest of them leaves the window. Login uses it for failed att
 
 Two implementations with the same behaviour: `MemoryLimiter` (one process; tests) and
 `ValkeyLimiter` (the stack's Valkey, shared by every andai-core process).
+
+`Slots` bounds how many of one thing run at once per key (a person's export downloads): `take`
+returns a token while fewer than `limit` slots are held, `release` frees it, and a slot nobody
+releases (a crashed process) expires after its `ttl`. `MemorySlots` and `ValkeySlots` again.
 """
 
 from __future__ import annotations
@@ -130,3 +134,74 @@ class ValkeyLimiter:
 
     def clear(self, key: str) -> None:
         self.client.delete(self._name(key))
+
+
+class Slots(Protocol):
+    def take(self, key: str, *, limit: int, ttl: float) -> str | None:
+        """A token for one of `limit` slots of `key`, held for at most `ttl` seconds; None when
+        all are taken."""
+
+    def release(self, key: str, token: str) -> None:
+        """Free the slot `token` holds (a no-op once it expired)."""
+
+
+class MemorySlots:
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        self.clock = clock
+        self._held: dict[str, dict[str, float]] = {}
+        self._lock = threading.Lock()
+
+    def take(self, key: str, *, limit: int, ttl: float) -> str | None:
+        now = self.clock()
+        with self._lock:
+            held = self._held.setdefault(key, {})
+            for token in [t for t, until in held.items() if until <= now]:
+                del held[token]
+            if len(held) >= limit:
+                return None
+            token = uuid.uuid4().hex
+            held[token] = now + ttl
+            return token
+
+    def release(self, key: str, token: str) -> None:
+        with self._lock:
+            self._held.get(key, {}).pop(token, None)
+
+
+# KEYS[1] = the slot set; ARGV = now, limit, held-until, token, set expiry (s).
+_TAKE = """
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
+redis.call('EXPIRE', KEYS[1], ARGV[5])
+return 1
+"""
+
+
+class ValkeySlots:
+    """One sorted set per key (member = a token, score = the time its slot lapses), checked and
+    taken in one script; the set expires one `ttl` after the last slot was taken."""
+
+    def __init__(
+        self,
+        client: redis.Redis,
+        clock: Callable[[], float] = time.time,
+        prefix: str = "andai:slots:",
+    ) -> None:
+        self.client = client
+        self.clock = clock
+        self.prefix = prefix
+        self._take = client.register_script(_TAKE)
+
+    def take(self, key: str, *, limit: int, ttl: float) -> str | None:
+        now = self.clock()
+        token = uuid.uuid4().hex
+        taken = self._take(
+            keys=[self.prefix + key], args=[now, limit, now + ttl, token, math.ceil(ttl)]
+        )
+        return token if int(taken) == 1 else None
+
+    def release(self, key: str, token: str) -> None:
+        self.client.zrem(self.prefix + key, token)

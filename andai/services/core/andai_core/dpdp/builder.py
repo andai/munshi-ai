@@ -24,6 +24,11 @@ under its org and records the outcome; `build` is the work itself:
    `expires_at = now + ANDAI_EXPORT_RETENTION_DAYS` and `user.export.ready` audited, in one
    transaction.
 
+The ids of the meetings read are written to the request's `meeting_ids` in the read's transaction
+and again with the copy, so that deleting one of them invalidates the copy (`meetings.deletion`).
+A meeting deleted after the read and before the copy is stored fails the request
+(`meeting_deleted`); the copy is not stored and the person can ask again.
+
 A person who is no longer a member of the org fails the request at once (`not_a_member`). Any other
 error is retried after 30 s doubling to 10 minutes; the fifth failed attempt fails the request
 `internal_error`. A failure is audited `user.export.failed`. Logs carry ids and error classes only,
@@ -133,6 +138,10 @@ class _Data:
     account: bundle.Account
     meetings: list[_Meeting]
     key: str | None
+
+    @property
+    def meeting_ids(self) -> list[uuid.UUID]:
+        return [m.export["id"] for m in self.meetings]
 
 
 @dataclass
@@ -325,6 +334,9 @@ def _read(
             .order_by(Meeting.created_at, Meeting.id)
         ).all()
         meetings = [_meeting(tx, m) for m in owned]
+        # Recorded on the running request at once, so a meeting purged while the copy is being
+        # made fails the request (`meetings.deletion`).
+        request.meeting_ids = [m.id for m in owned]
         key = None
         if any(m.platform_meeting_id is not None for m in meetings):
             key = principals.open_key(tx, keyring, org_id)
@@ -505,8 +517,20 @@ def _ready(
     sealed,
     now: datetime,
     retention: timedelta,
-) -> bool:
+) -> str | None:
+    """Store the copy: `ready`, `meeting_deleted` when one of its meetings was deleted since it was
+    read (the copy is not stored), or None when the request is no longer running."""
     with transaction(engine, org_id=org_id) as tx:
+        ids = data.meeting_ids
+        # FOR SHARE: a meeting delete (FOR UPDATE on the meeting) waits for this transaction, or
+        # this one sees its deleted_at.
+        live = tx.scalars(
+            select(Meeting.id)
+            .where(Meeting.org_id == org_id, Meeting.id.in_(ids), Meeting.deleted_at.is_(None))
+            .with_for_update(read=True)
+        ).all() if ids else []
+        if len(live) != len(ids):
+            return "meeting_deleted"
         written = tx.execute(
             update(ExportRequest)
             .where(ExportRequest.id == request_id, ExportRequest.state == "running")
@@ -517,6 +541,7 @@ def _ready(
                 key_id=sealed.key_id,
                 bundle_bytes=built.total_bytes,
                 recordings=[r.stored() for r in built.recordings],
+                meeting_ids=ids,
                 ready_at=now,
                 expires_at=now + retention,
                 next_at=None,
@@ -527,7 +552,7 @@ def _ready(
             audit.record(
                 tx, org_id, data.requested_by, "user.export.ready", f"user:{data.subject}"
             )
-        return bool(written)
+        return "ready" if written else None
 
 
 def _failed(engine: Engine, org_id: uuid.UUID, request_id: uuid.UUID, code: str) -> bool:
@@ -603,10 +628,12 @@ async def build(
     sealed = await anyio.to_thread.run_sync(lambda: seal_part(keyring, org_id, request_id, built))
     retention = timedelta(days=settings.export_retention_days)
     done = clock()
-    written = await anyio.to_thread.run_sync(
+    stored = await anyio.to_thread.run_sync(
         lambda: _ready(engine, org_id, request_id, data, built, sealed, done, retention)
     )
-    return "ready" if written else None
+    if stored == "meeting_deleted":
+        raise Failed("meeting_deleted")
+    return stored
 
 
 async def run(

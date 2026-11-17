@@ -22,7 +22,11 @@
   with 502 `recording_changed`, a platform that cannot be reached with 502 `platform_unavailable`;
   both are audited `user.export.download_failed`. A complete zip is audited `user.export.download`
   and sent as `application/zip` with `Content-Disposition: attachment;
-  filename="munshi-export-<date>.zip"` and `Cache-Control: no-store`.
+  filename="munshi-export-<date>.zip"` and `Cache-Control: no-store`. One person may have at most
+  `ANDAI_EXPORT_DOWNLOADS_CONCURRENT` (default 1) downloads building at once: the slot
+  (`Services.export_download_slots`, keyed by the downloader) is taken before the zip is built and
+  freed when building ends, however it ends; a slot nobody frees lapses after `SLOT_TTL`. Another
+  download meanwhile answers 429 `export_download_busy` with `Retry-After`.
 
 Each request is listed as `{id, subjectId, subjectName?, source, state, error, createdAt, readyAt,
 expiresAt, bytes, canDownload}`; no address, key or content.
@@ -40,9 +44,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import anyio
 import anyio.to_thread
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as Tx
@@ -71,6 +76,9 @@ PAGE_SIZE = 50
 MAX_CURSOR_CHARS = 128
 SPOOL_BYTES = 16 * 1024 * 1024
 READ_BYTES = 256 * 1024
+# A download slot lapses after this even if its process never frees it (longer than the portal waits).
+SLOT_TTL = timedelta(minutes=20)
+BUSY_RETRY_AFTER_S = 30
 
 EXPORT_IN_PROGRESS = MeetingError(
     429, "export_in_progress", "a copy of this person's data is already being made"
@@ -89,6 +97,7 @@ PLATFORM_UNAVAILABLE = MeetingError(
     502, "platform_unavailable", "the recordings cannot be read right now; try again shortly"
 )
 BAD_CURSOR = MeetingError(422, "bad_cursor", "this cursor is not valid for this list")
+DOWNLOAD_BUSY = "export_download_busy"
 
 
 # ─── asking ───────────────────────────────────────────────────────────────────────────────────────
@@ -391,7 +400,7 @@ async def download(
     caller: Caller = Depends(require_role(*MEMBERS)),
     services: Services = Depends(get_services),
     ip: str | None = Depends(client_ip),
-) -> StreamingResponse:
+) -> Response:
     now = services.clock()
 
     def load() -> _Download:
@@ -407,6 +416,46 @@ async def download(
             return _loaded(tx, services.keyring, caller, request, now)
 
     found = await anyio.to_thread.run_sync(load)
+    slots = services.export_download_slots
+    slot_key = f"export-download:{caller.session.user_id}"
+    token = await anyio.to_thread.run_sync(
+        lambda: slots.take(
+            slot_key,
+            limit=services.settings.export_downloads_concurrent,
+            ttl=SLOT_TTL.total_seconds(),
+        )
+    )
+    if token is None:
+        return JSONResponse(
+            {
+                "detail": "another download of yours is being prepared; try again shortly",
+                "code": DOWNLOAD_BUSY,
+            },
+            status_code=429,
+            headers={"Retry-After": str(BUSY_RETRY_AFTER_S)},
+        )
+    try:
+        spool = await _built(services, caller, found, ip)
+    finally:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(lambda: slots.release(slot_key, token))
+    size = spool.tell()
+    name = f"munshi-export-{found.created_at.date().isoformat()}.zip"
+    return StreamingResponse(
+        _chunks(spool),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Content-Length": str(size),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+async def _built(services: Services, caller: Caller, found: _Download, ip: str | None):
+    """The zip in a spool, audited; the refusal (audited) when a recording changed or the platform
+    cannot be reached."""
     files = await anyio.to_thread.run_sync(
         lambda: builder.open_part(
             services.keyring, found.org_id, found.request_id, found.ciphertext, found.key_id
@@ -427,18 +476,7 @@ async def download(
     await anyio.to_thread.run_sync(
         lambda: _audit_download(services, caller, found, ip, ok=True)
     )
-    size = spool.tell()
-    name = f"munshi-export-{found.created_at.date().isoformat()}.zip"
-    return StreamingResponse(
-        _chunks(spool),
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{name}"',
-            "Content-Length": str(size),
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+    return spool
 
 
 def _loaded(

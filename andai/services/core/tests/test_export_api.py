@@ -2,7 +2,8 @@
 one-open and three-a-day limits, the two listings, and the download — a zip whose manifest
 checksums match every entry (recordings streamed from the stub platform), only for the person or the
 admin who asked, 404 for anyone else, 409 before it is ready, 410 after it expired, 502 when a
-recording changed — with every step audited."""
+recording changed — with every step audited; and one download building at a time per person (429
+`export_download_busy`), the slot released after success, failure and cancellation."""
 
 from __future__ import annotations
 
@@ -10,12 +11,16 @@ import asyncio
 import hashlib
 import io
 import json
+import threading
 import uuid
 import zipfile
 
+import anyio.to_thread
 import pytest
+import redis
 from sqlalchemy import Engine, text
 
+from andai_core.auth.ratelimit import MemorySlots, ValkeySlots
 from andai_core.dpdp import builder
 from conftest import (
     ExportWorld,
@@ -286,6 +291,177 @@ def test_an_unreachable_platform_is_a_retryable_failure(
 
     del world.harness.gateway.fail["stream recording"]
     assert client.get(_download(export_id)).status_code == 200
+
+
+# ─── one download at a time per person ────────────────────────────────────────────────────────────
+
+
+class _HeldStream:
+    """Wraps the gateway's `stream_recording`: the first call waits until `release()`; later calls
+    pass straight through. `started` is set once the first call is waiting."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, gateway, *, raise_inside=None) -> None:
+        self.started = threading.Event()
+        self._go = threading.Event()
+        self._first = True
+        self._raise = raise_inside
+        real = gateway.stream_recording
+
+        async def held(*args, **kwargs):
+            if self._first:
+                self._first = False
+                self.started.set()
+                await anyio.to_thread.run_sync(self._go.wait)
+                if self._raise is not None:
+                    raise self._raise
+            async for chunk in real(*args, **kwargs):
+                yield chunk
+
+        monkeypatch.setattr(gateway, "stream_recording", held)
+
+    def release(self) -> None:
+        self._go.set()
+
+
+def _in_thread(client, path: str) -> tuple[threading.Thread, dict]:
+    out: dict = {}
+
+    def run() -> None:
+        try:
+            out["response"] = client.get(path)
+        except BaseException as exc:  # noqa: BLE001 - the test inspects it
+            out["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread, out
+
+
+def test_a_second_download_by_the_same_person_waits_its_turn(
+    world: ExportWorld, superuser_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = sign_in(world.harness, world.subject)
+    export_id = client.post(MINE).json()["id"]
+    assert _build(world, superuser_engine, export_id) == "ready"
+    held = _HeldStream(monkeypatch, world.harness.services.gateway)
+
+    thread, first = _in_thread(sign_in(world.harness, world.subject), _download(export_id))
+    assert held.started.wait(10)
+    second = client.get(_download(export_id))
+    held.release()
+    thread.join(30)
+
+    assert (second.status_code, second.json()["code"]) == (429, "export_download_busy")
+    assert int(second.headers["retry-after"]) > 0
+    assert first["response"].status_code == 200, first
+    # the slot is free again once the first one finished
+    assert client.get(_download(export_id)).status_code == 200
+
+
+def test_another_person_is_not_blocked_by_someone_elses_download(
+    world: ExportWorld, superuser_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subject = sign_in(world.harness, world.subject)
+    mine = subject.post(MINE).json()["id"]
+    assert _build(world, superuser_engine, mine) == "ready"
+    admin = sign_in(world.harness, world.admin)
+    asked = admin.post(_member_path(world.subject.user_id)).json()["id"]
+    assert _build(world, superuser_engine, asked) == "ready"
+    held = _HeldStream(monkeypatch, world.harness.services.gateway)
+
+    thread, first = _in_thread(subject, _download(mine))
+    assert held.started.wait(10)
+    by_admin = admin.get(_download(asked))  # the same person's data, another downloader
+    held.release()
+    thread.join(30)
+
+    assert by_admin.status_code == 200, by_admin.text
+    assert first["response"].status_code == 200
+
+
+def test_the_slot_is_released_after_a_failed_download(
+    world: ExportWorld, superuser_engine: Engine
+) -> None:
+    client = sign_in(world.harness, world.subject)
+    export_id = client.post(MINE).json()["id"]
+    assert _build(world, superuser_engine, export_id) == "ready"
+    world.harness.gateway.fail["stream recording"] = 503
+
+    assert client.get(_download(export_id)).status_code == 502
+
+    del world.harness.gateway.fail["stream recording"]
+    assert client.get(_download(export_id)).status_code == 200
+
+
+def test_the_slot_is_released_when_the_download_is_cancelled(
+    world: ExportWorld, superuser_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client that goes away cancels the request while the zip is being built."""
+    client = sign_in(world.harness, world.subject)
+    export_id = client.post(MINE).json()["id"]
+    assert _build(world, superuser_engine, export_id) == "ready"
+    held = _HeldStream(
+        monkeypatch, world.harness.services.gateway, raise_inside=asyncio.CancelledError()
+    )
+
+    thread, first = _in_thread(sign_in(world.harness, world.subject), _download(export_id))
+    assert held.started.wait(10)
+    held.release()
+    thread.join(30)
+
+    assert "response" not in first or first["response"].status_code >= 500
+    assert client.get(_download(export_id)).status_code == 200
+
+
+def test_the_number_of_downloads_at_once_is_a_setting(
+    world: ExportWorld, superuser_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    services = world.harness.services
+    monkeypatch.setattr(
+        services, "settings", make_settings(ANDAI_EXPORT_DOWNLOADS_CONCURRENT="2")
+    )
+    client = sign_in(world.harness, world.subject)
+    export_id = client.post(MINE).json()["id"]
+    assert _build(world, superuser_engine, export_id) == "ready"
+    held = _HeldStream(monkeypatch, services.gateway)
+
+    thread, first = _in_thread(sign_in(world.harness, world.subject), _download(export_id))
+    assert held.started.wait(10)
+    second = client.get(_download(export_id))
+    held.release()
+    thread.join(30)
+
+    assert second.status_code == 200, second.text
+    assert first["response"].status_code == 200
+
+
+@pytest.fixture(params=["memory", "valkey"])
+def slots(request: pytest.FixtureRequest):
+    clock = {"now": 1_000_000.0}
+
+    def now() -> float:
+        return clock["now"]
+
+    if request.param == "memory":
+        return MemorySlots(clock=now), clock
+    client = redis.Redis.from_url(request.getfixturevalue("valkey_url"))
+    return ValkeySlots(client, clock=now, prefix=f"test:{uuid.uuid4().hex}:"), clock
+
+
+def test_slots_admit_up_to_the_limit_release_and_expire(slots) -> None:
+    store, clock = slots
+    a = store.take("download:a", limit=1, ttl=900)
+    assert a is not None
+    assert store.take("download:a", limit=1, ttl=900) is None
+    assert store.take("download:b", limit=1, ttl=900) is not None  # keys are independent
+    second = store.take("download:a", limit=2, ttl=900)
+    assert second is not None
+    store.release("download:a", a)
+    store.release("download:a", second)
+    again = store.take("download:a", limit=1, ttl=900)
+    assert again is not None
+    clock["now"] += 901  # a slot never released (a crashed process) expires
+    assert store.take("download:a", limit=1, ttl=900) is not None
 
 
 def test_the_listings_carry_no_address_or_content(

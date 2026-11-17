@@ -2,8 +2,9 @@
 
 `create_app()` builds the app; its services (database engine, login limiter, mailer, client-address
 resolver, keyring, the meeting platform's admin-api and gateway clients) are created at startup from
-the environment unless a caller passes them in (tests). The lifespan also runs the meeting status
-reconciler (`meetings.reconciler`) unless `ANDAI_RECONCILER=off`.
+the environment unless a caller passes them in (tests). Login, reset and two-factor limits and the
+export-download slots live in Valkey, shared by every andai-core process. The lifespan also runs
+the meeting status reconciler (`meetings.reconciler`) unless `ANDAI_RECONCILER=off`.
 Startup refuses to complete outside `ANDAI_ENV=dev` without a key-encryption key
 (`crypto.load_keyring` raises `KeyUnavailable`), so a production service never runs without one.
 A session in a two-factor stage reaches only its own routes (`auth.stage_gate`).
@@ -35,7 +36,12 @@ from andai_core.auth.clientip import ClientIpResolver
 from andai_core.auth.csrf import OriginCheck
 from andai_core.auth.deps import Services
 from andai_core.auth.mfa import MFA_FAILURE_LIMIT, MFA_FAILURE_WINDOW_SECONDS
-from andai_core.auth.ratelimit import LOGIN_LIMIT, LOGIN_WINDOW_SECONDS, ValkeyLimiter
+from andai_core.auth.ratelimit import (
+    LOGIN_LIMIT,
+    LOGIN_WINDOW_SECONDS,
+    ValkeyLimiter,
+    ValkeySlots,
+)
 from andai_core.auth.stage_gate import StageGate
 from andai_core.crypto import load_keyring
 from andai_core.dpdp import routes as export_routes
@@ -74,6 +80,7 @@ def build_services(settings: Settings) -> Services:
         keyring=keyring,
         platform_admin=HttpPlatformAdmin.from_settings(settings),
         gateway=HttpPlatformGateway(settings.platform_gateway_url),
+        export_download_slots=ValkeySlots(client),
     )
 
 
