@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 #
 # mock-bot:dev — the tiny Lane A instrument image (A:V0). Swapped in as BROWSER_IMAGE for the
 # MOCK_BOT=1 gate:compose run: the runtime spawns it EXACTLY like the real bot — the meeting-bot
@@ -8,16 +7,57 @@
 # and emits ONLY sealed contracts. No Playwright/Chromium/ONNX → a few hundred MB, builds on amd64 in
 # seconds (vs the ~2.5 GB real bot). It reuses the bot's REAL orchestrator + adapters (mock/main.ts).
 #
+# Starting it needs no network: the dependencies are installed at build time at the exact versions
+# the root pnpm-lock.yaml resolves, and the entrypoint runs node with tsx's loader — no npm or npx,
+# whose update check is a call to the npm registry. deploy/compose/tests/mock_image_start_test.sh
+# checks both. The base is the Node 22 image the portal already builds from (`--import` needs
+# Node ≥ 20.6).
+#
 # Build (REPO ROOT context):
 #   docker build -f core/meetings/services/bot/Dockerfile.mock -t mock-bot:dev .
-FROM node:20-slim
+FROM node:22-bookworm-slim
 WORKDIR /app
 
 # The only runtime deps the mock actually imports (ajv/ajv-formats for config+contract validation,
 # redis for the transcript/acts adapters) + tsx to run the TS worker directly. A local install puts
-# them at /app/node_modules, resolvable from the copied source below.
-RUN printf '{"name":"mock-bot","private":true,"type":"module","dependencies":{"ajv":"^8.17.0","ajv-formats":"^3.0.1","redis":"^4.7.0"},"devDependencies":{"tsx":"^4.19.0"}}' > package.json \
- && npm install --no-audit --no-fund --loglevel=error
+# them at /app/node_modules, resolvable from the copied source below. Every version is the one
+# pnpm-lock.yaml records: the four direct ones as resolved for core/meetings/services/bot, and their
+# dependencies through `overrides`, so npm installs nothing the lockfile does not name. When the
+# lockfile moves, update these with it (the start test fails until they match).
+COPY <<'EOF' /app/package.json
+{
+  "name": "mock-bot",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "redis": "4.7.1"
+  },
+  "devDependencies": {
+    "tsx": "4.22.4"
+  },
+  "overrides": {
+    "fast-deep-equal": "3.1.3",
+    "fast-uri": "3.1.7",
+    "json-schema-traverse": "1.0.0",
+    "require-from-string": "2.0.2",
+    "@redis/bloom": "1.2.0",
+    "@redis/client": "1.6.1",
+    "@redis/graph": "1.1.1",
+    "@redis/json": "1.0.7",
+    "@redis/search": "1.2.0",
+    "@redis/time-series": "1.1.0",
+    "cluster-key-slot": "1.1.2",
+    "generic-pool": "3.9.0",
+    "yallist": "4.0.0",
+    "esbuild": "0.28.1",
+    "@esbuild/linux-x64": "0.28.1",
+    "@esbuild/linux-arm64": "0.28.1"
+  }
+}
+EOF
+RUN npm install --no-audit --no-fund --no-update-notifier --loglevel=error
 
 # The mock source + the bot src it reuses + the sealed schemas it loads BY PATH
 # (config/orchestrator read ../../../contracts/{invocation,lifecycle,transcript}.v1).
@@ -27,8 +67,9 @@ COPY core/meetings/contracts          /app/meetings/contracts
 
 # Match the real bot image's launcher path exactly: ENTRYPOINT ["/app/entrypoint.sh"]. The runtime
 # spawns the bot with no profile command, so the image ENTRYPOINT is what every backend execs — this
-# mock stands in at the same path, launching the mock worker instead of the browser bot.
-RUN printf '#!/bin/sh\nexec npx --no-install tsx /app/meetings/services/bot/mock/main.ts\n' > /app/entrypoint.sh \
+# mock stands in at the same path, launching the mock worker instead of the browser bot. Plain node
+# with tsx's loader: nothing at start reaches the network.
+RUN printf '#!/bin/sh\nexec node --import tsx /app/meetings/services/bot/mock/main.ts\n' > /app/entrypoint.sh \
  && chmod +x /app/entrypoint.sh
 
 ENV NODE_ENV=production
