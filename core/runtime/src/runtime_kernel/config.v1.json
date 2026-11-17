@@ -163,6 +163,34 @@
    ]
   },
   {
+   "key": "RUNTIME_CAP_RECHECK_S",
+   "class": "defaulted",
+   "default": "2",
+   "description": "cluster bot cap: at most how often (seconds) a create at the cap checks the substrate for bots that exited without anyone reading them. One create at a time runs the check, outside the admission lock; every other create at the cap is refused with 429 capacity_exhausted at once from the runtime's own count, so refusals never queue behind a slow listing. A slot freed by a bot that exited unseen is reused by the first create after the next check. 0 ⇒ check on every create at the cap (still one at a time); a negative or non-numeric value is fatal at boot",
+   "targets": [
+    "compose",
+    "helm"
+   ]
+  },
+  {
+   "key": "RUNTIME_KUBECTL_TIMEOUT_S",
+   "class": "defaulted",
+   "default": "20",
+   "description": "k8s backend: seconds any one kubectl call may take before it is killed and fails with a backend error, so a slow or hung API server fails a call instead of hanging the runtime. An exit read that times out leaves the workload running. Not a positive number ⇒ fatal at boot",
+   "targets": [
+    "helm"
+   ]
+  },
+  {
+   "key": "RUNTIME_FINISHED_POD_TTL_S",
+   "class": "defaulted",
+   "default": "300",
+   "description": "k8s backend: a spawned Pod that finished (phase Succeeded or Failed) is deleted once it has been finished this many seconds, by a sweep of runtime.managed=true Pods every 60 s; the record keeps the exit code. A Pod the runtime sees exit is deleted at once. Pending and Running Pods are never deleted. 0 ⇒ no sweep; a negative or non-integer value is fatal at boot",
+   "targets": [
+    "helm"
+   ]
+  },
+  {
    "key": "BROWSER_IMAGE",
    "class": "capability",
    "capability": "bot_spawn",

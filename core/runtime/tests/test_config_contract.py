@@ -132,3 +132,18 @@ def test_the_shm_and_bot_cap_keys_are_declared_for_their_surfaces():
     assert cap["class"] == "defaulted"
     assert sorted(cap["targets"]) == ["compose", "helm"]
     assert "capacity_exhausted" in cap["description"]
+
+
+def test_the_refusal_kubectl_and_finished_pod_keys_are_declared_for_their_surfaces():
+    keys = {k["key"]: k for k in cp.load_declaration()["keys"]}
+    recheck = keys["RUNTIME_CAP_RECHECK_S"]
+    timeout = keys["RUNTIME_KUBECTL_TIMEOUT_S"]
+    ttl = keys["RUNTIME_FINISHED_POD_TTL_S"]
+    assert (recheck["class"], recheck["default"]) == ("defaulted", "2")
+    # the cap is counted on both substrates, so its re-check interval is set on both
+    assert sorted(recheck["targets"]) == ["compose", "helm"]
+    assert "capacity_exhausted" in recheck["description"]
+    # kubectl and finished Pods exist only on the Kubernetes backend: the chart sets them
+    assert (timeout["class"], timeout["default"], timeout["targets"]) == ("defaulted", "20", ["helm"])
+    assert (ttl["class"], ttl["default"], ttl["targets"]) == ("defaulted", "300", ["helm"])
+    assert "Running Pods are never deleted" in ttl["description"]

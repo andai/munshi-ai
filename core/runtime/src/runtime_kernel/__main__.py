@@ -142,6 +142,65 @@ def _cluster_cap() -> int | None:
     return cap or None
 
 
+def _cap_recheck_s() -> float:
+    """``RUNTIME_CAP_RECHECK_S``: at most how often a create at the cluster cap checks the substrate
+    for bots that exited unseen (default 2; 0 = every create at the cap, one at a time). Anything
+    that is not a number of seconds ≥ 0 is fatal at boot."""
+    from .kernel import DEFAULT_CAP_RECHECK_S
+
+    raw = os.getenv("RUNTIME_CAP_RECHECK_S", "").strip()
+    if not raw:
+        return DEFAULT_CAP_RECHECK_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not value >= 0 or value == float("inf"):
+        raise ValueError(f"RUNTIME_CAP_RECHECK_S must be a number of seconds, 0 or more, got {raw!r}")
+    return value
+
+
+DEFAULT_FINISHED_POD_TTL_S = 300
+FINISHED_SWEEP_INTERVAL_S = 60.0
+
+
+def _finished_pod_ttl_s() -> int:
+    """``RUNTIME_FINISHED_POD_TTL_S``: how long a finished bot Pod (Succeeded/Failed) is kept before
+    the sweep deletes it (Kubernetes backend; default 300; 0 = no sweep). Anything that is not a
+    whole number of seconds ≥ 0 is fatal at boot."""
+    raw = os.getenv("RUNTIME_FINISHED_POD_TTL_S", "").strip()
+    if not raw:
+        return DEFAULT_FINISHED_POD_TTL_S
+    try:
+        ttl = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"RUNTIME_FINISHED_POD_TTL_S must be whole seconds, got {raw!r}") from exc
+    if ttl < 0:
+        raise ValueError(f"RUNTIME_FINISHED_POD_TTL_S must be 0 (off) or more, got {raw!r}")
+    return ttl
+
+
+def _start_finished_sweep(runtime, backend, ttl_s: int,
+                          interval_s: float = FINISHED_SWEEP_INTERVAL_S):
+    """Run ``runtime.sweep_finished(ttl_s)`` every ``interval_s`` in a daemon thread — Kubernetes
+    only (Docker and process workloads are not swept) and only with a TTL above 0. Returns the
+    thread, or None when no sweep runs."""
+    if not ttl_s or getattr(backend, "name", None) != "k8s":
+        return None
+
+    def _loop() -> None:
+        while True:
+            try:
+                runtime.sweep_finished(ttl_s)
+            except Exception as e:  # noqa: BLE001 — a failed sweep must not kill the loop
+                logger.warning("finished-pod sweep error: %s", e)
+            time.sleep(interval_s)
+
+    thread = threading.Thread(target=_loop, name="finished-pod-sweep", daemon=True)
+    thread.start()
+    return thread
+
+
 def build_production_app():
     """Wire the runtime API with the env-selected spawn backend + the env-driven profile registry,
     plus the durable cron scheduler (REDIS_URL) with a background tick loop."""
@@ -158,6 +217,8 @@ def build_production_app():
     preflight()
 
     cluster_cap = _cluster_cap()
+    cap_recheck_s = _cap_recheck_s()
+    finished_pod_ttl_s = _finished_pod_ttl_s()
     backend = _build_backend()
     # The agent worker is its OWN image (core/agent/worker/Dockerfile — claude-code + node + the
     # `worker` package), NOT a rename of the agent-api image. With the Docker backend we ensure that
@@ -184,7 +245,7 @@ def build_production_app():
     profiles = apply_command_overrides(default_registry())
     runtime = Runtime(
         backend=backend, profiles=profiles, grace_sec=_kernel_grace_sec(),
-        cluster_cap=cluster_cap,
+        cluster_cap=cluster_cap, cap_recheck_s=cap_recheck_s,
     )
     # Re-adopt the workloads this runtime spawned that are STILL on the substrate (containers/pods
     # survive a runtime recreate untouched): without this, the fresh in-memory registry 404s over a
@@ -199,6 +260,7 @@ def build_production_app():
             )
     except Exception as e:  # noqa: BLE001 — adoption is a boot aid; it must never block the boot
         logger.warning("workload re-adoption failed: %s", e)
+    _start_finished_sweep(runtime, backend, finished_pod_ttl_s)
     return create_app(runtime, scheduler=scheduler)
 
 
