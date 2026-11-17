@@ -916,6 +916,13 @@ def _mount_lifecycle(
                         f"tc:meeting:{meeting_row_id}",
                         {"type": "session_end", "uid": str(native or meeting_row_id)},
                     )
+                    # The meeting ended: bound its stream's life (TC_STREAM_TTL_S, never extending
+                    # an earlier expiry). Every terminal — the bot's own, a user stop's, the reconcile
+                    # sweeps' and the runtime callback's — lands here.
+                    if hasattr(redis, "ttl") and hasattr(redis, "expire"):
+                        from .collector.adapters import set_stream_expiry
+
+                        await set_stream_expiry(redis, meeting_row_id)
                     log_event(
                         "meeting_copilot_reap_signalled", audience="system", span="lifecycle.callback",
                         meeting_id=rec.connection_id,

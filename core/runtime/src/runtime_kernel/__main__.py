@@ -143,9 +143,9 @@ def _cluster_cap() -> int | None:
 
 
 def _cap_recheck_s() -> float:
-    """``RUNTIME_CAP_RECHECK_S``: at most how often a create at the cluster cap checks the substrate
-    for bots that exited unseen (default 2; 0 = every create at the cap, one at a time). Anything
-    that is not a number of seconds ≥ 0 is fatal at boot."""
+    """``RUNTIME_CAP_RECHECK_S``: how often (seconds) the cap reconciler checks the substrate for
+    counted bots that exited (default 2). Anything that is not a number of seconds above 0 is fatal at
+    boot."""
     from .kernel import DEFAULT_CAP_RECHECK_S
 
     raw = os.getenv("RUNTIME_CAP_RECHECK_S", "").strip()
@@ -155,9 +155,22 @@ def _cap_recheck_s() -> float:
         value = float(raw)
     except ValueError:
         value = float("nan")
-    if not value >= 0 or value == float("inf"):
-        raise ValueError(f"RUNTIME_CAP_RECHECK_S must be a number of seconds, 0 or more, got {raw!r}")
+    if not value > 0 or value == float("inf"):
+        raise ValueError(
+            f"RUNTIME_CAP_RECHECK_S must be a number of seconds above 0, got {raw!r}"
+        )
     return value
+
+
+def _start_cap_reconciler(runtime, interval_s: float):
+    """Start the runtime's one cap reconciler when a cluster cap is set: it marks counted bots that
+    exited on the substrate ``stopped`` every ``interval_s``, so admission answers from memory and a
+    slot frees within one interval of its bot's exit. Returns it, or None without a cap."""
+    if not runtime.cluster_cap:
+        return None
+    from .kernel import CapReconciler
+
+    return CapReconciler(runtime, interval_s=interval_s).start()
 
 
 DEFAULT_FINISHED_POD_TTL_S = 300
@@ -261,6 +274,7 @@ def build_production_app():
     except Exception as e:  # noqa: BLE001 — adoption is a boot aid; it must never block the boot
         logger.warning("workload re-adoption failed: %s", e)
     _start_finished_sweep(runtime, backend, finished_pod_ttl_s)
+    _start_cap_reconciler(runtime, cap_recheck_s)
     return create_app(runtime, scheduler=scheduler)
 
 

@@ -14,10 +14,12 @@ Cluster cap: with ``cluster_cap`` set, create() refuses a meeting bot at once (C
 HTTP 429 ``capacity_exhausted``) when that many bots are already starting or running, before any
 container or Pod exists — overflow is a defined refusal, never a Pod left Pending. The count and the
 ``starting`` record are written under one lock, so concurrent creates cannot both take the last
-slot; the lock is per process, so the cap is exact only with a single runtime replica. The lock
-covers the store only: the substrate re-check at the cap (a listing, exit reads and the lifecycle
-events of bots found exited) runs outside it, by one create at a time and at most once per
-``cap_recheck_s``; every other create at the cap is refused from the store's count at once.
+slot; the lock is per process, so the cap is exact only with a single runtime replica. Admission
+reads the store only — no create ever waits on a substrate listing, an exit read or a callback. The
+store learns that a bot exited on its own (a bot leaves its meeting when asked to, then its
+container or Pod exits) from the ``CapReconciler``: one background thread per runtime process that,
+every ``cap_recheck_s`` while a counted bot is running, lists the substrate and marks the exited bots
+``stopped`` outside the lock. A slot frees only once its bot's exit is observed.
 
 Finished workloads: on a backend that offers ``reclaim_finished`` (Kubernetes, where a bare Pod with
 restartPolicy Never stays Succeeded/Failed until deleted), a workload observed to have exited is
@@ -47,7 +49,7 @@ from .store import (
 
 logger = logging.getLogger("runtime_kernel.kernel")
 
-# How often, at most, a create at the cluster cap checks the substrate for bots that exited unseen.
+# How often the cap reconciler checks the substrate for counted bots that exited (seconds).
 DEFAULT_CAP_RECHECK_S = 2.0
 
 
@@ -123,10 +125,11 @@ class Runtime:
         self.cap_recheck_s = cap_recheck_s
         # Guards the store's count and the `starting` write — never a substrate call or an event.
         self._admission_lock = threading.Lock()
-        # The substrate re-check at the cap: whether one is running, and when the last one ended
-        # (clock seconds; None = never). Both are read and written under the admission lock.
-        self._recheck_running = False
-        self._last_recheck: Optional[float] = None
+        # One cap reconcile (listing + exit reads) at a time, whoever calls it.
+        self._reconcile_lock = threading.Lock()
+        # Serialises the running → stopped write of an exit, so a reconcile and a concurrent read
+        # cannot both record (and emit) the same exit. Store only — never held while emitting.
+        self._exit_lock = threading.Lock()
         # Live, non-serializable backend handles. Empty on a fresh process (post-restart).
         self._handles: dict[str, WorkloadHandle] = {}
 
@@ -282,30 +285,13 @@ class Runtime:
         """Write the ``starting`` record if a cluster-cap slot is free; return the live status for a
         touch of a bot that is already starting or running; raise ClusterCapExceeded otherwise.
 
-        The store's states are last-known: a bot that exited on its own stays ``running`` until
-        something reads it. So at the cap one create re-checks the substrate — outside the lock, at
-        most once per ``cap_recheck_s`` — and then counts again under the lock before it writes, so
-        two creates never take one freed slot. Creates arriving while a re-check runs, or within the
-        interval after one, are refused from the store's count at once instead of queueing."""
-        cap = self.cluster_cap
+        Answers from the store alone, under the admission lock: never a substrate call, so a refusal
+        is as fast as a count. Exits reach the store through ``reconcile_cap`` (the CapReconciler)."""
         with self._admission_lock:
             admitted, touched = self._try_admit_locked(spec, status)
-            if admitted:
-                return touched
-            if self._recheck_running or not self._recheck_due():
-                raise ClusterCapExceeded(cap)
-            self._recheck_running = True
-        try:
-            self._reconcile_capped_with_substrate()
-        finally:
-            with self._admission_lock:
-                self._recheck_running = False
-                self._last_recheck = self.clock.now()
-        with self._admission_lock:
-            admitted, touched = self._try_admit_locked(spec, status)
-            if admitted:
-                return touched
-        raise ClusterCapExceeded(cap)
+        if admitted:
+            return touched
+        raise ClusterCapExceeded(self.cluster_cap)
 
     def _try_admit_locked(
         self, spec: WorkloadSpec, status: WorkloadStatus,
@@ -324,37 +310,43 @@ class Runtime:
             return True, None
         return False, None
 
-    def _recheck_due(self) -> bool:
-        return (
-            self._last_recheck is None
-            or self.clock.now() - self._last_recheck >= self.cap_recheck_s
-        )
-
-    def _reconcile_capped_with_substrate(self) -> None:
-        """Reflect capped bots that exited on their own: one listing where the backend has one, then
-        a per-workload read of the ``running`` records not found live. Runs without the admission
-        lock; each read that finds an exit persists ``stopped`` and emits its event (the callback)
-        from this thread. A failed read leaves that record as it was."""
-        running = [
-            r.spec.workloadId for r in self.store.list()
-            if r.spec.profile in _CAP_COUNTED and r.status.state == RuntimeState.running
-        ]
-        live: set[str] = set()
-        lister = getattr(self.backend, "list_workload_containers", None)
-        if lister is not None:
-            try:
-                live = {i["workload_id"] for i in lister() if i.get("running")}
-            except Exception:  # noqa: BLE001 — a failed listing only means "check each one"
-                live = set()
-        for workload_id in running:
-            if workload_id in live:
-                continue
-            try:
-                self.get(workload_id)                       # reflects an exit to `stopped`
-            except KeyError:
-                pass
-            except Exception as exc:  # noqa: BLE001 — a failed read never turns a refusal into a 500
-                logger.warning("cap re-check: reading %s failed: %s", workload_id, exc)
+    def reconcile_cap(self) -> bool:
+        """Reflect counted bots that exited on their own: one listing where the backend has one, then
+        a per-workload read of the ``running`` records not found live. Each read that finds an exit
+        persists ``stopped``, emits its event (the callback) and reclaims a finished Pod — all
+        without the admission lock. One reconcile at a time: a call while another runs returns at
+        once. Returns False without touching the substrate when another reconcile is running or no
+        counted bot is ``running``; True after a pass. A failed listing means "read each one"; a
+        failed read leaves that record as it was."""
+        if not self._reconcile_lock.acquire(blocking=False):
+            return False
+        try:
+            running = [
+                r.spec.workloadId for r in self.store.list()
+                if r.spec.profile in _CAP_COUNTED and r.status.state == RuntimeState.running
+            ]
+            if not running:
+                return False
+            live: set[str] = set()
+            lister = getattr(self.backend, "list_workload_containers", None)
+            if lister is not None:
+                try:
+                    live = {i["workload_id"] for i in lister() if i.get("running")}
+                except Exception as exc:  # noqa: BLE001 — a failed listing only means "check each one"
+                    logger.warning("cap reconcile: listing failed: %s", exc)
+                    live = set()
+            for workload_id in running:
+                if workload_id in live:
+                    continue
+                try:
+                    self.get(workload_id)                   # reflects an exit to `stopped`
+                except KeyError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 — one failed read never stops the pass
+                    logger.warning("cap reconcile: reading %s failed: %s", workload_id, exc)
+            return True
+        finally:
+            self._reconcile_lock.release()
 
     def _reclaim_exited(self, workload_id: str, handle: WorkloadHandle) -> None:
         """Delete a workload the substrate keeps after it exited (a finished Pod). Called only after
@@ -408,21 +400,29 @@ class Runtime:
         # reflect a workload that exited on its own (only observable while we hold a live handle)
         if status.state == RuntimeState.running and handle is not None:
             code = self.backend.exit_code(handle)
-            if code is not None:
-                self._record_exit(record, code)
+            if code is not None and self._record_exit(record, code):
                 self._reclaim_exited(workload_id, handle)
-        return status
+        return record.status
 
-    def _record_exit(self, record: WorkloadRecord, code: int) -> None:
-        """Persist and emit the ``stopped`` state of a workload that exited on its own."""
-        status = record.status
-        status.state = RuntimeState.stopped
-        status.exitCode = code
-        status.stoppedAt = _now()
-        status.stopReason = StopReason.completed if code == 0 else StopReason.failed
-        self._persist(record.spec, status)
-        self._emit(record.spec.workloadId, RuntimeState.stopped, exitCode=code,
-                   stopReason=status.stopReason)
+    def _record_exit(self, record: WorkloadRecord, code: int) -> bool:
+        """Persist and emit the ``stopped`` state of a workload that exited on its own — only if the
+        store still has it ``running`` (a concurrent read, reconcile or stop may have got there
+        first). Returns whether this call recorded the exit; the event is emitted outside the lock."""
+        workload_id = record.spec.workloadId
+        with self._exit_lock:
+            current = self.store.get(workload_id)
+            if current is None or current.status.state != RuntimeState.running:
+                if current is not None and current.status is not record.status:
+                    record.status = current.status     # the caller returns the stored truth
+                return False
+            status = record.status
+            status.state = RuntimeState.stopped
+            status.exitCode = code
+            status.stoppedAt = _now()
+            status.stopReason = StopReason.completed if code == 0 else StopReason.failed
+            self._persist(record.spec, status)
+        self._emit(workload_id, RuntimeState.stopped, exitCode=code, stopReason=status.stopReason)
+        return True
 
     def list(self) -> list[WorkloadStatus]:
         return [self.get(r.spec.workloadId) for r in self.store.list()]
@@ -464,6 +464,47 @@ class Runtime:
         self._persist(record.spec, status)
         self._emit(workload_id, RuntimeState.destroyed)
         return status
+
+
+class CapReconciler:
+    """The background half of the cluster cap: a daemon thread that calls ``runtime.reconcile_cap()``
+    every ``interval_s`` seconds, so a bot that exited on the substrate leaves the cap count within
+    one interval without any create waiting for it. ``reconcile_cap`` itself skips the substrate
+    while no counted bot is running, and never takes the admission lock. A pass that raises is
+    logged and the loop goes on. One per runtime process (``__main__`` starts it when a cap is set)."""
+
+    def __init__(self, runtime: "Runtime", interval_s: float = DEFAULT_CAP_RECHECK_S) -> None:
+        if not interval_s > 0:
+            raise ValueError(f"the cap reconcile interval must be more than 0 s, got {interval_s!r}")
+        self.runtime = runtime
+        self.interval_s = interval_s
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> "CapReconciler":
+        if not self.alive:
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._loop, name="cap-reconciler", daemon=True)
+            self._thread.start()
+        return self
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Ask the loop to end and wait up to ``timeout`` for a pass in progress to finish."""
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval_s):
+            try:
+                self.runtime.reconcile_cap()
+            except Exception as exc:  # noqa: BLE001 — a failed pass must not end the loop
+                logger.warning("cap reconcile pass failed: %s", exc)
 
 
 def _coerce_registry(profiles) -> ProfileRegistry:

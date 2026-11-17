@@ -278,11 +278,12 @@ refused **at once**, before any Pod is created: the runtime answers 429 `capacit
 meeting-api fails that meeting, and munshi.ai shows it as failed with `capacity_exhausted`. Agent
 workers are not counted. Empty or `0` means no cap.
 
-Refusals do not wait for the cluster. The runtime counts from its own records; at the cap, one
-create at a time asks the cluster (`kubectl get pods`) whether a bot it still counts has exited, at
-most every `runtime.capRecheckS` seconds (`RUNTIME_CAP_RECHECK_S`, default **2**), and every other
-create at the cap is refused straight away. A slot freed by a bot that exited on its own is reused
-by the first create after the next check. Each kubectl call is killed after
+Refusals do not wait for the cluster. Admission counts from the runtime's own records only, so every
+dispatch over the cap is refused straight away. A background reconciler in the runtime asks the
+cluster (`kubectl get pods`) every `runtime.capRecheckS` seconds (`RUNTIME_CAP_RECHECK_S`, default
+**2**, must be above 0) while a bot is running, and records the bots whose Pods have exited, so a
+bot that left its meeting frees its slot within one interval of its Pod exiting. A bot whose Pod is
+still running keeps its slot. Each kubectl call is killed after
 `runtime.kubectlTimeoutS` seconds (`RUNTIME_KUBECTL_TIMEOUT_S`, default **20**), so a slow API server
 fails a call instead of stalling the runtime.
 

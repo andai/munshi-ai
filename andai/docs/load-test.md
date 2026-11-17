@@ -88,9 +88,13 @@ gives each 384Mi and 0.25 CPU with no `/dev/shm` volume (`runtime.k8sShmSize: ""
 fits the planned count; 256Mi ran out of memory with the amd64 mock image under Rosetta on an arm64
 node. The production defaults stay 2560Mi with a 2Gi `/dev/shm`.
 
-A dispatch over the cap is refused from the runtime's own count of the bots it started, without
-waiting on the cluster (one recount against the cluster at most every `RUNTIME_CAP_RECHECK_S`,
-2 s, outside the admission lock), so `refused_within_s_max` stays well under the 10 s bound however
-slowly the API server answers. Finished bot Pods are deleted when the runtime sees them exit and
+A dispatch over the cap is refused from the runtime's own count of the bots it started and never
+waits on the cluster, so `refused_within_s_max` stays well under the 10 s bound however slowly the
+API server answers. The runtime learns that a bot has gone from a background reconciler that lists
+the bot Pods (or containers) every `RUNTIME_CAP_RECHECK_S` (2 s) while a bot is running, outside the
+admission lock: after a run's stop the bots leave their meetings, their Pods exit, and their slots
+are free within one interval of that exit. A burst started once the earlier bots have exited is
+admitted up to the cap; while a bot is still running (still in its meeting) it keeps its slot, and a
+dispatch for that slot is refused. Finished bot Pods are deleted when the runtime sees them exit and
 by a sweep every 60 s once they have been finished `RUNTIME_FINISHED_POD_TTL_S` (300 s); after the
 stop and one sweep, `kubectl get pods -l runtime.managed=true` lists none.

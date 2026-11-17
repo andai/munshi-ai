@@ -376,7 +376,7 @@
    "key": "TC_STREAM_TTL_S",
    "class": "defaulted",
    "default": "86400",
-   "description": "seconds a meeting's transcript stream tc:meeting:{id} (read by the copilot worker and the terminal's live view) lives after its session ended: the collector sets this expiry when it writes the session_end marker. Deleting the meeting's artifacts deletes the stream at once; the expiry is the backstop for meetings that are never deleted. 0 ⇒ no expiry; a negative or non-integer value is fatal at start-up",
+   "description": "seconds a meeting's transcript stream tc:meeting:{id} (read by the copilot worker and the terminal's live view) lives after its meeting ended. The expiry is set when the meeting ends, on every end path: the bot's own session_end, the lifecycle callback's terminal status (completion, user stop, failure, including the terminals the reconcile sweeps and the runtime callback drive) and the db-writer's finalize. It is set only on a stream with no expiry or a longer one, so a later end event never extends it. Deleting the meeting's artifacts deletes the stream at once; the expiry is the backstop for meetings that are never deleted. 0 ⇒ no expiry; a negative or non-integer value is fatal at start-up",
    "targets": [
     "compose",
     "helm"

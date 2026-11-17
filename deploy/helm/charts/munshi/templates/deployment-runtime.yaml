@@ -78,8 +78,11 @@ spec:
             # instead of a bot Pod left Pending. Empty = no cap.
             - name: RUNTIME_MAX_ACTIVE_BOTS
               value: {{ .Values.runtime.maxActiveBots | default "" | toString | quote }}
-            # At the cap, one create at a time re-checks the substrate for bots that exited unseen, at
-            # most this often (seconds); every other create at the cap is refused at once.
+            # How often (seconds) the background cap reconciler marks exited bots stopped; admission
+            # never waits on it. Above 0 only: the runtime refuses to boot on 0 or less.
+            {{- if and (ne (toString .Values.runtime.capRecheckS) "") (not (gt (float64 .Values.runtime.capRecheckS) 0.0)) }}
+            {{- fail (printf "runtime.capRecheckS must be a number of seconds above 0, got %v" .Values.runtime.capRecheckS) }}
+            {{- end }}
             - name: RUNTIME_CAP_RECHECK_S
               value: {{ .Values.runtime.capRecheckS | toString | quote }}
             - name: INTERNAL_API_SECRET

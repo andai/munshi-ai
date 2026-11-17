@@ -143,6 +143,9 @@ def test_the_refusal_kubectl_and_finished_pod_keys_are_declared_for_their_surfac
     # the cap is counted on both substrates, so its re-check interval is set on both
     assert sorted(recheck["targets"]) == ["compose", "helm"]
     assert "capacity_exhausted" in recheck["description"]
+    # the interval paces the background reconciler; admission never waits on it
+    assert "background cap reconciler" in recheck["description"]
+    assert "above 0" in recheck["description"]
     # kubectl and finished Pods exist only on the Kubernetes backend: the chart sets them
     assert (timeout["class"], timeout["default"], timeout["targets"]) == ("defaulted", "20", ["helm"])
     assert (ttl["class"], ttl["default"], ttl["targets"]) == ("defaulted", "300", ["helm"])

@@ -16,7 +16,7 @@ from runtime_kernel.__main__ import _cluster_cap
 from runtime_kernel.api import create_app
 from runtime_kernel.backend import WorkloadHandle
 from runtime_kernel.clock import FakeClock
-from runtime_kernel.kernel import ClusterCapExceeded
+from runtime_kernel.kernel import CapReconciler, ClusterCapExceeded
 from runtime_kernel.models import RuntimeState, WorkloadStatus
 from runtime_kernel.profiles import Runnable
 from runtime_kernel.store import InMemoryStore, WorkloadRecord
@@ -133,18 +133,22 @@ def test_a_stopped_bot_frees_its_slot(end):
 
 
 @pytest.mark.parametrize("listing", [False, True])
-def test_a_bot_that_exited_on_its_own_frees_its_slot(listing):
-    """Nothing read the exited bot, so its record still says running; at the cap the kernel checks
-    the substrate (one listing where the backend has one) before refusing."""
+def test_a_bot_that_exited_on_its_own_frees_its_slot_at_the_next_reconcile(listing):
+    """Nothing read the exited bot, so its record still says running and a create at the cap is
+    refused from that count; the next reconcile (one listing where the backend has one, then a read
+    of each running record not listed live) marks it stopped and the slot is free again."""
     backend = FakeBackend(listing=listing)
     rt = runtime(2, backend)
     rt.create(bot("b1"))
     rt.create(bot("b2"))
     backend.exited["b1"] = 0
-    assert rt.store.get("b1").status.state is RuntimeState.running   # stale until read
+    with pytest.raises(ClusterCapExceeded):
+        rt.create(bot("b3"))
+    assert rt.store.get("b1").status.state is RuntimeState.running   # stale until reconciled
 
-    assert rt.create(bot("b3")).state is RuntimeState.running
+    assert rt.reconcile_cap() is True
     assert rt.store.get("b1").status.state is RuntimeState.stopped
+    assert rt.create(bot("b3")).state is RuntimeState.running
     with pytest.raises(ClusterCapExceeded):
         rt.create(bot("b4"))
 
@@ -229,7 +233,7 @@ def test_an_invalid_env_value_is_fatal_at_boot(monkeypatch, raw):
         _cluster_cap()
 
 
-# ── refusal latency: the substrate re-check runs outside the admission lock ─────────────────────────
+# ── refusal latency: admission answers from the store; the substrate is read in the background ─────
 
 
 class SlowListingBackend(FakeBackend):
@@ -257,10 +261,13 @@ class SlowListingBackend(FakeBackend):
         return super().exit_code(h)
 
 
-def _race(rt: Runtime, n: int) -> tuple[list[int], list[tuple[int, float]]]:
-    """``n`` concurrent meeting-bot creates; returns (admitted ids, [(refused id, seconds taken)])."""
+def _race(rt: Runtime, n: int, prefix: str = "b"
+          ) -> tuple[list[int], list[tuple[int, float]], list[float]]:
+    """``n`` concurrent meeting-bot creates; returns (admitted ids, [(refused id, seconds taken)],
+    seconds taken by every call)."""
     admitted: list[int] = []
     refused: list[tuple[int, float]] = []
+    took: list[float] = []
     lock = threading.Lock()
     gate = threading.Barrier(n)
 
@@ -268,39 +275,126 @@ def _race(rt: Runtime, n: int) -> tuple[list[int], list[tuple[int, float]]]:
         gate.wait()
         t0 = time.monotonic()
         try:
-            rt.create(bot(f"b{i}"))
+            rt.create(bot(f"{prefix}{i}"))
             with lock:
                 admitted.append(i)
         except ClusterCapExceeded:
             with lock:
                 refused.append((i, time.monotonic() - t0))
+        with lock:
+            took.append(time.monotonic() - t0)
 
     threads = [threading.Thread(target=create, args=(i,)) for i in range(n)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=60)
-    return admitted, refused
+    return admitted, refused, took
+
+
+def test_no_create_waits_on_the_substrate():
+    """A listing that takes 8 s (kubectl while 11 Pods are being created), cap 11, 21 concurrent
+    creates with the background reconciler running: 11 admitted, 10 refused, every call within 1 s."""
+    backend = SlowListingBackend(list_delay=8.0)
+    rt = runtime(11, backend)
+    reconciler = CapReconciler(rt, interval_s=0.05).start()
+    try:
+        admitted, refused, took = _race(rt, 21)
+    finally:
+        reconciler.stop(timeout=0.1)          # its 8 s listing may still be running; it is a daemon
+
+    assert (len(admitted), len(refused)) == (11, 10)
+    assert max(took) < 1.0, f"slowest create took {max(took):.1f}s"
+    assert rt.store.count_active(["meeting-bot"]) == 11
+    assert sorted(backend.started) == sorted(f"b{i}" for i in admitted)
 
 
 def test_refusals_at_the_cap_do_not_queue_behind_the_substrate():
     """21 creates against a cap of 5 and a listing that takes 1 s: exactly 5 admitted, and every one
-    of the 16 refusals answers within 2 s — they no longer wait in line for one listing each."""
+    of the 16 refusals answers within 2 s — no create lists at all."""
     backend = SlowListingBackend(list_delay=1.0)
     rt = runtime(5, backend)
 
-    admitted, refused = _race(rt, 21)
+    admitted, refused, _ = _race(rt, 21)
 
     assert (len(admitted), len(refused)) == (5, 16)
     slowest = max(seconds for _, seconds in refused)
     assert slowest < 2.0, f"slowest refusal took {slowest:.1f}s"
+    assert backend.list_calls == 0
     assert rt.store.count_active(["meeting-bot"]) == 5
     assert sorted(backend.started) == sorted(f"b{i}" for i in admitted)
 
 
+class PeakStore(InMemoryStore):
+    """Remembers the highest cap count seen right after any write — the instants it can rise."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.peak = 0
+        self._peak_lock = threading.Lock()
+
+    def set(self, record) -> None:
+        super().set(record)
+        n = self.count_active(["meeting-bot", "adopted"])
+        with self._peak_lock:
+            self.peak = max(self.peak, n)
+
+
+def test_reconciler_and_creates_race_without_exceeding_the_cap():
+    """5 bots at the cap exit one by one while 21 creates arrive over 1.5 s, the reconciler writes
+    `stopped` every 20 ms and a reader lists the workloads throughout: the count never exceeds the
+    cap, each freed slot goes to one create, and no exited bot is marked stopped twice."""
+    backend = FakeBackend(listing=True)
+    store = PeakStore()
+    rt = runtime(5, backend, store)
+    stopped_events: list[str] = []
+    rt.on_event = lambda ev: (stopped_events.append(ev.workloadId)
+                              if ev.state is RuntimeState.stopped else None)
+    for n in range(5):
+        rt.create(bot(f"old{n}"))
+    reconciler = CapReconciler(rt, interval_s=0.02).start()
+    reading = threading.Event()
+
+    def reader() -> None:
+        while not reading.is_set():
+            rt.list()
+
+    threading.Thread(target=reader, daemon=True).start()
+    exits = [threading.Timer(0.05 + 0.1 * n, backend.exited.__setitem__, (f"old{n}", 0))
+             for n in range(5)]
+    admitted: list[str] = []
+    lock = threading.Lock()
+
+    def create(i: int) -> None:
+        time.sleep(0.075 * i)
+        try:
+            rt.create(bot(f"new{i}"))
+            with lock:
+                admitted.append(f"new{i}")
+        except ClusterCapExceeded:
+            pass
+
+    threads = [threading.Thread(target=create, args=(i,)) for i in range(21)]
+    try:
+        for timer in exits:
+            timer.start()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+    finally:
+        reading.set()
+        reconciler.stop()
+
+    assert store.peak <= 5
+    assert len(admitted) == 5, admitted
+    assert rt.store.count_active(["meeting-bot"]) == 5
+    assert sorted(stopped_events) == [f"old{n}" for n in range(5)]   # each exit recorded once
+
+
 def test_no_kubectl_or_callback_under_the_admission_lock():
-    """The substrate listing, the per-workload exit read and every lifecycle event (the callback
-    POST) run with the admission lock free."""
+    """The reconciler's listing, its per-workload exit reads and every lifecycle event (the callback
+    POST) run with the admission lock free, while creates take it."""
     held: list[str] = []
     rt_box: list[Runtime] = []
 
@@ -318,7 +412,8 @@ def test_no_kubectl_or_callback_under_the_admission_lock():
     rt.create(bot("b2"))
     backend.exited["b1"] = 0
 
-    assert rt.create(bot("b3")).state is RuntimeState.running     # the re-check freed b1's slot
+    assert rt.reconcile_cap() is True
+    assert rt.create(bot("b3")).state is RuntimeState.running     # the reconcile freed b1's slot
     with pytest.raises(ClusterCapExceeded):
         rt.create(bot("b4"))
 
@@ -326,28 +421,34 @@ def test_no_kubectl_or_callback_under_the_admission_lock():
     assert held == []
 
 
-def test_below_the_cap_admission_never_waits_on_the_substrate():
-    """Below the cap the count is the store's: a substrate that never answers is never asked."""
+def test_admission_never_waits_on_the_substrate():
+    """Below and at the cap the count is the store's: a substrate that never answers is never asked
+    by a create."""
     never = threading.Event()
     backend = SlowListingBackend(block=never)
-    rt = runtime(5, backend)
+    rt = runtime(4, backend)
     done = threading.Event()
+    refused: list[str] = []
 
-    def create_four() -> None:
-        for n in range(4):
-            rt.create(bot(f"b{n}"))
+    def create_six() -> None:
+        for n in range(6):
+            try:
+                rt.create(bot(f"b{n}"))
+            except ClusterCapExceeded:
+                refused.append(f"b{n}")
         done.set()
 
-    threading.Thread(target=create_four, daemon=True).start()
+    threading.Thread(target=create_six, daemon=True).start()
     finished = done.wait(timeout=5)
     never.set()
 
-    assert finished, "a create below the cap waited on the substrate"
+    assert finished, "a create waited on the substrate"
+    assert refused == ["b4", "b5"]
     assert backend.list_calls == 0
 
 
-def test_refusal_during_a_recheck_keeps_the_contract():
-    """While one create re-checks the substrate, another over the cap is refused at once with the
+def test_refusal_during_a_reconcile_keeps_the_contract():
+    """While the reconciler is inside a listing, a create over the cap is refused at once with the
     sealed runtime.v1 answer: 429 {"detail": "capacity_exhausted"}."""
     release = threading.Event()
     backend = SlowListingBackend(block=release)
@@ -356,70 +457,43 @@ def test_refusal_during_a_recheck_keeps_the_contract():
     assert client.post("/workloads", json={"workloadId": "b1", "profile": "meeting-bot",
                                            "env": {}}).status_code == 201
 
-    rechecking = threading.Thread(target=lambda: _create_quietly(rt, "b2"), daemon=True)
-    rechecking.start()
+    reconciling = threading.Thread(target=rt.reconcile_cap, daemon=True)
+    reconciling.start()
     deadline = time.monotonic() + 5
     while backend.list_calls == 0 and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert backend.list_calls == 1                                  # b2 is inside its re-check
+    assert backend.list_calls == 1                                  # the reconcile is listing
 
     t0 = time.monotonic()
-    r = client.post("/workloads", json={"workloadId": "b3", "profile": "meeting-bot", "env": {}})
+    r = client.post("/workloads", json={"workloadId": "b2", "profile": "meeting-bot", "env": {}})
     took = time.monotonic() - t0
     release.set()
-    rechecking.join(timeout=5)
+    reconciling.join(timeout=5)
 
     assert r.status_code == 429
     assert r.json() == {"detail": "capacity_exhausted"}
     assert took < 1.0
-    assert backend.list_calls == 1                                  # b3 did not list again
+    assert backend.list_calls == 1                                  # the create did not list
 
 
-def _create_quietly(rt: Runtime, workload_id: str) -> None:
-    with contextlib.suppress(ClusterCapExceeded):
-        rt.create(bot(workload_id))
-
-
-def test_a_slot_freed_by_an_exited_bot_is_reused_after_the_next_recheck():
-    """Within RUNTIME_CAP_RECHECK_S of a re-check, a create at the cap is refused from the store's
-    count alone; the first create after the interval re-checks and takes the freed slot."""
-    clock = FakeClock(1000.0)
-    backend = SlowListingBackend()
-    rt = Runtime(backend=backend, profiles=PROFILES, grace_sec=0.1, cluster_cap=1,
-                 clock=clock, cap_recheck_s=2.0)
-    rt.create(bot("b1"))
-    with pytest.raises(ClusterCapExceeded):
-        rt.create(bot("b2"))                                         # re-check: b1 still runs
-    assert backend.list_calls == 1
-
-    backend.exited["b1"] = 0
-    clock.advance(1.0)
-    with pytest.raises(ClusterCapExceeded):
-        rt.create(bot("b3"))                                         # within the interval
-    assert backend.list_calls == 1
-
-    clock.advance(1.0)
-    assert rt.create(bot("b4")).state is RuntimeState.running        # next re-check frees b1
-    assert backend.list_calls == 2
-    assert rt.store.get("b1").status.state is RuntimeState.stopped
-
-
-def test_concurrent_creates_with_an_exited_bot_take_the_freed_slot_once():
-    """A slot freed by an exited bot goes to exactly one of the concurrent creates."""
+def test_concurrent_creates_take_a_slot_freed_by_the_reconciler_once():
+    """A slot freed by an exited bot (observed by the reconciler) goes to exactly one of the
+    concurrent creates."""
     backend = SlowListingBackend(list_delay=0.2)
     rt = runtime(5, backend, SlowCountStore())
     for n in range(5):
         rt.create(bot(f"old{n}"))
     backend.exited["old0"] = 0
+    assert rt.reconcile_cap() is True
 
-    admitted, refused = _race(rt, 20)
+    admitted, refused, _ = _race(rt, 20)
 
     assert (len(admitted), len(refused)) == (1, 19)
     assert rt.store.count_active(["meeting-bot"]) == 5
 
 
-@pytest.mark.parametrize("raw,value", [(None, 2.0), ("", 2.0), ("0", 0.0), (" 0.5 ", 0.5)])
-def test_the_recheck_interval_env_value(monkeypatch, raw, value):
+@pytest.mark.parametrize("raw,value", [(None, 2.0), ("", 2.0), (" 0.5 ", 0.5), ("10", 10.0)])
+def test_the_reconcile_interval_env_value(monkeypatch, raw, value):
     from runtime_kernel.__main__ import _cap_recheck_s
 
     if raw is None:
@@ -429,8 +503,8 @@ def test_the_recheck_interval_env_value(monkeypatch, raw, value):
     assert _cap_recheck_s() == value
 
 
-@pytest.mark.parametrize("raw", ["-1", "two", "nan"])
-def test_an_invalid_recheck_interval_is_fatal_at_boot(monkeypatch, raw):
+@pytest.mark.parametrize("raw", ["0", "-1", "two", "nan", "inf"])
+def test_an_invalid_reconcile_interval_is_fatal_at_boot(monkeypatch, raw):
     from runtime_kernel.__main__ import _cap_recheck_s
 
     monkeypatch.setenv("RUNTIME_CAP_RECHECK_S", raw)

@@ -229,8 +229,9 @@ meetingApi:
   # Only a dispatch with transcribe_enabled=false spawns a capture-only bot.
   transcriptionServiceUrl: ""
   # Seconds a meeting's transcript stream tc:meeting:{id} (copilot worker, terminal live view) lives
-  # in Valkey after its session ended (TC_STREAM_TTL_S). Deleting the meeting deletes it at once; this
-  # is the backstop for meetings never deleted. 0 = no expiry.
+  # in Valkey after its meeting ended (TC_STREAM_TTL_S): set when the meeting ends, on every end path,
+  # never extended by a later end event. Deleting the meeting deletes it at once; this is the backstop
+  # for meetings never deleted. 0 = no expiry.
   tcStreamTtlS: 86400
   # Optional service-authority.v1 adapter JSON. Empty preserves stock OSS allow-all. A configured
   # authority must use failure_policy=closed and mode=enforce|observe; the secret lives under
@@ -296,10 +297,10 @@ runtime:
   # nodes hold: (allocatable memory of the bot nodes) / workloadResources.meetingBot.memoryMb, minus
   # headroom. Empty or 0 = no cap. See docs/docs/deployment-kubernetes.mdx.
   maxActiveBots: ""
-  # At the cap, one create at a time checks the substrate for bots that exited without anyone
-  # reading them, at most this often (RUNTIME_CAP_RECHECK_S, seconds); every other create at the cap
-  # is refused at once from the runtime's own count, so refusals never queue behind a slow
-  # `kubectl get pods`. A slot freed that way is reused after the next check. 0 = check every time.
+  # How often (RUNTIME_CAP_RECHECK_S, seconds) the runtime's background cap reconciler lists the bot
+  # Pods while a bot is running and marks the ones that exited as stopped, so a slot frees within one
+  # interval of its bot leaving. Admission never waits on it: every dispatch over the cap is refused
+  # at once from the runtime's own count. Must be above 0 (the chart refuses 0 or less).
   capRecheckS: 2
   # Seconds any one kubectl call may take before it is killed (RUNTIME_KUBECTL_TIMEOUT_S).
   kubectlTimeoutS: 20

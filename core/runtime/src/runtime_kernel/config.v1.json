@@ -166,7 +166,7 @@
    "key": "RUNTIME_CAP_RECHECK_S",
    "class": "defaulted",
    "default": "2",
-   "description": "cluster bot cap: at most how often (seconds) a create at the cap checks the substrate for bots that exited without anyone reading them. One create at a time runs the check, outside the admission lock; every other create at the cap is refused with 429 capacity_exhausted at once from the runtime's own count, so refusals never queue behind a slow listing. A slot freed by a bot that exited unseen is reused by the first create after the next check. 0 ⇒ check on every create at the cap (still one at a time); a negative or non-numeric value is fatal at boot",
+   "description": "cluster bot cap: how often (seconds) the runtime's background cap reconciler checks the substrate for counted bots that exited, while at least one is running. It lists the substrate and marks the exited bots stopped outside the admission lock, so a slot frees within one interval of its bot's exit. Admission never waits on it: every create over the cap is refused with 429 capacity_exhausted at once from the runtime's own count. Must be a number of seconds above 0; anything else is fatal at boot",
    "targets": [
     "compose",
     "helm"
