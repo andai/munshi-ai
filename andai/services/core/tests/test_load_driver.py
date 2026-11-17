@@ -38,8 +38,10 @@ class FakeAndai:
     on its next read."""
 
     def __init__(self, cap: int, *, join_s: float = 4.0, stagger_s: float = 0.0,
-                 live_s: float | None = None, stage: str = "full") -> None:
+                 live_s: float | None = None, stage: str = "full",
+                 secure_cookie: bool = False) -> None:
         self.t = FakeTime()
+        self.secure_cookie = secure_cookie
         self.cap = cap
         self.join_s = join_s
         self.stagger_s = stagger_s
@@ -58,8 +60,9 @@ class FakeAndai:
         if path == "/api/v1/auth/login":
             body = json.loads(request.content)
             assert body == {"email": EMAIL, "password": "pw-synthetic"}
+            flags = "; Secure" if self.secure_cookie else ""
             return httpx.Response(200, json={"stage": self.stage},
-                                  headers={"set-cookie": "andai_session=s1; Path=/; HttpOnly"})
+                                  headers={"set-cookie": f"andai_session=s1; Path=/; HttpOnly{flags}"})
         if "andai_session=s1" not in request.headers.get("cookie", ""):
             self.unauthenticated += 1
             return httpx.Response(401, json={"detail": "not signed in"})
@@ -98,12 +101,12 @@ class FakeAndai:
         return {"id": m["id"], "status": m["status"], "failure_reason": m["failure_reason"]}
 
 
-def drive(cfg: Config, andai: FakeAndai) -> dict:
+def drive(cfg: Config, andai: FakeAndai, base_url: str = "http://andai.test") -> dict:
     t = andai.t
 
     async def go() -> dict:
         transport = httpx.MockTransport(andai.handler)
-        async with httpx.AsyncClient(transport=transport, base_url="http://andai.test",
+        async with httpx.AsyncClient(transport=transport, base_url=base_url,
                                      headers={"Origin": ORIGIN}) as client:
             driver = Driver(client, cfg, clock=t.clock, sleep=t.sleep, log=lambda m: None)
             return await driver.run(EMAIL, "pw-synthetic")
@@ -134,6 +137,27 @@ def test_eight_against_a_cap_of_five_is_five_recording_and_three_refused():
     assert report["terminal_after_stop"] == {"done": 5, "failed": 3}
     assert report["passed"] is True and report["problems"] == []
     assert andai.writes_without_origin == 0 and andai.unauthenticated == 0
+
+
+@pytest.mark.parametrize("base_url", ["http://127.0.0.1:47300", "http://localhost:47300",
+                                      "http://[::1]:47300", "https://andai.test"])
+def test_a_secure_session_cookie_is_kept_on_loopback_http_and_https(base_url):
+    # andai-core sets its session cookie Secure outside development; a kubectl port-forward is
+    # plain HTTP on the loopback address.
+    andai = FakeAndai(cap=5, secure_cookie=True)
+    report = drive(config(), andai, base_url)
+
+    assert report["passed"] is True and report["peak_recording"] == 5
+    assert andai.unauthenticated == 0
+
+
+def test_a_secure_session_cookie_is_not_sent_to_another_plain_http_host():
+    andai = FakeAndai(cap=5, secure_cookie=True)
+    report = drive(config(), andai, "http://andai.test")
+
+    assert report["passed"] is False and report["peak_recording"] == 0
+    assert report["other_failures"] == {"http_401": 8}
+    assert andai.unauthenticated > 0
 
 
 def test_every_link_is_a_unique_zoom_link_that_plays_hold():

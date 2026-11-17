@@ -70,6 +70,12 @@ every meeting ended after the stop. Exit 0 pass, 1 fail, 2 setup error.
 
 ## Kubernetes extras
 
+Reach andai-core with `kubectl -n <ns> port-forward svc/andai-core 18300:8000` and run the driver
+on that machine with `--base http://127.0.0.1:18300 --origin <andai.portal.origin>`. andai-core
+marks its session cookie `Secure` outside development; the driver keeps it over plain HTTP only on
+the loopback address (as browsers do), so point `--base` at the port-forward, not at another
+plain-HTTP host.
+
 On a cluster, also check during the peak and after the stop (the staging run records these):
 
 - `kubectl get pods --field-selector=status.phase=Pending -l runtime.managed=true` lists nothing:
