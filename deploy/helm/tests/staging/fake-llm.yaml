@@ -1,0 +1,67 @@
+# TEST-ONLY language-model route for the staging witness: the andai-core image's deterministic
+# `andai_core.testing.fake_llm` (as the e2e compose profile runs it), so minutes of the mock meetings
+# are written without any model and the minutes stage of the pipeline does not stay owed (which
+# would hold MunshiPipelineBacklog firing). values-staging-local.yaml sets andai.llm.baseUrl to it.
+#
+#   sed "s/STAGING_TAG/<tag>/" deploy/helm/tests/staging/fake-llm.yaml | kubectl -n munshi apply -f -
+#
+# Never a real model; never shipped.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-llm
+  labels:
+    app.kubernetes.io/name: fake-llm
+    app.kubernetes.io/part-of: munshi-staging-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fake-llm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fake-llm
+        app.kubernetes.io/part-of: munshi-staging-test
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fake-llm
+          image: ghcr.io/andai/munshi-andai-core:STAGING_TAG
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "andai_core.testing.fake_llm", "--host", "0.0.0.0", "--port", "8000"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 192Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-llm
+  labels:
+    app.kubernetes.io/name: fake-llm
+    app.kubernetes.io/part-of: munshi-staging-test
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fake-llm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

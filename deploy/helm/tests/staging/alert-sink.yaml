@@ -1,0 +1,84 @@
+# TEST-ONLY stand-in for Slack and Microsoft Teams webhooks on the staging witness: the andai-core
+# image's `andai_core.testing.alert_sink` (as the Compose `monitoring-test` profile runs it). It
+# appends every body Alertmanager posts to /slack or /teams to /tmp/alert-sink/captured.jsonl in the
+# Pod, forwards nothing, and `--scan` counts PII patterns in what it caught. ClusterIP only.
+#
+# Set the image tag to the one imported into the node, then point the alerting Secret's URL files
+# at the sink (they are test URLs, not credentials, but stay in the Secret as real ones would):
+#
+#   sed "s/STAGING_TAG/<tag>/" deploy/helm/tests/staging/alert-sink.yaml | kubectl -n munshi apply -f -
+#   printf 'http://alert-sink:8000/slack' > slack-url; printf 'http://alert-sink:8000/teams' > teams-url
+#   kubectl -n munshi create secret generic andai-alerting \
+#     --from-file=slack_webhook_url=slack-url --from-file=teams_webhook_url=teams-url
+#   kubectl -n munshi exec deploy/alert-sink -- \
+#     python -m andai_core.testing.alert_sink --scan /tmp/alert-sink/captured.jsonl
+#
+# Never a real webhook; never shipped.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-sink
+  labels:
+    app.kubernetes.io/name: alert-sink
+    app.kubernetes.io/part-of: munshi-staging-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alert-sink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alert-sink
+        app.kubernetes.io/part-of: munshi-staging-test
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alert-sink
+          image: ghcr.io/andai/munshi-andai-core:STAGING_TAG
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "andai_core.testing.alert_sink", "--host", "0.0.0.0",
+                    "--port", "8000", "--out", "/tmp/alert-sink/captured.jsonl"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          volumeMounts:
+            - name: captured
+              mountPath: /tmp/alert-sink
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: captured
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-sink
+  labels:
+    app.kubernetes.io/name: alert-sink
+    app.kubernetes.io/part-of: munshi-staging-test
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: alert-sink
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
