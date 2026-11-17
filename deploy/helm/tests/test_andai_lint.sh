@@ -66,8 +66,10 @@ lint_clean "values-test" -f "$CHART/values-test.yaml"
 lint_clean "values-test, monitoring on" -f "$CHART/values-test.yaml" --set monitoring.enabled=true
 # The Postgres superuser password is never in a tracked file: staging passes it from an untracked
 # file (--set-file); the lint stands in a placeholder.
-lint_clean "values-staging" -f "$CHART/values-staging.yaml" --set munshi.database.password=helm-lint-only
+# The speech-to-text URL is machine-specific too (the untracked file names it); a placeholder here.
+STT=(--set munshi.meetingApi.transcriptionServiceUrl=http://stt.example.test:8000)
+lint_clean "values-staging" -f "$CHART/values-staging.yaml" --set munshi.database.password=helm-lint-only "${STT[@]}"
 lint_clean "values-staging + values-loadtest" -f "$CHART/values-staging.yaml" -f "$CHART/values-loadtest.yaml" \
-  --set munshi.database.password=helm-lint-only --set munshi.runtime.maxActiveBots=12
+  --set munshi.database.password=helm-lint-only --set munshi.runtime.maxActiveBots=12 "${STT[@]}"
 
 echo "andai chart lint: PASS"

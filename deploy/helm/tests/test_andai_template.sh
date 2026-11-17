@@ -22,7 +22,8 @@ if python3 -I -c 'import yaml' 2>/dev/null; then PY=(python3 -I); else PY=(uv ru
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 TEST=(-f "$CHART/values-test.yaml")
-STAGING=(-f "$CHART/values-staging.yaml" --set munshi.database.password=helm-render-test-only)
+STAGING=(-f "$CHART/values-staging.yaml" --set munshi.database.password=helm-render-test-only
+  --set munshi.meetingApi.transcriptionServiceUrl=http://stt.example.test:8000)
 
 render() {  # render <name> <helm args...> — writes $OUT/<name>.yaml or fails the test
   local name="$1"; shift
@@ -47,6 +48,9 @@ render staginggpu "${STAGING[@]}" --set gpuPools.asr.enabled=true --set gpuPools
   --set gpuPools.llm.image=llm.example.invalid/server:test \
   --set munshi.meetingApi.transcriptionServiceUrl=http://andai-asr:8000
 render loadtest "${STAGING[@]}" -f "$CHART/values-loadtest.yaml" --set munshi.runtime.maxActiveBots=37
+render monmounts "${TEST[@]}" --set monitoring.enabled=true \
+  --set 'monitoring.storageMountRegex=^/srv/volumes(/.*)?$'
+render downloads "${TEST[@]}" --set andai.core.exportDownloadsConcurrent=3
 
 # Refusals: each render must fail, and with its own message.
 fail=0
@@ -84,6 +88,14 @@ refuse "the munshi default Postgres password" "munshi.database.password is requi
 refuse "Slack on without the alert Secret mounted" "extraSecretMounts[name=alerting-secrets]" "${TEST[@]}" \
   --set monitoring.enabled=true --set monitoring.alerting.slack.enabled=true --set monitoring.alerting.existingSecret=other
 refuse "no portal origin" "andai.portal.origin is required" "${TEST[@]}" --set andai.portal.origin=
+refuse "no speech-to-text URL" "munshi.meetingApi.transcriptionServiceUrl is required" "${TEST[@]}" \
+  --set munshi.meetingApi.transcriptionServiceUrl=
+refuse "no speech-to-text URL (staging)" "munshi.meetingApi.transcriptionServiceUrl is required" \
+  -f "$CHART/values-staging.yaml" --set munshi.database.password=helm-render-test-only
+refuse "downloads at once out of range" "andai.core.exportDownloadsConcurrent must be 1-10" "${TEST[@]}" \
+  --set andai.core.exportDownloadsConcurrent=0
+refuse "a storage mount selector with a double quote" "monitoring.storageMountRegex must be" "${TEST[@]}" \
+  --set monitoring.enabled=true --set 'monitoring.storageMountRegex=^/"x$'
 
 echo "=== andai chart — render assertions ==="
 "${PY[@]}" - "$OUT" "$ROOT" <<'PY' || fail=1
@@ -316,8 +328,20 @@ check({"andai-core", "andai-worker", "andai-intake", "node-exporter", "kube-stat
 check(pcfg["rule_files"] == ["/etc/prometheus/rules/*.yml"] and pcfg["alerting"]["alertmanagers"][0]["static_configs"][0]["targets"] == ["alertmanager:9093"],
       "Prometheus loads the munshi rules and sends to alertmanager:9093")
 rules = one(docs, "ConfigMap", "andai-prometheus-rules")["data"]["munshi-alerts.yml"]
-check(rules == (root / "andai/deploy/monitoring/prometheus/rules/munshi-alerts.yml").read_text(),
-      "rules ConfigMap is the Compose rule file, byte for byte")
+compose_rules = (root / "andai/deploy/monitoring/prometheus/rules/munshi-alerts.yml").read_text()
+COMPOSE_MOUNTS = 'mountpoint=~"^/$|^/host(/.*)?$"'
+K8S_MOUNTS = 'mountpoint=~"^/$|^/var/lib/rancher(/.*)?$|^/var/lib/munshi-crypt(/.*)?$"'
+check(compose_rules.count(COMPOSE_MOUNTS) == 2, "Compose storage rule watches / and /host (unchanged)")
+check(rules == compose_rules.replace(COMPOSE_MOUNTS, K8S_MOUNTS),
+      "rules ConfigMap is the Compose rule file with only the storage mounts replaced")
+storage = next(r for g in yaml.safe_load(rules)["groups"] for r in g["rules"]
+               if r.get("alert") == "MunshiStorageHigh")
+mount_re = re.compile(re.search(r'mountpoint=~"([^"]+)"', storage["expr"]).group(1))
+for path in ("/", "/var/lib/rancher/k3s/storage/pvc-0c1e", "/var/lib/munshi-crypt",
+             "/var/lib/munshi-crypt/k3s/storage/pvc-0c1e"):
+    check(mount_re.fullmatch(path) is not None, f"default storage selector matches {path}")
+for path in ("/host", "/boot/efi", "/run", "/var/lib/kubelet/pods/x/volumes"):
+    check(mount_re.fullmatch(path) is None, f"default storage selector leaves out {path}")
 check(one(docs, "Service", "node-exporter") is not None and one(docs, "Service", "node-exporter")["spec"].get("clusterIP") == "None",
       "node-exporter behind a headless Service (DNS discovery as in Compose)")
 check(not [o for o in docs if "pushgateway" in o["metadata"]["name"]], "no pushgateway")
@@ -417,9 +441,33 @@ check(not (bots & gpu), "the bot pool shares no label with either GPU pool")
 
 # ── load test overlay ──────────────────────────────────────────────────────────────────────────
 docs, text = load("loadtest")
-check(env_value(docs, "Deployment", rt, "runtime", "RUNTIME_BOT_MEMORY_MB") == "256", "loadtest: bot memory 256 MiB")
+check(env_value(docs, "Deployment", rt, "runtime", "RUNTIME_BOT_MEMORY_MB") == "384", "loadtest: bot memory 384 MiB")
+check(env_value(docs, "Deployment", rt, "runtime", "RUNTIME_K8S_SHM_SIZE") == "", "loadtest: no /dev/shm volume for the mock bot")
 check(env_value(docs, "Deployment", rt, "runtime", "BROWSER_IMAGE").startswith("ghcr.io/andai/munshi-mock-bot:"), "loadtest: the mock bot image")
 check(env_value(docs, "Deployment", rt, "runtime", "RUNTIME_MAX_ACTIVE_BOTS") == "37", "loadtest: cap set at install (37)")
+
+
+# ── a custom storage mount selector ────────────────────────────────────────────────────────────
+docs, text = load("monmounts")
+rules = one(docs, "ConfigMap", "andai-prometheus-rules")["data"]["munshi-alerts.yml"]
+check(rules == compose_rules.replace(COMPOSE_MOUNTS, 'mountpoint=~"^/srv/volumes(/.*)?$"'),
+      "monitoring.storageMountRegex is the storage rule's mount selector")
+
+# ── export downloads at once ───────────────────────────────────────────────────────────────────
+docs, _ = load("test")
+check(env_value(docs, "Deployment", "andai-core", "andai-core", "ANDAI_EXPORT_DOWNLOADS_CONCURRENT") == "1",
+      "andai-core: ANDAI_EXPORT_DOWNLOADS_CONCURRENT=1 by default")
+docs, _ = load("downloads")
+check(env_value(docs, "Deployment", "andai-core", "andai-core", "ANDAI_EXPORT_DOWNLOADS_CONCURRENT") == "3",
+      "andai-core: ANDAI_EXPORT_DOWNLOADS_CONCURRENT from andai.core.exportDownloadsConcurrent")
+
+# ── the munshi chart this release carries ──────────────────────────────────────────────────────
+chart = yaml.safe_load((root / "deploy/helm/charts/andai/Chart.yaml").read_text())
+lock = yaml.safe_load((root / "deploy/helm/charts/andai/Chart.lock").read_text())
+munshi = yaml.safe_load((root / "deploy/helm/charts/munshi/Chart.yaml").read_text())["version"]
+pinned = {d["name"]: d["version"] for d in chart["dependencies"]}["munshi"]
+locked = {d["name"]: d["version"] for d in lock["dependencies"]}["munshi"]
+check(munshi == pinned == locked == "0.12.4", f"munshi chart 0.12.4, pinned and locked ({munshi}/{pinned}/{locked})")
 
 sys.exit(1 if failures else 0)
 PY

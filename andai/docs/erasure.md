@@ -80,7 +80,7 @@ Every column that refers to a person is listed with what erasure does to it in
 | Postgres WAL | The deleted rows' earlier versions are in WAL segments. | Until the segments are recycled (checkpoints), and in archived WAL until the archive's retention ends. |
 | Backups | Database dumps, volume snapshots and WAL archives taken before the erasure hold the data. | Until each backup ages out under the operator's backup retention. **Restoring a backup brings erased data back:** after any restore, run every erasure finished since that backup again (`erase-user`, or the org admin's request) before the stack serves users. |
 | Object storage | Recording objects are deleted by the platform's purge. | If the bucket has versioning turned on, earlier versions stay until a lifecycle rule expires them; keep versioning off for the recordings bucket or add such a rule. The Compose stack's storage (versitygw, POSIX backend, no versioning directory) keeps no versions; a deleted object's file is unlinked and its blocks are free for reuse. |
-| Valkey (the platform's) | Observed on the e2e stack after an erasure: the meeting's transcript stream `tc:meeting:{platform meeting id}` (Valkey stream, **no TTL**), and its entries in the shared `transcription_segments` stream. The live segment hash `meeting:{id}:segments` (1 h TTL) was already gone. | `tc:meeting:{id}`: until someone deletes it, **open question for the platform (no delete is added here)**. `transcription_segments`: trimmed by meeting-api once consumed and older than `STREAM_RETENTION_S` (default 3600 s). Valkey's append-only file keeps both until it is rewritten. |
+| Valkey (the platform's) | A meeting's transcript stream `tc:meeting:{platform meeting id}` and its entries in the shared `transcription_segments` stream. The live segment hash `meeting:{id}:segments` (1 h TTL) and the processed-notes stream go when the meeting is deleted. | `tc:meeting:{id}`: deleted with the meeting's segment hash when the platform deletes the meeting (step 1 of the purge), and expires `TC_STREAM_TTL_S` (default 24 h) after its session ends as a backstop for meetings nobody deletes. `transcription_segments`: holds raw segments of every meeting by design, trimmed by meeting-api once consumed and older than `STREAM_RETENTION_S` (default 3600 s), so up to about an hour. Valkey's append-only file keeps both until it is rewritten. |
 
 ## Handling a data principal's request (DPDP)
 
@@ -135,6 +135,20 @@ recordings are not copied, they are read from the platform when the zip is downl
 against the checksums taken when the copy was made. A recording that changed or was deleted since
 stops the download (`recording_changed`): ask for a new copy. A JSON part over
 `ANDAI_EXPORT_MAX_BYTES` (default 64 MiB) fails `too_large`.
+
+**Downloading:** the zip is put together when it is downloaded, so one person may have at most
+`ANDAI_EXPORT_DOWNLOADS_CONCURRENT` (default 1) downloads being prepared at once, across every
+andai-core process (the slot is kept in Valkey); another answers 429 `export_download_busy` with a
+`Retry-After` until the first one is ready. A slot whose download never finishes (a process that
+crashed) lapses after 20 minutes.
+
+**Deleting a meeting:** when a meeting is deleted and purged, every copy that holds it stops being
+available in the same step: a ready copy expires at once (its sealed part is deleted; the download
+answers 410 `export_expired`) and a copy still being made fails `meeting_deleted`. Either way the
+person asks for a new copy, without the meeting. Copies made before munshi.ai recorded which
+meetings a copy holds (migration 0021) are treated conservatively: such a copy of the meeting
+owner's data that was made after the meeting was created is expired too, even if it did not hold
+that meeting (for example, one made after the meeting was already hidden).
 
 Every request, finished copy, failure and download is in the organisation's audit log
 (`user.export.request`, `.ready`, `.failed`, `.download`, `.download_failed`). Erasing the person

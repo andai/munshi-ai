@@ -100,6 +100,9 @@ andai:
 
   core:
     replicaCount: 1
+    # How many downloads of a copy of their data one person may have being prepared at once
+    # (ANDAI_EXPORT_DOWNLOADS_CONCURRENT, 1-10); another answers 429 export_download_busy.
+    exportDownloadsConcurrent: 1
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits:   { cpu: 1000m, memory: 1Gi }
@@ -183,9 +186,10 @@ munshi:
     # meeting.completed and bot.failed reach andai-core (signed with MUNSHI_SYSTEM_WEBHOOK_SECRET).
     systemWebhookUrl: "http://andai-core:8000/internal/platform-events"
     systemWebhookAllowPrivateHttp: "true"
-    # Speech-to-text the bots use: with gpuPools.asr.enabled it must be http://andai-asr:8000
-    # (andai.asrUrl); otherwise another in-house endpoint (base URL; the client appends
-    # /v1/audio/transcriptions).
+    # REQUIRED. Speech-to-text the bots use: with gpuPools.asr.enabled it must be
+    # http://andai-asr:8000 (andai.asrUrl); otherwise another in-house endpoint (base URL; the
+    # client appends /v1/audio/transcriptions). The chart refuses to render with it empty: an empty
+    # URL makes meeting-api refuse every bot (503 transcription_not_configured).
     transcriptionServiceUrl: ""
   runtime:
     backend: k8s
@@ -348,6 +352,12 @@ gpuPools:
 # reach the UIs with kubectl port-forward).
 monitoring:
   enabled: false
+  # The filesystems the storage alert (MunshiStorageHigh, over 80 percent full) watches: the
+  # filesystems your persistent volumes live on, as a regular expression over node-exporter's
+  # `mountpoint` label (host paths). The default covers the root filesystem, k3s' local-path
+  # storage under /var/lib/rancher and the staging LUKS mount /var/lib/munshi-crypt; set it to
+  # your storage's mount points (andai/docs/kubernetes.md). Compose watches / and /host instead.
+  storageMountRegex: "^/$|^/var/lib/rancher(/.*)?$|^/var/lib/munshi-crypt(/.*)?$"
   # Every receiver is off by default. URLs are credentials: they stay in the Secret
   # (existingSecret, keys slack_webhook_url / teams_webhook_url), mounted into Alertmanager and
   # referenced as *_file; the chart never reads them. Teams goes through a Workflows webhook

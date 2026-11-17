@@ -1,7 +1,7 @@
 dependencies:
 - name: munshi
   repository: file://../munshi
-  version: 0.12.3
+  version: 0.12.4
 - name: seaweedfs
   repository: https://seaweedfs.github.io/seaweedfs/helm
   version: 4.53.0
@@ -11,5 +11,5 @@ dependencies:
 - name: perses
   repository: https://perses.github.io/helm-charts
   version: 0.24.0
-digest: sha256:e103258fe0b569b9a361da2a422d80b6ac454c35bb06cea3b734020ee0358e85
-generated: "2026-11-13T14:19:41.184447+05:30"
+digest: sha256:82936f148c743b228aed35d755f6e150c70e89400f050b51ae94ae56bd24139b
+generated: "2026-11-17T19:26:29.066824+05:30"
