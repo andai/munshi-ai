@@ -311,7 +311,26 @@ def _segment_to_api(seg: dict) -> dict:
     for k in ("speaker", "speaker_key", "completed", "segment_id", "source", "absolute_start_time", "absolute_end_time", "created_at"):
         if seg.get(k) is not None:
             out[k] = seg[k]
+    # created_at is when the segment first reached the collector: a persisted row carries it, a
+    # live (not yet flushed) hash segment carries the same instant as first_seen_at.
+    if "created_at" not in out and seg.get("first_seen_at"):
+        out["created_at"] = seg["first_seen_at"]
     return out
+
+
+def _created_at_for_row(seg: dict) -> datetime:
+    """The ``transcriptions.created_at`` value (naive UTC, as the column holds it) for a flushed
+    segment: its ``first_seen_at``, or now for a segment that predates first_seen_at."""
+    raw = seg.get("first_seen_at")
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            aware = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return aware.astimezone(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class SqlAlchemyTranscriptStore:
@@ -388,6 +407,7 @@ class SqlAlchemyTranscriptStore:
                 "start": r.start_time, "end": r.end_time, "text": r.text,
                 "language": r.language, "speaker": r.speaker,
                 "segment_id": r.segment_id, "completed": True,
+                "created_at": _iso_utc(r.created_at),
             })
             sid = s.get("segment_id") or f"pg-{len(order)}"
             if sid not in seg_by_id:
@@ -910,10 +930,12 @@ class SqlAlchemyTranscriptStore:
         # hash cannot linger forever once its segments were flushed.
         if self._redis is None:
             return
-        from .db_writer import ACTIVE_MEETINGS_KEY, segments_hash_key
+        from .db_writer import ACTIVE_MEETINGS_KEY, keep_first_seen, segments_hash_key
 
         hash_key = segments_hash_key(meeting_id)
         ttl = int(os.environ.get("REDIS_SEGMENT_TTL", "3600"))
+        # An update of a segment id the hash already holds keeps that segment's first_seen_at.
+        segment = keep_first_seen(segment, await self._redis.hget(hash_key, segment["segment_id"]))
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.sadd(ACTIVE_MEETINGS_KEY, str(meeting_id))
             pipe.hset(hash_key, segment["segment_id"], json.dumps(segment))
@@ -950,9 +972,9 @@ class SqlAlchemyTranscriptStore:
         on the segment identity ``(meeting_id, segment_id)`` (the partial unique index
         ``ix_transcription_meeting_segment`` in the admin-api authoritative schema), exactly the
         parent db-writer's ON CONFLICT statement: idempotent, a re-flushed rewrite lands as an
-        UPDATE, never a duplicate row."""
-        from datetime import datetime as _dt
-
+        UPDATE, never a duplicate row. ``created_at`` is when the segment first reached the collector
+        (its ``first_seen_at``): written on insert and never changed by a re-flush, while text,
+        speaker, times and language follow the rewrite."""
         from sqlalchemy import text as sql_text  # lazy: not needed for the in-memory fakes
 
         rows = []
@@ -971,7 +993,7 @@ class SqlAlchemyTranscriptStore:
                 "mid": int(meeting_id), "start": start, "end": end,
                 "text": seg.get("text") or "", "speaker": seg.get("speaker"),
                 "lang": seg.get("language"), "uid": seg.get("session_uid"),
-                "segid": str(sid), "created": _dt.utcnow(),
+                "segid": str(sid), "created": _created_at_for_row(seg),
             })
         if not rows:
             return
@@ -984,7 +1006,7 @@ class SqlAlchemyTranscriptStore:
                         ON CONFLICT (meeting_id, segment_id) WHERE segment_id IS NOT NULL
                         DO UPDATE SET text = EXCLUDED.text, speaker = EXCLUDED.speaker,
                                       start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time,
-                                      language = EXCLUDED.language, created_at = EXCLUDED.created_at
+                                      language = EXCLUDED.language
                     """),
                     row,
                 )
@@ -1669,10 +1691,9 @@ class SqlAlchemyTranscriptStore:
         # The DB tombstone makes this retryable: if Redis cleanup fails, a repeat reaches this same
         # terminal row and tries the cache/stream cleanup again without resurrecting durable data.
         if self._redis is not None:
-            await self._redis.delete(
-                f"meeting:{meeting_id}:segments", f"proc:meeting:{meeting_id}"
-            )
-            await self._redis.srem("active_meetings", str(meeting_id))
+            from .db_writer import purge_meeting_live_state
+
+            await purge_meeting_live_state(self._redis, meeting_id)
         return True
 
 
@@ -1792,6 +1813,9 @@ class RedisStreamBus:
         """Append one entry to a redis STREAM under the ``payload`` field — the native transcript feed
         ``tc:meeting:{native}`` the collector owns as single writer (P23)."""
         return await self._client.xadd(stream, {"payload": json.dumps(payload)})
+
+    async def expire(self, key, seconds):
+        return await self._client.expire(key, seconds)
 
 
 def build_production_app(

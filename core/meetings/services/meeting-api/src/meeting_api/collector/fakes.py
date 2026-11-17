@@ -29,9 +29,11 @@ def _segment_to_api(seg: dict) -> dict:
         "text": seg.get("text", ""),
         "language": seg.get("language"),
     }
-    for k in ("speaker", "speaker_key", "completed", "segment_id", "source", "absolute_start_time", "absolute_end_time"):
+    for k in ("speaker", "speaker_key", "completed", "segment_id", "source", "absolute_start_time", "absolute_end_time", "created_at"):
         if seg.get(k) is not None:
             out[k] = seg[k]
+    if "created_at" not in out and seg.get("first_seen_at"):
+        out["created_at"] = seg["first_seen_at"]     # a live segment: as the SQL adapter serves it
     return out
 
 
@@ -754,10 +756,9 @@ class InMemoryTranscriptStore:
         }
         m["data"] = data
         if self._redis is not None:
-            await self._redis.delete(
-                f"meeting:{meeting_id}:segments", f"proc:meeting:{meeting_id}"
-            )
-            await self._redis.srem("active_meetings", str(meeting_id))
+            from .db_writer import purge_meeting_live_state
+
+            await purge_meeting_live_state(self._redis, meeting_id)
         return True
 
     def _row_or_placeholder(self, meeting_id) -> dict:
@@ -779,14 +780,18 @@ class InMemoryTranscriptStore:
             # Prod-topology mode: live segments land in the redis HASH (+ the db-writer's
             # active_meetings sweep set), exactly like SqlAlchemyTranscriptStore.append_segment;
             # only the db-writer tick moves them into the durable dict.
-            from .db_writer import ACTIVE_MEETINGS_KEY, segments_hash_key
+            from .db_writer import ACTIVE_MEETINGS_KEY, keep_first_seen, segments_hash_key
 
+            hash_key = segments_hash_key(meeting_id)
+            segment = keep_first_seen(segment, await self._redis.hget(hash_key, segment["segment_id"]))
             await self._redis.sadd(ACTIVE_MEETINGS_KEY, str(meeting_id))
-            await self._redis.hset(
-                segments_hash_key(meeting_id), segment["segment_id"], json.dumps(segment)
-            )
+            await self._redis.hset(hash_key, segment["segment_id"], json.dumps(segment))
             return
-        self._row_or_placeholder(meeting_id)["segments"][segment["segment_id"]] = segment
+        segments = self._row_or_placeholder(meeting_id)["segments"]
+        prior = segments.get(segment["segment_id"])
+        if prior and prior.get("first_seen_at"):
+            segment = {**segment, "first_seen_at": prior["first_seen_at"]}
+        segments[segment["segment_id"]] = segment
 
     async def delete_segments(self, meeting_id, segment_ids) -> None:
         ids = [str(s) for s in (segment_ids or []) if s]
@@ -803,12 +808,20 @@ class InMemoryTranscriptStore:
 
     async def upsert_segments(self, meeting_id, segments) -> None:
         """The db-writer's durable sink (the dict stands in for the ``transcriptions`` table):
-        upsert by ``segment_id`` — idempotent, a re-flush updates in place."""
+        upsert by ``segment_id`` — idempotent, a re-flush updates in place. Like the SQL adapter,
+        ``created_at`` is the segment's ``first_seen_at`` on insert and survives a re-flush."""
+        from datetime import datetime, timezone
+
         m = self._row_or_placeholder(meeting_id)
         for seg in segments:
             sid = seg.get("segment_id")
             if sid:
-                m["segments"][sid] = dict(seg)
+                prior = m["segments"].get(sid) or {}
+                created = (
+                    prior.get("created_at") or seg.get("first_seen_at")
+                    or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                )
+                m["segments"][sid] = {**seg, "created_at": created}
 
     async def processed_view_cursor(self, meeting_id, view_id) -> Optional[str]:
         from .adapters import _find_processed_view
@@ -935,3 +948,6 @@ class FakeRedisBus:
     async def publish(self, channel, data):
         self.published.append((channel, data))
         return await self._client.publish(channel, data)
+
+    async def expire(self, key, seconds):
+        return await self._client.expire(key, seconds)

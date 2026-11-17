@@ -373,6 +373,16 @@
    "targets": []
   },
   {
+   "key": "TC_STREAM_TTL_S",
+   "class": "defaulted",
+   "default": "86400",
+   "description": "seconds a meeting's transcript stream tc:meeting:{id} (read by the copilot worker and the terminal's live view) lives after its session ended: the collector sets this expiry when it writes the session_end marker. Deleting the meeting's artifacts deletes the stream at once; the expiry is the backstop for meetings that are never deleted. 0 ⇒ no expiry; a negative or non-integer value is fatal at start-up",
+   "targets": [
+    "compose",
+    "helm"
+   ]
+  },
+  {
    "key": "WEBHOOK_DRAIN_INTERVAL",
    "class": "defaulted",
    "default": "5",
