@@ -1,0 +1,21 @@
+# Names the staging VM may reach during an approved download window (extended regexes, one per
+# line), read by egress-check.sh report. Anything else is reported as DISALLOWED.
+# Ubuntu packages (apt install cryptsetup tcpdump curl)
+(^|\.)ports\.ubuntu\.com$
+# k3s release assets (binary, airgap images, checksums) on GitHub
+^github\.com$
+(^|\.)githubusercontent\.com$
+# Third-party chart images (approved list, pulled by digest in the VM): Docker Hub, quay.io,
+# registry.k8s.io and the blob stores they redirect to
+^registry-1\.docker\.io$
+^auth\.docker\.io$
+^production\.cloudflare\.docker\.com$
+^(cdn[0-9]*\.)?quay\.io$
+^quayio-production-s3\.s3[a-z0-9.-]*\.amazonaws\.com$
+^registry\.k8s\.io$
+^[a-z0-9-]+-docker\.pkg\.dev$
+^prod-registry-k8s-io-[a-z0-9-]+\.s3[a-z0-9.-]*\.amazonaws\.com$
+# Blob CDNs the registries redirected to in that window (seen in the capture 19:31:19Z-19:33:29Z)
+^production\.cloudfront\.docker\.com$
+^d3ipk8a4rcghwr\.cloudfront\.net$
+^cdn\.registry\.k8s\.io$

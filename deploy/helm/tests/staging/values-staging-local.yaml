@@ -1,0 +1,54 @@
+# TEST-ONLY values for the staging witness (a single-node k3s in a Lima VM), on top of
+# deploy/helm/charts/andai/values-staging.yaml. Everything here points at in-cluster test fixtures:
+# mail to Mailpit (mailpit.yaml), alerts to the webhook sink (alert-sink.yaml) and Mailpit, minutes
+# from the fake model route (fake-llm.yaml), meetings to the mock bot. No secret and no real
+# endpoint is named here; the machine-specific image tag and the Postgres password are passed at
+# install (README.md):
+#
+#   helm upgrade --install andai deploy/helm/charts/andai -n munshi \
+#     -f deploy/helm/charts/andai/values-staging.yaml -f deploy/helm/tests/staging/values-staging-local.yaml \
+#     --set global.imageTag=<tag> --set munshi.runtime.browserImage=ghcr.io/andai/munshi-mock-bot:<tag> \
+#     --set-file munshi.database.password=<file> --wait --timeout 20m
+
+global:
+  # Images are imported into the node's containerd; nothing is pulled.
+  imagePullPolicy: Never
+
+andai:
+  portal:
+    # The operator reaches the portal through `kubectl port-forward svc/andai-portal 13100:3000` on
+    # the Mac's loopback (the VM forwards no port but the k3s API). andai-core accepts state-changing
+    # requests from this origin only, and mails link to it. The Traefik Ingress keeps the staging
+    # host name (values-staging.yaml) and is checked from inside the VM.
+    origin: http://127.0.0.1:13100
+  smtp:
+    host: mailpit
+    port: 1025
+    user: ""
+    starttls: false
+    existingSecret: ""
+  llm:
+    baseUrl: http://fake-llm:8000
+    model: fake-minutes
+  alertEmail: alerts@example.test
+  intake:
+    addresses: notetaker@example.test
+
+munshi:
+  meetingApi:
+    # No speech-to-text endpoint exists on staging and the mock bot transcribes nothing. meeting-api
+    # refuses every bot (503) while transcription is on and this URL is empty, so it names a
+    # cluster-local host that does not resolve: the STT probe reads it as unreachable (not a
+    # configuration fault) and spawns go ahead. Cluster-local, so the lookup never leaves CoreDNS.
+    transcriptionServiceUrl: http://stt-none.munshi.svc.cluster.local:8000
+
+monitoring:
+  enabled: true
+  alerting:
+    existingSecret: andai-alerting
+    email:
+      enabled: true
+    slack:
+      enabled: true
+    teams:
+      enabled: true

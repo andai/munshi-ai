@@ -1,0 +1,15 @@
+# TEST-ONLY: turns off the version check and usage reporting of the Traefik that k3s bundles, so the
+# staging VM makes no call to update.traefik.io or api.github.com. Copy it into the k3s server's
+# auto-deploy directory (/var/lib/rancher/k3s/server/manifests/); k3s's helm-controller then upgrades
+# its traefik release with these values. Operators of a real k3s cluster do the same
+# (andai/docs/kubernetes.md).
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    global:
+      checkNewVersion: false
+      sendAnonymousUsage: false
